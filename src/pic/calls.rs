@@ -15,18 +15,7 @@ impl Pic {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        let bytes: Vec<u8> = encode_args(args)
-            .map_err(|err| PicCallError::new(format!("encode_args failed: {err}")))?;
-        let result = self
-            .inner
-            .update_call(canister_id, Principal::anonymous(), method, bytes)
-            .map_err(|err| {
-                PicCallError::new(format!(
-                    "pocket_ic update_call failed (canister={canister_id}, method={method}): {err}"
-                ))
-            })?;
-
-        decode_one(&result).map_err(|err| PicCallError::new(format!("decode_one failed: {err}")))
+        self.update_call_as(canister_id, Principal::anonymous(), method, args)
     }
 
     /// Generic update call helper with an explicit caller principal.
@@ -41,8 +30,7 @@ impl Pic {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        let bytes: Vec<u8> = encode_args(args)
-            .map_err(|err| PicCallError::new(format!("encode_args failed: {err}")))?;
+        let bytes = encode_call_args(args)?;
         let result = self
             .inner
             .update_call(canister_id, caller, method, bytes)
@@ -52,7 +40,7 @@ impl Pic {
                 ))
             })?;
 
-        decode_one(&result).map_err(|err| PicCallError::new(format!("decode_one failed: {err}")))
+        decode_call_result(&result)
     }
 
     /// Generic query call helper.
@@ -66,18 +54,7 @@ impl Pic {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        let bytes: Vec<u8> = encode_args(args)
-            .map_err(|err| PicCallError::new(format!("encode_args failed: {err}")))?;
-        let result = self
-            .inner
-            .query_call(canister_id, Principal::anonymous(), method, bytes)
-            .map_err(|err| {
-                PicCallError::new(format!(
-                    "pocket_ic query_call failed (canister={canister_id}, method={method}): {err}"
-                ))
-            })?;
-
-        decode_one(&result).map_err(|err| PicCallError::new(format!("decode_one failed: {err}")))
+        self.query_call_as(canister_id, Principal::anonymous(), method, args)
     }
 
     /// Generic query call helper with an explicit caller principal.
@@ -92,8 +69,7 @@ impl Pic {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        let bytes: Vec<u8> = encode_args(args)
-            .map_err(|err| PicCallError::new(format!("encode_args failed: {err}")))?;
+        let bytes = encode_call_args(args)?;
         let result = self
             .inner
             .query_call(canister_id, caller, method, bytes)
@@ -103,7 +79,7 @@ impl Pic {
                 ))
             })?;
 
-        decode_one(&result).map_err(|err| PicCallError::new(format!("decode_one failed: {err}")))
+        decode_call_result(&result)
     }
 
     /// Advance PocketIC by a fixed number of ticks.
@@ -112,4 +88,18 @@ impl Pic {
             self.tick();
         }
     }
+}
+
+fn encode_call_args<A>(args: A) -> Result<Vec<u8>, PicCallError>
+where
+    A: ArgumentEncoder,
+{
+    encode_args(args).map_err(|err| PicCallError::new(format!("encode_args failed: {err}")))
+}
+
+fn decode_call_result<T>(result: &[u8]) -> Result<T, PicCallError>
+where
+    T: CandidType + DeserializeOwned,
+{
+    decode_one(result).map_err(|err| PicCallError::new(format!("decode_one failed: {err}")))
 }

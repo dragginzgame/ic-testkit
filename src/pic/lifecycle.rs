@@ -9,7 +9,7 @@ impl Pic {
     /// Install one arbitrary wasm module with caller-provided init bytes.
     ///
     /// This is the generic install path for downstreams that use `ic-testkit`
-    /// without depending on Canic canister init payload conventions.
+    /// without depending on application-specific init payload conventions.
     #[must_use]
     pub fn create_and_install_with_args(
         &self,

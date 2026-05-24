@@ -1,6 +1,5 @@
 use ic_testkit::artifacts::{
-    INTERNAL_TEST_ENDPOINTS_ENV, WasmBuildProfile, test_target_dir, wasm_artifacts_ready,
-    wasm_path, workspace_root_for,
+    WasmBuildProfile, test_target_dir, wasm_artifacts_ready, wasm_path, workspace_root_for,
 };
 use std::{fs, path::PathBuf};
 
@@ -14,14 +13,12 @@ fn wasm_build_profiles_expose_cargo_args_and_target_dirs() {
     assert_eq!(WasmBuildProfile::Debug.target_dir_name(), "debug");
     assert_eq!(WasmBuildProfile::Fast.target_dir_name(), "fast");
     assert_eq!(WasmBuildProfile::Release.target_dir_name(), "release");
-
-    assert_eq!(WasmBuildProfile::Fast.canic_wasm_profile_value(), "fast");
 }
 
 // Verify wasm artifact paths stay aligned with Cargo wasm target layout.
 #[test]
 fn wasm_path_uses_profile_target_directory() {
-    let target_dir = PathBuf::from("/tmp/canic-target");
+    let target_dir = PathBuf::from("/tmp/ic-testkit-target");
 
     assert_eq!(
         wasm_path(&target_dir, "runtime_probe", WasmBuildProfile::Fast),
@@ -73,15 +70,6 @@ fn workspace_helpers_resolve_expected_paths() {
     assert_eq!(
         test_target_dir(&workspace_root, "pic-wasm"),
         PathBuf::from("/workspace/target/pic-wasm")
-    );
-}
-
-// Verify the internal-test endpoint env pair remains stable for builders.
-#[test]
-fn internal_test_endpoint_env_pair_is_stable() {
-    assert_eq!(
-        INTERNAL_TEST_ENDPOINTS_ENV,
-        ("CANIC_INTERNAL_TEST_ENDPOINTS", "1")
     );
 }
 

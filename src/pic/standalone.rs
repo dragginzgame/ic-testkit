@@ -41,7 +41,7 @@ impl StandaloneCanisterFixture {
 }
 
 // Install one already-built wasm module into a fresh PocketIC instance with
-// caller-provided init args and no Canic-specific bootstrap assumptions.
+// caller-provided init args and no application-specific bootstrap assumptions.
 #[must_use]
 pub fn install_prebuilt_canister(wasm: Vec<u8>, init_bytes: Vec<u8>) -> StandaloneCanisterFixture {
     try_install_prebuilt_canister(wasm, init_bytes)
@@ -49,7 +49,7 @@ pub fn install_prebuilt_canister(wasm: Vec<u8>, init_bytes: Vec<u8>) -> Standalo
 }
 
 // Install one already-built wasm module into a fresh PocketIC instance with
-// caller-provided init args and no Canic-specific bootstrap assumptions.
+// caller-provided init args and no application-specific bootstrap assumptions.
 pub fn try_install_prebuilt_canister(
     wasm: Vec<u8>,
     init_bytes: Vec<u8>,
