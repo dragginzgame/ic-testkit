@@ -6,8 +6,16 @@
 //! install helpers, retry helpers for PocketIC install throttling, and cached
 //! baseline primitives.
 
+pub mod benchmark;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod artifacts;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod pic;
+
+#[cfg(feature = "canister")]
+pub mod performance;
 use candid::Principal;
 
 ///

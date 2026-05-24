@@ -1,0 +1,14 @@
+[package]
+name = "ic_testkit_perf_probe"
+edition = "2024"
+rust-version = "1.88.0"
+version = "0.0.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+candid = "0.10"
+ic-cdk = "0.20.1"
+ic-testkit = { path = "../../..", features = ["canister"] }

@@ -6,7 +6,37 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## Unreleased
+## [0.1.0] - 2026-05-24 - Benchmark reporting and canister markers
+
+### Added
+
+- Starts the 0.1 benchmark-reporting surface with compact `ICTK|...` marker
+  parsing, start/end span pairing, invalid/unpaired marker reporting, suite and
+  `ALL` aggregation, previous-run comparison helpers, CSV report writing, and a
+  Markdown analytics summary.
+- Adds an optional `canister` feature with `performance::Performance::measure`
+  for emitting compact benchmark markers from canister code.
+- Keeps host-only PocketIC helpers out of `wasm32` builds so canisters can
+  depend on the marker emitter without pulling in `pocket-ic`.
+- Adds benchmark run-directory helpers for commit/date/index naming and
+  previous-run discovery from report metadata.
+- Adds a combined stdout/stderr parser that preserves marker source metadata
+  for captured PocketIC test output.
+- Adds a top-level `canisters/test/perf_probe` fixture canister plus
+  `make test-canisters` / `make build-test-canisters` for exercising benchmark
+  marker emission from inside this repository.
+- Adds benchmark tests covering compact marker parsing, stdout/stderr source
+  tracking, malformed markers, repeated/nested span pairing, invalid spans,
+  aggregate rows, comparison percentages, and report file generation.
+- Adds the initial 0.1 benchmarking design document under `docs/design/`.
+
+### Changed
+
+- Refreshes the README around the current 0.1 workflows: PocketIC wrapper
+  usage, wasm installation, artifact helpers, benchmark reports,
+  canister-side marker emission, and local release checks.
+- Extends `make release-check` so it also runs the live PocketIC benchmark
+  canister test and builds the in-repository wasm fixture.
 
 ## [0.0.6] - 2026-05-24 - Genericity audit cleanup
 

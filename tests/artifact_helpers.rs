@@ -33,7 +33,11 @@ fn wasm_artifacts_ready_requires_all_artifacts() {
     ));
 
     fs::write(&second, b"beta").expect("write second wasm");
-    assert!(wasm_artifacts_ready(&target_dir, &["alpha", "beta"], "debug"));
+    assert!(wasm_artifacts_ready(
+        &target_dir,
+        &["alpha", "beta"],
+        "debug"
+    ));
 
     fs::remove_dir_all(root).expect("clean temp dir");
 }
