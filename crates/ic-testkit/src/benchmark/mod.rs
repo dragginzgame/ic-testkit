@@ -8,6 +8,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use serde_json::Value;
+
 pub const DEFAULT_PREFIX: &str = "ICTK";
 pub const ALL_SUITES: &str = "ALL";
 
@@ -15,6 +17,8 @@ pub const ALL_SUITES: &str = "ALL";
 pub struct BenchmarkParserConfig {
     pub prefixes: Vec<String>,
     pub suite_derivation: SuiteDerivation,
+    /// When enabled, non-empty lines without a configured marker prefix are
+    /// reported as malformed markers instead of ignored log noise.
     pub strict: bool,
 }
 
@@ -348,18 +352,19 @@ pub fn find_latest_previous_run(
 
 pub fn read_benchmark_run_metadata(path: impl AsRef<Path>) -> io::Result<BenchmarkRunMetadata> {
     let input = fs::read_to_string(path)?;
+    let value = serde_json::from_str::<Value>(&input).map_err(metadata_json_error)?;
 
     Ok(BenchmarkRunMetadata {
-        timestamp: json_required_string(&input, "timestamp")?,
-        run_directory_name: json_required_string(&input, "run_directory_name")?,
-        run_index: json_required_u32(&input, "run_index")?,
-        git_commit_hash: json_optional_string_field(&input, "git_commit_hash")?,
-        git_commit_short_hash: json_optional_string_field(&input, "git_commit_short_hash")?,
-        ic_testkit_version: json_required_string(&input, "ic_testkit_version")?,
-        pocket_ic_version: json_required_string(&input, "pocket_ic_version")?,
-        rustc_version: json_required_string(&input, "rustc_version")?,
-        benchmark_command: json_optional_string_field(&input, "benchmark_command")?,
-        selected_previous_run: json_optional_string_field(&input, "selected_previous_run")?,
+        timestamp: metadata_required_string(&value, "timestamp")?,
+        run_directory_name: metadata_required_string(&value, "run_directory_name")?,
+        run_index: metadata_required_u32(&value, "run_index")?,
+        git_commit_hash: metadata_optional_string(&value, "git_commit_hash")?,
+        git_commit_short_hash: metadata_optional_string(&value, "git_commit_short_hash")?,
+        ic_testkit_version: metadata_required_string(&value, "ic_testkit_version")?,
+        pocket_ic_version: metadata_required_string(&value, "pocket_ic_version")?,
+        rustc_version: metadata_required_string(&value, "rustc_version")?,
+        benchmark_command: metadata_optional_string(&value, "benchmark_command")?,
+        selected_previous_run: metadata_optional_string(&value, "selected_previous_run")?,
     })
 }
 
@@ -379,7 +384,16 @@ pub fn parse_benchmark_events_from_source(
     for (index, line) in input.lines().enumerate() {
         let source_line = index + 1;
         if !has_configured_prefix(line, &config.prefixes) {
-            report.ignored_line_count += 1;
+            if config.strict && !line.trim().is_empty() {
+                report.malformed_markers.push(malformed(
+                    source_line,
+                    source,
+                    line,
+                    "line does not use a configured marker prefix",
+                ));
+            } else {
+                report.ignored_line_count += 1;
+            }
             continue;
         }
 
@@ -392,6 +406,11 @@ pub fn parse_benchmark_events_from_source(
     report
 }
 
+/// Parse separately captured stdout and stderr.
+///
+/// Separate streams do not carry global ordering, so events are returned in
+/// stdout-then-stderr order. If a benchmark span can start on one stream and end
+/// on the other, capture combined process output and use [`parse_benchmark_events`].
 #[must_use]
 pub fn parse_benchmark_events_from_captured_output(
     stdout: &str,
@@ -977,32 +996,22 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
 }
 
 fn metadata_json(metadata: &BenchmarkRunMetadata) -> String {
-    format!(
-        concat!(
-            "{{\n",
-            "  \"timestamp\": {},\n",
-            "  \"run_directory_name\": {},\n",
-            "  \"run_index\": {},\n",
-            "  \"git_commit_hash\": {},\n",
-            "  \"git_commit_short_hash\": {},\n",
-            "  \"ic_testkit_version\": {},\n",
-            "  \"pocket_ic_version\": {},\n",
-            "  \"rustc_version\": {},\n",
-            "  \"benchmark_command\": {},\n",
-            "  \"selected_previous_run\": {}\n",
-            "}}\n"
-        ),
-        json_string(&metadata.timestamp),
-        json_string(&metadata.run_directory_name),
-        metadata.run_index,
-        json_optional_string(metadata.git_commit_hash.as_deref()),
-        json_optional_string(metadata.git_commit_short_hash.as_deref()),
-        json_string(&metadata.ic_testkit_version),
-        json_string(&metadata.pocket_ic_version),
-        json_string(&metadata.rustc_version),
-        json_optional_string(metadata.benchmark_command.as_deref()),
-        json_optional_string(metadata.selected_previous_run.as_deref())
-    )
+    let value = serde_json::json!({
+        "timestamp": metadata.timestamp,
+        "run_directory_name": metadata.run_directory_name,
+        "run_index": metadata.run_index,
+        "git_commit_hash": metadata.git_commit_hash,
+        "git_commit_short_hash": metadata.git_commit_short_hash,
+        "ic_testkit_version": metadata.ic_testkit_version,
+        "pocket_ic_version": metadata.pocket_ic_version,
+        "rustc_version": metadata.rustc_version,
+        "benchmark_command": metadata.benchmark_command,
+        "selected_previous_run": metadata.selected_previous_run,
+    });
+
+    let mut output = serde_json::to_string_pretty(&value).expect("metadata JSON must serialize");
+    output.push('\n');
+    output
 }
 
 fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> {
@@ -1040,8 +1049,8 @@ fn short_commit_hash(hash: &str) -> String {
     hash.chars().take(7).collect()
 }
 
-fn json_required_string(input: &str, key: &str) -> io::Result<String> {
-    json_optional_string_field(input, key)?.ok_or_else(|| {
+fn metadata_required_string(value: &Value, key: &str) -> io::Result<String> {
+    metadata_optional_string(value, key)?.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("missing required metadata string field `{key}`"),
@@ -1049,28 +1058,15 @@ fn json_required_string(input: &str, key: &str) -> io::Result<String> {
     })
 }
 
-fn json_required_u32(input: &str, key: &str) -> io::Result<u32> {
-    let marker = format!("\"{key}\":");
-    let start = input.find(&marker).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("missing required metadata integer field `{key}`"),
-        )
-    })? + marker.len();
-    let rest = input[start..].trim_start();
-    let digits = rest
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect::<String>();
-
-    if digits.is_empty() {
+fn metadata_required_u32(value: &Value, key: &str) -> io::Result<u32> {
+    let Some(raw) = value.get(key).and_then(Value::as_u64) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("metadata integer field `{key}` is not numeric"),
+            format!("missing required metadata integer field `{key}`"),
         ));
-    }
+    };
 
-    digits.parse().map_err(|err| {
+    u32::try_from(raw).map_err(|err| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("metadata integer field `{key}` is invalid: {err}"),
@@ -1078,67 +1074,22 @@ fn json_required_u32(input: &str, key: &str) -> io::Result<u32> {
     })
 }
 
-fn json_optional_string_field(input: &str, key: &str) -> io::Result<Option<String>> {
-    let marker = format!("\"{key}\":");
-    let Some(start) = input.find(&marker).map(|index| index + marker.len()) else {
-        return Ok(None);
-    };
-    let rest = input[start..].trim_start();
-
-    if rest.starts_with("null") {
-        return Ok(None);
-    }
-
-    if !rest.starts_with('"') {
-        return Err(io::Error::new(
+fn metadata_optional_string(value: &Value, key: &str) -> io::Result<Option<String>> {
+    match value.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("metadata string field `{key}` is not a string or null"),
-        ));
+        )),
     }
-
-    parse_json_string(rest).map(Some)
 }
 
-fn parse_json_string(input: &str) -> io::Result<String> {
-    let mut chars = input.chars();
-    if chars.next() != Some('"') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "expected JSON string",
-        ));
-    }
-
-    let mut value = String::new();
-    while let Some(char) = chars.next() {
-        match char {
-            '"' => return Ok(value),
-            '\\' => match chars.next() {
-                Some('"') => value.push('"'),
-                Some('\\') => value.push('\\'),
-                Some('n') => value.push('\n'),
-                Some('r') => value.push('\r'),
-                Some('t') => value.push('\t'),
-                Some(other) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("unsupported JSON escape `\\{other}`"),
-                    ));
-                }
-                None => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unterminated JSON escape",
-                    ));
-                }
-            },
-            char => value.push(char),
-        }
-    }
-
-    Err(io::Error::new(
+fn metadata_json_error(err: serde_json::Error) -> io::Error {
+    io::Error::new(
         io::ErrorKind::InvalidData,
-        "unterminated JSON string",
-    ))
+        format!("invalid benchmark metadata JSON: {err}"),
+    )
 }
 
 fn change_suffix(
@@ -1204,27 +1155,4 @@ fn csv_cell(value: &str) -> String {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|")
-}
-
-fn json_optional_string(value: Option<&str>) -> String {
-    value.map_or_else(|| "null".to_string(), json_string)
-}
-
-fn json_string(value: &str) -> String {
-    format!("\"{}\"", json_escape(value))
-}
-
-fn json_escape(value: &str) -> String {
-    let mut escaped = String::new();
-    for char in value.chars() {
-        match char {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            char => escaped.push(char),
-        }
-    }
-    escaped
 }

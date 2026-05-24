@@ -1,33 +1,32 @@
-[package]
-name = "ic-testkit"
+[workspace]
+members = [
+    "crates/ic-testkit",
+    "canisters/test/perf_probe",
+]
+resolver = "2"
+
+[workspace.package]
 edition = "2024"
 rust-version = "1.88.0"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 authors = ["borovan <84897664+borovan@users.noreply.github.com>"]
 description = "PocketIC-oriented test utilities for IC canister tests"
-readme = "README.md"
 repository = "https://github.com/dragginzgame/ic-testkit"
+homepage = "https://github.com/dragginzgame/ic-testkit"
 keywords = ["internet-computer", "canister", "dfinity", "icp", "testing"]
 categories = ["development-tools::testing", "wasm"]
+readme = "README.md"
 
-[workspace]
-members = [".", "canisters/test/perf_probe"]
-resolver = "2"
-
-[dependencies]
+[workspace.dependencies]
 candid = { version = "0.10", default-features = false }
-ic-cdk = { version = "0.20.1", optional = true }
-serde = { version = "1.0", default-features = false }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ic-cdk = "0.20.1"
+ic-testkit = { path = "crates/ic-testkit" }
 pocket-ic = "13.0"
+serde = { version = "1.0", default-features = false }
+serde_json = "1.0"
 
-[features]
-default = []
-canister = ["dep:ic-cdk"]
-
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="images/cave.png" alt="ic-testkit banner" width="640">
+  <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/cave.png" alt="ic-testkit banner" width="640">
 </p>
 
 `ic-testkit` is a small wrapper and helper layer around [`pocket-ic`](https://crates.io/crates/pocket-ic), the local Internet Computer testing runtime this crate stands on. It does not replace `pocket-ic`; it adds reusable Rust test-harness conveniences on top of it.
@@ -26,14 +26,7 @@ Use `pocket-ic` directly when you want the underlying simulator/runtime API. Use
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.1.0"
-```
-
-For canister-side benchmark markers:
-
-```toml
-[dependencies]
-ic-testkit = { version = "0.1.0", features = ["canister"] }
+ic-testkit = "0.1.1"
 ```
 
 > [!WARNING]
@@ -210,7 +203,7 @@ let aggregates = aggregate_benchmark_spans(&spans.spans);
 assert_eq!(aggregates.rows[0].span_label, "app/myfunc/something");
 ```
 
-If the harness captures stdout and stderr separately, use `parse_benchmark_events_from_captured_output(stdout, stderr, config)` to preserve the source stream for each marker.
+If the harness captures stdout and stderr separately, use `parse_benchmark_events_from_captured_output(stdout, stderr, config)` to preserve the source stream for each marker. Separate streams do not carry global ordering, so this helper parses stdout first, then stderr. If a span can start on one stream and end on the other, capture combined output and use `parse_benchmark_events`.
 
 The report writer emits:
 
@@ -249,7 +242,7 @@ let previous = find_latest_previous_run(
 
 ## Canister-Side Markers
 
-Enable the `canister` feature in canister code and call `Performance::measure` around the region under measurement:
+Call `Performance::measure` around the region under measurement:
 
 ```rust,no_run
 use ic_testkit::performance::Performance;

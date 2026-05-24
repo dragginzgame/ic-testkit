@@ -1,6 +1,6 @@
 use candid::Principal;
 use ic_testkit::{
-    artifacts::{build_wasm_canisters, read_wasm, wasm_path},
+    artifacts::{build_wasm_canisters, read_wasm, wasm_path, workspace_root_for},
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
@@ -13,8 +13,16 @@ const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
 #[test]
 fn perf_probe_canister_emits_parseable_benchmark_markers() {
+    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    if !workspace
+        .join("canisters/test/perf_probe/Cargo.toml")
+        .is_file()
+    {
+        eprintln!("skipping perf probe canister test: fixture canister is not packaged");
+        return;
+    }
+
     let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
 
     build_wasm_canisters(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], &[], &[]);
     assert!(wasm_path(&target_dir, PERF_PROBE_PACKAGE, "debug").is_file());

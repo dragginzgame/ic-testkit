@@ -6,6 +6,38 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.1.1] - 2026-05-24 - Release hygiene cleanup
+
+### Changed
+
+- Moves the publishable crate into `crates/ic-testkit` while keeping
+  repository-level `README.md`, `CHANGELOG.md`, `canisters/`, `docs/`, and
+  `images/` at the repo root.
+- Adds a short crate-local `crates/ic-testkit/README.md` for Cargo packaging,
+  matching the related workspace layout convention.
+- Adds a root workspace manifest and moves shared dependency versions, package
+  metadata, toolchain metadata, and Clippy lint policy into workspace-level
+  tables for reuse by future crates.
+- Updates Makefile targets and the perf-probe canister manifest for the new
+  workspace layout.
+- Removes the `canister` feature and makes `ic-cdk` a normal dependency so the
+  `performance::Performance` marker helper is always part of the crate surface.
+- Updates the README banner to use the repository-hosted image from the new
+  top-level `images/` directory.
+
+### Fixed
+
+- Keeps the published crate package self-contained by making
+  `tests/canister_benchmark.rs` skip cleanly when its repo-only fixture canister
+  is absent from the packaged source.
+- Defines `BenchmarkParserConfig::strict` behavior so non-empty non-marker
+  lines are reported as malformed markers instead of silently ignored.
+- Replaces hand-rolled benchmark metadata JSON parsing/writing with
+  `serde_json` so escaped strings and externally generated metadata are handled
+  correctly.
+- Documents the stdout/stderr ordering limitation in
+  `parse_benchmark_events_from_captured_output`.
+
 ## [0.1.0] - 2026-05-24 - Benchmark reporting and canister markers
 
 ### Added

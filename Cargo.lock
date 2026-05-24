@@ -737,12 +737,13 @@ dependencies = [
 
 [[package]]
 name = "ic-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "candid",
  "ic-cdk",
  "pocket-ic",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -784,7 +785,7 @@ dependencies = [
 
 [[package]]
 name = "ic_testkit_perf_probe"
-version = "0.0.0"
+version = "0.1.1"
 dependencies = [
  "candid",
  "ic-cdk",

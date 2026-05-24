@@ -1,12 +1,12 @@
 MSRV := 1.88.0
 
-.PHONY: test test-canisters build-test-canisters fmt fmt-check check check-canister check-wasm-canister clippy clippy-canister msrv package publish-dry-run release-check
+.PHONY: test test-canisters build-test-canisters fmt fmt-check check check-wasm clippy msrv package publish-dry-run release-check
 
 test:
-	cargo test
+	cargo test -p ic-testkit
 
 test-canisters:
-	cargo test --test canister_benchmark -- --nocapture
+	cargo test -p ic-testkit --test canister_benchmark -- --nocapture
 
 build-test-canisters:
 	CARGO_TARGET_DIR=target/pic-wasm cargo build --target wasm32-unknown-unknown -p ic_testkit_perf_probe
@@ -18,27 +18,21 @@ fmt-check:
 	cargo fmt --check
 
 check:
-	cargo check
+	cargo check -p ic-testkit
 
-check-canister:
-	cargo check --features canister
-
-check-wasm-canister:
-	cargo check --target wasm32-unknown-unknown --features canister
+check-wasm:
+	cargo check -p ic-testkit --target wasm32-unknown-unknown
 
 clippy:
-	cargo clippy --all-targets -- -D warnings
-
-clippy-canister:
-	cargo clippy --all-targets --features canister -- -D warnings
+	cargo clippy -p ic-testkit --all-targets -- -D warnings
 
 msrv:
-	cargo +$(MSRV) check
+	cargo +$(MSRV) check -p ic-testkit
 
 package:
-	cargo package --allow-dirty
+	cargo package -p ic-testkit --allow-dirty
 
 publish-dry-run:
-	cargo publish --dry-run --allow-dirty
+	cargo publish -p ic-testkit --dry-run --allow-dirty
 
-release-check: fmt-check check check-canister check-wasm-canister clippy clippy-canister test test-canisters build-test-canisters msrv package publish-dry-run
+release-check: fmt-check check check-wasm clippy test test-canisters build-test-canisters msrv package publish-dry-run

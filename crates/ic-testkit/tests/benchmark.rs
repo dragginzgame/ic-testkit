@@ -108,6 +108,29 @@ ICTK||1|2|3|4
 }
 
 #[test]
+fn strict_parser_reports_non_marker_log_lines() {
+    let config = BenchmarkParserConfig {
+        strict: true,
+        ..BenchmarkParserConfig::default()
+    };
+    let report = parse_benchmark_events(
+        "\
+ordinary debug line
+ICTK|app/a:start|1|2|3|4
+",
+        &config,
+    );
+
+    assert_eq!(report.events.len(), 1);
+    assert_eq!(report.ignored_line_count, 0);
+    assert_eq!(report.malformed_markers.len(), 1);
+    assert_eq!(
+        report.malformed_markers[0].reason,
+        "line does not use a configured marker prefix"
+    );
+}
+
+#[test]
 fn pairs_repeated_same_label_spans_by_stack_order() {
     let report = parse_benchmark_events(
         "\
@@ -264,7 +287,7 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
             ic_testkit_version: env!("CARGO_PKG_VERSION").to_string(),
             pocket_ic_version: "13.0".to_string(),
             rustc_version: "rustc 1.88.0".to_string(),
-            benchmark_command: Some("make test".to_string()),
+            benchmark_command: Some("make \"test\"\nagain".to_string()),
             selected_previous_run: None,
         },
     };
@@ -285,6 +308,12 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
 
     let metadata = fs::read_to_string(root.join("metadata.json")).expect("read metadata");
     assert!(metadata.contains("\"run_directory_name\": \"2026-05-24T162600Z-a1b2c3d-0001\""));
+    let read_metadata =
+        read_benchmark_run_metadata(root.join("metadata.json")).expect("round-trip metadata");
+    assert_eq!(
+        read_metadata.benchmark_command.as_deref(),
+        Some("make \"test\"\nagain")
+    );
 
     fs::remove_dir_all(root).expect("clean temp dir");
 }
