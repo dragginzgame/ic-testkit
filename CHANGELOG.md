@@ -6,6 +6,24 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [Unreleased]
+
+## [0.1.2] - 2026-05-24 - README and report cleanup
+
+### Added
+
+- Writes `comparison.csv` alongside the benchmark summary so previous-run
+  comparison rows are available as a machine-readable report artifact.
+
+### Changed
+
+- Cleans up README and design-document wording now that canister-side
+  `Performance::measure` is a normal crate dependency rather than a feature.
+- Tightens the root README by removing duplicate examples and keeping a smaller
+  quick-reference shape.
+- Updates the crate-local README to link to the repository README on GitHub,
+  which is more useful from crates.io than a package-relative path.
+
 ## [0.1.1] - 2026-05-24 - Release hygiene cleanup
 
 ### Changed

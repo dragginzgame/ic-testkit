@@ -1,14 +1,11 @@
 [workspace]
-members = [
-    "crates/ic-testkit",
-    "canisters/test/perf_probe",
-]
+members = ["crates/ic-testkit", "canisters/test/perf_probe"]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
 rust-version = "1.88.0"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
 authors = ["borovan <84897664+borovan@users.noreply.github.com>"]
 description = "PocketIC-oriented test utilities for IC canister tests"

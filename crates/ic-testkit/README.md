@@ -14,5 +14,6 @@ provides:
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
 
-Most users should read the repository README at `../../README.md` for setup,
-examples, local checks, and release notes.
+Most users should read the
+[repository README](https://github.com/dragginzgame/ic-testkit#readme) for
+setup, examples, local checks, and release notes.

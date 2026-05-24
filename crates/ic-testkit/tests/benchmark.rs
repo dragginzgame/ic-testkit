@@ -299,8 +299,13 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
     assert!(root.join("spans.csv").exists());
     assert!(root.join("suite-aggregates.csv").exists());
     assert!(root.join("all-aggregates.csv").exists());
+    assert!(root.join("comparison.csv").exists());
     assert!(root.join("bench-summary.md").exists());
     assert!(root.join("metadata.json").exists());
+
+    let comparison_csv = fs::read_to_string(root.join("comparison.csv")).expect("read comparison");
+    assert!(comparison_csv.contains("app/myfunc/something"));
+    assert!(comparison_csv.contains("34.0000"));
 
     let summary = fs::read_to_string(root.join("bench-summary.md")).expect("read summary");
     assert!(summary.contains("| app/myfunc/something | 1 | 0.2342B (+34%)"));

@@ -20,8 +20,6 @@
 
 Use `pocket-ic` directly when you want the underlying simulator/runtime API. Use `ic-testkit` when you want typed Candid calls, install helpers, serialized PocketIC startup, cached baselines, deterministic fake principals, wasm artifact utilities, and compact benchmark reporting.
 
-`ic-testkit` is intentionally application-neutral. Bring your own init payloads, method names, canister graph, readiness checks, labels, thresholds, and CI policy.
-
 ## Install
 
 ```toml
@@ -34,25 +32,7 @@ ic-testkit = "0.1.1"
 
 ## Quick Start
 
-Use `PicSerialGuard` when a test owns a PocketIC instance. It serializes PocketIC usage across processes, which helps avoid shared server/resource exhaustion in larger test runs.
-
-```rust
-use ic_testkit::pic::{acquire_pic_serial_guard, pic};
-
-#[test]
-fn starts_a_pic_instance() {
-    let _guard = acquire_pic_serial_guard();
-    let pic = pic();
-
-    let canister_id = pic.create_canister();
-    pic.add_cycles(canister_id, 1_000_000_000_000);
-    pic.tick();
-}
-```
-
-## Calling Canisters
-
-`Pic` wraps common update/query calls with Candid encoding and decoding. Rejections include the canister id and method name.
+Use `PicSerialGuard` when a test owns a PocketIC instance. `Pic` then provides a small Candid-aware wrapper for common calls.
 
 ```rust,no_run
 use ic_testkit::pic::{acquire_pic_serial_guard, pic};
@@ -61,8 +41,6 @@ use ic_testkit::pic::{acquire_pic_serial_guard, pic};
 fn calls_a_counter_canister() {
     let _guard = acquire_pic_serial_guard();
     let pic = pic();
-    // Supply this from your own harness. It should install a wasm module and
-    // return the installed canister id.
     let counter = install_counter(&pic);
 
     let _: () = pic.update_call(counter, "increment", ()).unwrap();
@@ -72,20 +50,11 @@ fn calls_a_counter_canister() {
 }
 ```
 
-Use the `_as` variants when caller identity matters:
-
-```rust,no_run
-let caller = ic_testkit::Fake::principal(7);
-let ledger_id = ic_testkit::Fake::principal(100);
-
-let balance: u128 = pic
-    .query_call_as(ledger_id, caller, "balance_of", (caller,))
-    .unwrap();
-```
+Use `update_call_as` and `query_call_as` when caller identity matters.
 
 ## Installing Wasm
 
-For one-off tests, install a prebuilt wasm into a fresh PocketIC instance:
+Install a prebuilt wasm into a fresh PocketIC instance:
 
 ```rust,no_run
 use ic_testkit::{artifacts, pic::install_prebuilt_canister};
@@ -101,34 +70,11 @@ fn installs_a_prebuilt_canister() {
 }
 ```
 
-For an existing `Pic`, use the lower-level helper:
-
-```rust,no_run
-// `pic` is an ic_testkit::pic::Pic from your test setup.
-// `wasm` is a Vec<u8> containing the compiled canister wasm.
-let canister_id = pic.create_and_install_with_args(
-    wasm,
-    candid::encode_one(()).unwrap(),
-    1_000_000_000_000,
-);
-```
-
-If PocketIC reports install-code rate limiting, retry while advancing PocketIC time between attempts:
-
-```rust,no_run
-use std::time::Duration;
-
-// `pic` is an ic_testkit::pic::Pic from your test setup.
-// `wasm` is a Vec<u8> containing the compiled canister wasm.
-let result = pic.retry_install_code_ok(5, Duration::from_secs(5), || {
-    pic.try_create_and_install_with_args(wasm.clone(), vec![], 1_000_000_000_000)
-        .map_err(|err| err.to_string())
-});
-```
+For an existing `Pic`, use `create_and_install_with_args` or `try_create_and_install_with_args`. If PocketIC reports install-code rate limiting, `retry_install_code_ok` retries while advancing PocketIC time.
 
 ## Artifact Helpers
 
-Build wasm packages into a dedicated target directory:
+Build wasm packages into a dedicated target directory and check expected artifacts:
 
 ```rust,no_run
 use ic_testkit::artifacts;
@@ -151,36 +97,15 @@ assert!(artifacts::wasm_artifacts_ready(
 ));
 ```
 
-Check generated `.icp` artifacts against watched inputs:
-
-```rust,no_run
-use ic_testkit::artifacts;
-
-let workspace = artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"));
-
-let ready = artifacts::icp_artifact_ready_for_build(
-    &workspace,
-    ".icp/local/canisters/counter/counter.wasm.gz",
-    &["Cargo.toml", "src"],
-);
-```
+There are also helpers for reading wasm files and checking generated `.icp` artifacts against watched inputs.
 
 ## Benchmark Reports
 
-`ic_testkit::benchmark` turns compact canister log markers into parsed events, paired spans, aggregate rows, comparison rows, CSV files, and a Markdown summary.
-
-The default marker prefix is `ICTK`. The compact marker shape is:
+`ic_testkit::benchmark` turns compact canister log markers into parsed events, paired spans, aggregate rows, CSV files, and a Markdown summary. The default marker prefix is `ICTK`:
 
 ```text
 ICTK|<label>:start|<instructions>|<heap_bytes>|<memory_bytes>|<total_allocation>
 ICTK|<label>:end|<instructions>|<heap_bytes>|<memory_bytes>|<total_allocation>
-```
-
-Example:
-
-```text
-ICTK|app/myfunc/something:start|100|200|300|400
-ICTK|app/myfunc/something:end|150|260|390|430
 ```
 
 Parse, pair, and aggregate captured logs:
@@ -203,42 +128,7 @@ let aggregates = aggregate_benchmark_spans(&spans.spans);
 assert_eq!(aggregates.rows[0].span_label, "app/myfunc/something");
 ```
 
-If the harness captures stdout and stderr separately, use `parse_benchmark_events_from_captured_output(stdout, stderr, config)` to preserve the source stream for each marker. Separate streams do not carry global ordering, so this helper parses stdout first, then stderr. If a span can start on one stream and end on the other, capture combined output and use `parse_benchmark_events`.
-
-The report writer emits:
-
-- `raw-events.csv`
-- `spans.csv`
-- `suite-aggregates.csv`
-- `all-aggregates.csv`
-- `malformed-markers.csv`
-- `unpaired-markers.csv`
-- `invalid-spans.csv`
-- `bench-summary.md`
-- `metadata.json`
-
-The Markdown summary is optimized for quick cost review. Rows include the span label, run count, average instruction cost in billions, memory deltas in human units, and optional percentage changes against the previous run, for example `0.2342B (+34%)` and `+4.0 MB (-23%)`.
-
-Run helpers create directories such as `reports/runs/2026-05-24T162600Z-a1b2c3d-0001/` and discover the latest compatible previous run:
-
-```rust,no_run
-use ic_testkit::benchmark::{
-    find_latest_previous_run, next_benchmark_run_directory,
-};
-
-let run = next_benchmark_run_directory(
-    "reports/runs",
-    "2026-05-24T162600Z",
-    Some("a1b2c3d4e5f6"),
-)?;
-
-let previous = find_latest_previous_run(
-    "reports/runs",
-    &run.directory_name,
-    Some("make benchmark"),
-)?;
-# Ok::<(), std::io::Error>(())
-```
+The report writer emits CSV artifacts for raw events, spans, aggregates, malformed/unpaired/invalid markers, and comparisons, plus `bench-summary.md` and `metadata.json`. Run helpers create directories such as `reports/runs/2026-05-24T162600Z-a1b2c3d-0001/` and discover compatible previous runs.
 
 ## Canister-Side Markers
 
@@ -252,19 +142,11 @@ Performance::measure("app/myfunc/something:start");
 Performance::measure("app/myfunc/something:end");
 ```
 
-The helper prints the compact `ICTK|...` line with the IC CDK call-context instruction counter, Wasm linear memory size, stable memory size, and a `total_allocation` slot. `total_allocation` is currently emitted as `0` because the IC CDK does not expose Rust allocator total allocation.
-
-This repository includes a real PocketIC fixture canister under `canisters/test/perf_probe` so the marker path can be tested end to end:
-
-```sh
-make test-canisters
-```
+The helper prints the compact `ICTK|...` line with the IC CDK call-context instruction counter, Wasm linear memory size, stable memory size, and a `total_allocation` slot. The in-repo `canisters/test/perf_probe` fixture tests this end to end.
 
 ## Cached Baselines
 
-For expensive multi-canister setup, `CachedPicBaseline` can snapshot canisters once and restore them between tests. If the cached PocketIC instance has died, `restore_or_rebuild_cached_pic_baseline` rebuilds instead of reusing a broken instance.
-
-Use cached baselines when setup time dominates the test and the fixture can be restored from PocketIC snapshots. Keep application-specific topology and readiness logic in your own test harness.
+For expensive setup, `CachedPicBaseline` can snapshot canisters once and restore them between tests. If the cached PocketIC instance has died, `restore_or_rebuild_cached_pic_baseline` rebuilds instead of reusing a broken instance.
 
 ## Deterministic Test Identities
 
@@ -283,20 +165,14 @@ assert_eq!(account.owner, Fake::principal(42));
 
 ## What This Adds Over `pocket-ic`
 
-- `Pic`, a narrow wrapper for common PocketIC operations
-- typed startup errors for common PocketIC launch failures
+- `Pic` Candid query/update helpers with contextual errors
 - `PicSerialGuard` for cross-process PocketIC serialization
-- Candid query/update helpers with contextual errors
-- generic wasm install helpers and install-code retry helpers
-- canister status/log diagnostics
-- standalone prebuilt-wasm fixtures
-- cached snapshot baselines
+- generic wasm install helpers, retry helpers, diagnostics, and standalone fixtures
+- cached snapshot baselines for expensive test setup
 - deterministic fake principals and accounts
-- wasm path/build/readiness helpers
-- watched-input freshness checks for generated `.icp` artifacts
-- compact benchmark marker parsing, pairing, aggregation, comparison, and report writing
-- optional canister-side `Performance::measure` marker emission
-- an in-repo PocketIC fixture canister for testing the benchmark marker path
+- wasm path/build/readiness helpers, including generated `.icp` freshness checks
+- compact benchmark marker parsing, aggregation, comparison, and report writing
+- canister-side `Performance::measure` marker emission
 
 ## Boundaries
 

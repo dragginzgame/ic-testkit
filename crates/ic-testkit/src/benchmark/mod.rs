@@ -583,6 +583,10 @@ pub fn write_benchmark_report_dir(
         ),
     )?;
     fs::write(
+        path.join("comparison.csv"),
+        comparison_csv(report.comparison.as_ref()),
+    )?;
+    fs::write(
         path.join("bench-summary.md"),
         benchmark_summary_markdown(report),
     )?;
@@ -946,6 +950,33 @@ fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> 
     out
 }
 
+fn comparison_csv(comparison: Option<&BenchmarkComparisonReport>) -> String {
+    let mut out = String::from(
+        "suite,span_label,current_runs,previous_runs,instructions_avg_change_percent,heap_bytes_avg_change_percent,memory_bytes_avg_change_percent,total_allocation_avg_change_percent\n",
+    );
+
+    let Some(comparison) = comparison else {
+        return out;
+    };
+
+    for row in &comparison.rows {
+        let _ = writeln!(
+            out,
+            "{},{},{},{},{},{},{},{}",
+            csv_cell(&row.suite),
+            csv_cell(&row.span_label),
+            optional_u64_cell(row.current_runs),
+            optional_u64_cell(row.previous_runs),
+            optional_f64_cell(row.instructions_avg_change_percent),
+            optional_f64_cell(row.heap_bytes_avg_change_percent),
+            optional_f64_cell(row.memory_bytes_avg_change_percent),
+            optional_f64_cell(row.total_allocation_avg_change_percent)
+        );
+    }
+
+    out
+}
+
 fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
     let comparison_by_key = report.comparison.as_ref().map(|comparison| {
         comparison
@@ -1151,6 +1182,14 @@ fn csv_cell(value: &str) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn optional_u64_cell(value: Option<u64>) -> String {
+    value.map_or_else(String::new, |value| value.to_string())
+}
+
+fn optional_f64_cell(value: Option<f64>) -> String {
+    value.map_or_else(String::new, |value| format!("{value:.4}"))
 }
 
 fn markdown_cell(value: &str) -> String {
