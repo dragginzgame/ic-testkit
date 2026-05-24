@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+## [0.0.3] - 2026-05-24 - Documentation and release helpers
+
+- Clarifies that `ic-testkit` is a wrapper/helper layer around `pocket-ic` and
+  links directly to the upstream `pocket-ic` crate.
+- Adds the README audit warning banner while the crate surface is still being
+  reviewed.
+- Adds a centered README image banner and keeps the badge block at the top of
+  the project page.
+- Expands the Makefile with formatting, checking, Clippy, MSRV, packaging,
+  publish dry-run, and aggregate release-check targets.
+
 ## [0.0.2] - 2026-05-24 - Release polish
 
 - Removes crate-specific publishing blockers and sets the publishable MSRV to

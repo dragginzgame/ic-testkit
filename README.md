@@ -1,8 +1,7 @@
 <div align="center">
-
 # ic-testkit
 
-**Small, reusable test helpers around `pocket-ic` for Internet Computer canister tests.**
+**A small wrapper and helper layer around `pocket-ic` for Internet Computer canister tests.**
 
 [![Crates.io](https://img.shields.io/crates/v/ic-testkit.svg)](https://crates.io/crates/ic-testkit)
 [![Docs.rs](https://docs.rs/ic-testkit/badge.svg)](https://docs.rs/ic-testkit)
@@ -14,12 +13,21 @@
 [![PocketIC](https://img.shields.io/badge/PocketIC-13.0-green.svg)](Cargo.toml)
 [![Repository](https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg)](https://github.com/dragginzgame/ic-testkit)
 
+<p>
+
+<img src="images/cave.png" alt="ic-testkit banner" width="640">
 </div>
 
-`ic-testkit` is for host-side Rust tests that need a little structure on top of
-raw `pocket-ic`: typed Candid calls, install helpers, diagnostics, serialized
-PocketIC startup, cached baselines, deterministic fake principals, and wasm
-artifact utilities.
+`ic-testkit` is a wrapper around
+[`pocket-ic`](https://crates.io/crates/pocket-ic), the core local IC testing
+runtime this crate builds on. It does not replace `pocket-ic`; it adds a small,
+opinionated host-side layer for test suites that want typed Candid calls,
+install helpers, diagnostics, serialized PocketIC startup, cached baselines,
+deterministic fake principals, and wasm artifact utilities.
+
+If you need the underlying IC simulator/runtime itself, start with
+[`pocket-ic`](https://crates.io/crates/pocket-ic). Use `ic-testkit` when you
+want reusable Rust test harness conveniences on top of it.
 
 It is intentionally application-neutral. Bring your own init payloads, method
 names, readiness checks, fixture graph, and product-specific test policy.
@@ -30,6 +38,9 @@ names, readiness checks, fixture graph, and product-specific test policy.
 [dev-dependencies]
 ic-testkit = "0.0.1"
 ```
+
+> [!WARNING]
+> Do not use - some of this may be hallucinations, our best agents are currently auditing the code.
 
 ## Quick Start
 
