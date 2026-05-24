@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+## [0.0.2] - 2026-05-24 - Release polish
+
+- Removes crate-specific publishing blockers and sets the publishable MSRV to
+  Rust 1.88, which is the minimum supported by the current resolved dependency
+  graph without downgrading transitive dependencies.
+- Reworks the README into a more readable release page with badges, install
+  instructions, focused examples, feature summaries, toolchain notes, and
+  application-neutral boundaries.
+- Adds a small `Makefile` with `make test` as the quick local test entrypoint.
+- Adds this changelog in the same Keep a Changelog/SemVer style used by related
+  projects.
+
 ## [0.0.1] - 2026-05-24 - Initial release
 
 - Adds the initial generic PocketIC test helper surface: `Pic`, `PicBuilder`,
@@ -25,5 +37,4 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Adds generic wasm artifact helpers for path resolution, readiness checks,
   package builds, artifact reads, workspace target directories, and generated
   `.icp` artifact freshness checks.
-- Defines the first publishable crate metadata, README, Makefile test target,
-  MSRV policy, and release-readiness checks for downstream adoption.
+- Defines the first crate metadata and baseline README for downstream adoption.
