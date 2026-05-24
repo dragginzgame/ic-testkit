@@ -1,12 +1,6 @@
 # ic-testkit
 
-<p align="center">
-  <strong>A small wrapper and helper layer around <code>pocket-ic</code> for Internet Computer canister tests.</strong>
-</p>
-
-<p align="center">
-  <img src="images/cave.png" alt="ic-testkit banner" width="640">
-</p>
+#### A small wrapper and helper layer around <code>pocket-ic</code> for Internet Computer canister tests.
 
 <p align="center">
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/v/ic-testkit.svg" alt="Crates.io"></a>
@@ -22,6 +16,12 @@
 
 `ic-testkit` is a wrapper around [`pocket-ic`](https://crates.io/crates/pocket-ic), the core local IC testing runtime this crate builds on. It does not replace `pocket-ic`; it adds a small, opinionated host-side layer for test suites that want typed Candid calls, install helpers, diagnostics, serialized PocketIC startup, cached baselines, deterministic fake principals, and wasm artifact utilities.
 
+<p align="center">
+  <img src="images/cave.png" alt="ic-testkit banner" width="640">
+</p>
+
+
+
 If you need the underlying IC simulator/runtime itself, start with [`pocket-ic`](https://crates.io/crates/pocket-ic). Use `ic-testkit` when you want reusable Rust test harness conveniences on top of it.
 
 It is intentionally application-neutral. Bring your own init payloads, method names, readiness checks, fixture graph, and product-specific test policy.
@@ -30,7 +30,7 @@ It is intentionally application-neutral. Bring your own init payloads, method na
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.0.1"
+ic-testkit = "0.0.4"
 ```
 
 > [!WARNING]
@@ -58,13 +58,17 @@ fn starts_a_pic_instance() {
 
 `Pic` wraps common update/query calls with Candid encoding and decoding. The error includes the canister id and method name when PocketIC rejects the call.
 
-```rust
+Examples marked `no_run` assume your test harness supplies the application-specific wasm, install helper, or fixture setup.
+
+```rust,no_run
 use ic_testkit::pic::{acquire_pic_serial_guard, pic};
 
 #[test]
 fn calls_a_counter_canister() {
     let _guard = acquire_pic_serial_guard();
     let pic = pic();
+    // Provide this from your own test harness. It should install a wasm module
+    // and return the installed canister id.
     let counter = install_counter(&pic);
 
     let _: () = pic.update_call(counter, "increment", ()).unwrap();
@@ -76,9 +80,10 @@ fn calls_a_counter_canister() {
 
 Use the `_as` variants when the caller matters:
 
-```rust
+```rust,no_run
 use candid::Principal;
 
+// `pic` is an ic_testkit::pic::Pic from your test setup.
 let caller = ic_testkit::Fake::principal(7);
 let ledger_id = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap();
 
@@ -91,7 +96,7 @@ let balance: u128 = pic
 
 For one-off tests, install a prebuilt wasm into a fresh PocketIC instance:
 
-```rust
+```rust,no_run
 use ic_testkit::{artifacts, pic::install_prebuilt_canister};
 
 #[test]
@@ -101,7 +106,7 @@ fn installs_a_prebuilt_canister() {
     let wasm = artifacts::read_wasm(
         &target,
         "counter_canister",
-        artifacts::WasmBuildProfile::Release,
+        "release",
     );
 
     let fixture = install_prebuilt_canister(wasm, vec![]);
@@ -111,7 +116,10 @@ fn installs_a_prebuilt_canister() {
 
 For existing `Pic` instances, use the lower-level helper:
 
-```rust
+```rust,no_run
+// `pic` is an ic_testkit::pic::Pic from your test setup.
+// `wasm` is a Vec<u8> containing the compiled canister wasm.
+
 let canister_id = pic.create_and_install_with_args(
     wasm,
     candid::encode_one(()).unwrap(),
@@ -121,8 +129,11 @@ let canister_id = pic.create_and_install_with_args(
 
 If PocketIC reports install-code rate limiting, retry while advancing PocketIC time between attempts:
 
-```rust
+```rust,no_run
 use std::time::Duration;
+
+// `pic` is an ic_testkit::pic::Pic from your test setup.
+// `wasm` is a Vec<u8> containing the compiled canister wasm.
 
 let result = pic.retry_install_code_ok(5, Duration::from_secs(5), || {
     pic.try_create_and_install_with_args(wasm.clone(), vec![], 1_000_000_000_000)
@@ -134,8 +145,8 @@ let result = pic.retry_install_code_ok(5, Duration::from_secs(5), || {
 
 Build wasm packages into a dedicated target directory:
 
-```rust
-use ic_testkit::artifacts::{self, WasmBuildProfile};
+```rust,no_run
+use ic_testkit::artifacts;
 
 let workspace = artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"));
 let target = artifacts::test_target_dir(&workspace, "pic-wasm");
@@ -144,20 +155,24 @@ artifacts::build_wasm_canisters(
     &workspace,
     &target,
     &["counter_canister"],
-    WasmBuildProfile::Release,
+    &["--release"],
     &[],
 );
 
 assert!(artifacts::wasm_artifacts_ready(
     &target,
     &["counter_canister"],
-    WasmBuildProfile::Release,
+    "release",
 ));
 ```
 
 Check generated `.icp` artifacts against watched inputs:
 
-```rust
+```rust,no_run
+use ic_testkit::artifacts;
+
+let workspace = artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+
 let ready = artifacts::icp_artifact_ready_for_build(
     &workspace,
     ".icp/local/canisters/counter/counter.wasm.gz",

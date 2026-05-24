@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+## [0.0.5] - 2026-05-24 - Generic artifact profiles
+
+- Removes the hardcoded `WasmBuildProfile` enum so `ic-testkit` no longer owns
+  project-specific build profile names such as `fast`.
+- Changes wasm artifact helpers to accept caller-provided Cargo profile
+  arguments and target profile directory names.
+- Updates README examples and artifact-helper tests to show explicit caller
+  profile choices instead of crate-owned profile variants.
+
 ## [0.0.4] - 2026-05-24 - README presentation cleanup
 
 - Reworks the README header so the title remains Markdown while the tagline,
