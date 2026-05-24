@@ -1,7 +1,7 @@
 [package]
 name = "ic-testkit"
 edition = "2024"
-rust-version = "1.91.0"
+rust-version = "1.88.0"
 version = "0.0.1"
 license = "MIT"
 authors = ["borovan <84897664+borovan@users.noreply.github.com>"]
@@ -10,7 +10,6 @@ readme = "README.md"
 repository = "https://github.com/dragginzgame/ic-testkit"
 keywords = ["internet-computer", "canister", "dfinity", "icp", "testing"]
 categories = ["development-tools::testing", "wasm"]
-publish = false
 
 [dependencies]
 candid = { version = "0.10", default-features = false }

@@ -5,6 +5,10 @@ Reusable PocketIC-oriented test utilities for IC canister tests.
 Use this crate when you want generic host-side test infrastructure that can be
 shared across IC canister projects.
 
+Toolchains:
+- MSRV: Rust 1.88
+- internal build/test lane: Rust 1.95
+
 What it adds over raw `pocket-ic`:
 - a narrower `Pic` wrapper that exposes the PocketIC operations this crate
   supports as a stable test surface
