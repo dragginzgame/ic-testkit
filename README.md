@@ -1,36 +1,30 @@
-<div align="center">
 # ic-testkit
 
-**A small wrapper and helper layer around `pocket-ic` for Internet Computer canister tests.**
+<p align="center">
+  <strong>A small wrapper and helper layer around <code>pocket-ic</code> for Internet Computer canister tests.</strong>
+</p>
 
-[![Crates.io](https://img.shields.io/crates/v/ic-testkit.svg)](https://crates.io/crates/ic-testkit)
-[![Docs.rs](https://docs.rs/ic-testkit/badge.svg)](https://docs.rs/ic-testkit)
-[![Downloads](https://img.shields.io/crates/d/ic-testkit.svg)](https://crates.io/crates/ic-testkit)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](Cargo.toml)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88.0-blue.svg)](Cargo.toml)
-[![Internal Rust](https://img.shields.io/badge/internal%20rust-1.95.0-orange.svg)](README.md#toolchains)
-[![Edition](https://img.shields.io/badge/edition-2024-purple.svg)](Cargo.toml)
-[![PocketIC](https://img.shields.io/badge/PocketIC-13.0-green.svg)](Cargo.toml)
-[![Repository](https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg)](https://github.com/dragginzgame/ic-testkit)
+<p align="center">
+  <img src="images/cave.png" alt="ic-testkit banner" width="640">
+</p>
 
-<p>
+<p align="center">
+  <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/v/ic-testkit.svg" alt="Crates.io"></a>
+  <a href="https://docs.rs/ic-testkit"><img src="https://docs.rs/ic-testkit/badge.svg" alt="Docs.rs"></a>
+  <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/d/ic-testkit.svg" alt="Downloads"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
+  <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.95.0-orange.svg" alt="Internal Rust"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-13.0-green.svg" alt="PocketIC"></a>
+  <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
+</p>
 
-<img src="images/cave.png" alt="ic-testkit banner" width="640">
-</div>
+`ic-testkit` is a wrapper around [`pocket-ic`](https://crates.io/crates/pocket-ic), the core local IC testing runtime this crate builds on. It does not replace `pocket-ic`; it adds a small, opinionated host-side layer for test suites that want typed Candid calls, install helpers, diagnostics, serialized PocketIC startup, cached baselines, deterministic fake principals, and wasm artifact utilities.
 
-`ic-testkit` is a wrapper around
-[`pocket-ic`](https://crates.io/crates/pocket-ic), the core local IC testing
-runtime this crate builds on. It does not replace `pocket-ic`; it adds a small,
-opinionated host-side layer for test suites that want typed Candid calls,
-install helpers, diagnostics, serialized PocketIC startup, cached baselines,
-deterministic fake principals, and wasm artifact utilities.
+If you need the underlying IC simulator/runtime itself, start with [`pocket-ic`](https://crates.io/crates/pocket-ic). Use `ic-testkit` when you want reusable Rust test harness conveniences on top of it.
 
-If you need the underlying IC simulator/runtime itself, start with
-[`pocket-ic`](https://crates.io/crates/pocket-ic). Use `ic-testkit` when you
-want reusable Rust test harness conveniences on top of it.
-
-It is intentionally application-neutral. Bring your own init payloads, method
-names, readiness checks, fixture graph, and product-specific test policy.
+It is intentionally application-neutral. Bring your own init payloads, method names, readiness checks, fixture graph, and product-specific test policy.
 
 ## Install
 
@@ -44,9 +38,7 @@ ic-testkit = "0.0.1"
 
 ## Quick Start
 
-Use `PicSerialGuard` when a test owns a PocketIC instance. It serializes
-PocketIC usage across processes, which helps avoid shared server/resource
-exhaustion in larger test runs.
+Use `PicSerialGuard` when a test owns a PocketIC instance. It serializes PocketIC usage across processes, which helps avoid shared server/resource exhaustion in larger test runs.
 
 ```rust
 use ic_testkit::pic::{acquire_pic_serial_guard, pic};
@@ -64,8 +56,7 @@ fn starts_a_pic_instance() {
 
 ## Calling Canisters
 
-`Pic` wraps common update/query calls with Candid encoding and decoding. The
-error includes the canister id and method name when PocketIC rejects the call.
+`Pic` wraps common update/query calls with Candid encoding and decoding. The error includes the canister id and method name when PocketIC rejects the call.
 
 ```rust
 use ic_testkit::pic::{acquire_pic_serial_guard, pic};
@@ -128,8 +119,7 @@ let canister_id = pic.create_and_install_with_args(
 );
 ```
 
-If PocketIC reports install-code rate limiting, retry while advancing PocketIC
-time between attempts:
+If PocketIC reports install-code rate limiting, retry while advancing PocketIC time between attempts:
 
 ```rust
 use std::time::Duration;
@@ -192,14 +182,9 @@ assert_eq!(account.owner, Fake::principal(42));
 
 ## Cached Baselines
 
-For expensive multi-canister setup, `CachedPicBaseline` can snapshot canisters
-once and restore them between tests. If the cached PocketIC instance has died,
-`restore_or_rebuild_cached_pic_baseline` rebuilds instead of reusing a broken
-instance.
+For expensive multi-canister setup, `CachedPicBaseline` can snapshot canisters once and restore them between tests. If the cached PocketIC instance has died, `restore_or_rebuild_cached_pic_baseline` rebuilds instead of reusing a broken instance.
 
-Use this when setup time dominates the test and the fixture can be restored from
-PocketIC snapshots. Keep application-specific topology and readiness logic in
-your own test harness.
+Use this when setup time dominates the test and the fixture can be restored from PocketIC snapshots. Keep application-specific topology and readiness logic in your own test harness.
 
 ## What This Adds Over `pocket-ic`
 
@@ -217,10 +202,7 @@ your own test harness.
 
 ## Boundaries
 
-This crate does not define application init payloads, endpoint names, role
-models, readiness polling, canister graph topology, attestation policy, or broad
-self-test orchestration. Those belong in the application or framework that owns
-the canisters being tested.
+This crate does not define application init payloads, endpoint names, role models, readiness polling, canister graph topology, attestation policy, or broad self-test orchestration. Those belong in the application or framework that owns the canisters being tested.
 
 ## Toolchains
 

@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+## [0.0.4] - 2026-05-24 - README presentation cleanup
+
+- Reworks the README header so the title remains Markdown while the tagline,
+  banner image, and badges are cleanly centered with GitHub-supported HTML.
+- Replaces the mixed Markdown/HTML image block with a single centered
+  `images/cave.png` banner.
+- Reflows README prose to remove unnecessary hard line breaks while preserving
+  code blocks, lists, and badge markup.
+
 ## [0.0.3] - 2026-05-24 - Documentation and release helpers
 
 - Clarifies that `ic-testkit` is a wrapper/helper layer around `pocket-ic` and
