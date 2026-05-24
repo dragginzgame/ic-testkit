@@ -14,13 +14,11 @@
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
 </p>
 
-`ic-testkit` is a wrapper around [`pocket-ic`](https://crates.io/crates/pocket-ic), the core local IC testing runtime this crate builds on. It does not replace `pocket-ic`; it adds a small, opinionated host-side layer for test suites that want typed Candid calls, install helpers, diagnostics, serialized PocketIC startup, cached baselines, deterministic fake principals, and wasm artifact utilities.
-
 <p align="center">
   <img src="images/cave.png" alt="ic-testkit banner" width="640">
 </p>
 
-
+`ic-testkit` is a wrapper around [`pocket-ic`](https://crates.io/crates/pocket-ic), the core local IC testing runtime this crate builds on. It does not replace `pocket-ic`; it adds a small, opinionated host-side layer for test suites that want typed Candid calls, install helpers, diagnostics, serialized PocketIC startup, cached baselines, deterministic fake principals, and wasm artifact utilities.
 
 If you need the underlying IC simulator/runtime itself, start with [`pocket-ic`](https://crates.io/crates/pocket-ic). Use `ic-testkit` when you want reusable Rust test harness conveniences on top of it.
 
@@ -81,11 +79,9 @@ fn calls_a_counter_canister() {
 Use the `_as` variants when the caller matters:
 
 ```rust,no_run
-use candid::Principal;
-
 // `pic` is an ic_testkit::pic::Pic from your test setup.
 let caller = ic_testkit::Fake::principal(7);
-let ledger_id = Principal::from_text("ryjl3-tyaaa-aaaaa-aaaba-cai").unwrap();
+let ledger_id = ic_testkit::Fake::principal(100);
 
 let balance: u128 = pic
     .query_call_as(ledger_id, caller, "balance_of", (caller,))

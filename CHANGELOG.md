@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Unreleased
 
+## [0.0.6] - 2026-05-24 - Genericity audit cleanup
+
+- Neutralizes remaining example/test specifics from the extracted harness by
+  using generic fake principals in README examples instead of a real ledger
+  principal.
+- Changes `.icp` artifact tests to use a generic `counter` canister path instead
+  of a root-canister path.
+- Clarifies `.icp` artifact readiness docs so they describe freshness and
+  nonempty artifact checks, not removed build-environment stamp behavior.
+
 ## [0.0.5] - 2026-05-24 - Generic artifact profiles
 
 - Removes the hardcoded `WasmBuildProfile` enum so `ic-testkit` no longer owns

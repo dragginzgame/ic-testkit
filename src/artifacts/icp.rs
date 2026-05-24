@@ -24,7 +24,7 @@ impl WatchedInputSnapshot {
     }
 }
 
-/// Check whether an ICP artifact exists, is fresh, and matches the expected build env.
+/// Check whether an ICP artifact exists, is nonempty, and is fresh against watched inputs.
 #[must_use]
 pub fn icp_artifact_ready_for_build(
     workspace_root: &Path,
@@ -103,14 +103,15 @@ mod tests {
             .expect("system time before epoch")
             .as_nanos();
         let path = std::env::temp_dir().join(format!("ic-testkit-icp-artifact-test-{unique}"));
-        fs::create_dir_all(path.join(".icp/local/canisters/root")).expect("create temp workspace");
+        fs::create_dir_all(path.join(".icp/local/canisters/counter"))
+            .expect("create temp workspace");
         path
     }
 
     #[test]
     fn icp_artifact_ready_requires_fresh_nonempty_artifact() {
         let workspace_root = temp_workspace();
-        let artifact_relative_path = ".icp/local/canisters/root/root.wasm.gz";
+        let artifact_relative_path = ".icp/local/canisters/counter/counter.wasm.gz";
         let artifact_path = workspace_root.join(artifact_relative_path);
         fs::write(workspace_root.join("Cargo.toml"), "workspace").expect("write watched input");
         sleep(Duration::from_millis(20));
