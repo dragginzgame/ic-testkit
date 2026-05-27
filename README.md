@@ -8,7 +8,7 @@
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
   <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.95.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-13.0-green.svg" alt="PocketIC"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-14.0-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
 </p>
 

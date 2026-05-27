@@ -2,7 +2,7 @@ use super::{
     Pic, PicSerialGuard, StandaloneCanisterFixtureError, try_acquire_pic_serial_guard, try_pic,
 };
 
-const STANDALONE_INSTALL_CYCLES: u128 = 1_000_000_000_000;
+const DEFAULT_EXTRA_INSTALL_CYCLES: u128 = 0;
 
 ///
 /// StandaloneCanisterFixture
@@ -54,7 +54,7 @@ pub fn try_install_prebuilt_canister(
     wasm: Vec<u8>,
     init_bytes: Vec<u8>,
 ) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
-    try_install_prebuilt_canister_with_cycles(wasm, init_bytes, STANDALONE_INSTALL_CYCLES)
+    try_install_prebuilt_canister_with_cycles(wasm, init_bytes, DEFAULT_EXTRA_INSTALL_CYCLES)
 }
 
 // Install one already-built wasm module into a fresh PocketIC instance with

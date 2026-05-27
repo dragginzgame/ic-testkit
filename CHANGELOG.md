@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-27 - PocketIC 14 compatibility
+
+### Changed
+
+- Updates the workspace `pocket-ic` dependency to 14.0.
+- Stops adding default extra cycles in standalone PocketIC install helpers now
+  that `pocket-ic` 14 creates canisters with 100T cycles by default.
+
 ## [0.1.2] - 2026-05-24 - README and report cleanup
 
 ### Added

@@ -95,7 +95,7 @@ impl Pic {
         op()
     }
 
-    // Install a canister after creating it and funding it with cycles.
+    // Install a canister after creating it and optionally adding extra cycles.
     fn try_create_funded_and_install(
         &self,
         wasm: Vec<u8>,
@@ -103,7 +103,9 @@ impl Pic {
         install_cycles: u128,
     ) -> Result<Principal, PicInstallError> {
         let canister_id = self.create_canister();
-        self.add_cycles(canister_id, install_cycles);
+        if install_cycles > 0 {
+            self.add_cycles(canister_id, install_cycles);
+        }
 
         let install = catch_unwind(AssertUnwindSafe(|| {
             self.inner
