@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-27 - Funded snapshot restore
+
+### Fixed
+
+- Tops up low-cycle canisters before cached baseline snapshot restore so
+  `load_canister_snapshot` can pay its management-operation cost before the
+  snapshot state is restored.
+
 ## [0.1.3] - 2026-05-27 - PocketIC 14 compatibility
 
 ### Changed

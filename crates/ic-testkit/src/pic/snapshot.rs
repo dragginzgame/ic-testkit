@@ -4,6 +4,8 @@ use candid::Principal;
 
 use super::{ControllerSnapshots, Pic};
 
+const SNAPSHOT_RESTORE_MIN_CYCLES: u128 = 200_000_000_000_000;
+
 impl Pic {
     /// Capture one restorable snapshot per canister using a shared controller.
     pub fn capture_controller_snapshots<I>(
@@ -82,6 +84,7 @@ impl Pic {
         let mut last_err = None;
 
         for sender in candidates {
+            self.ensure_snapshot_restore_cycles(canister_id);
             match self
                 .inner
                 .load_canister_snapshot(canister_id, sender, snapshot_id.to_vec())
@@ -96,6 +99,14 @@ impl Pic {
         panic!(
             "failed to restore canister snapshot for {canister_id} using sender {sender:?}: {err}"
         );
+    }
+
+    fn ensure_snapshot_restore_cycles(&self, canister_id: Principal) {
+        let balance = self.inner.cycle_balance(canister_id);
+        if balance < SNAPSHOT_RESTORE_MIN_CYCLES {
+            let top_up = SNAPSHOT_RESTORE_MIN_CYCLES - balance;
+            let _ = self.inner.add_cycles(canister_id, top_up);
+        }
     }
 }
 
