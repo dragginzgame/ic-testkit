@@ -2,7 +2,7 @@ use candid::{CandidType, Principal, utils::ArgumentEncoder};
 use serde::de::DeserializeOwned;
 
 use super::{
-    Pic, PicCallError, PicSerialGuard, StandaloneCanisterFixtureError,
+    InstallSpec, Pic, PicCallError, PicSerialGuard, StandaloneCanisterFixtureError,
     try_acquire_pic_serial_guard, try_pic,
 };
 
@@ -165,7 +165,11 @@ pub fn try_install_prebuilt_canister(
     wasm: Vec<u8>,
     init_bytes: Vec<u8>,
 ) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
-    try_install_prebuilt_canister_with_cycles(wasm, init_bytes, DEFAULT_EXTRA_INSTALL_CYCLES)
+    try_install_prebuilt_canister_from_spec(InstallSpec::new(
+        wasm,
+        init_bytes,
+        DEFAULT_EXTRA_INSTALL_CYCLES,
+    ))
 }
 
 // Install one already-built wasm module into a fresh PocketIC instance with
@@ -187,11 +191,27 @@ pub fn try_install_prebuilt_canister_with_cycles(
     init_bytes: Vec<u8>,
     install_cycles: u128,
 ) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
+    try_install_prebuilt_canister_from_spec(InstallSpec::new(wasm, init_bytes, install_cycles))
+}
+
+// Install one already-built wasm module from a generic install specification
+// into a fresh PocketIC instance.
+#[must_use]
+pub fn install_prebuilt_canister_from_spec(spec: InstallSpec) -> StandaloneCanisterFixture {
+    try_install_prebuilt_canister_from_spec(spec)
+        .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
+}
+
+// Install one already-built wasm module from a generic install specification
+// into a fresh PocketIC instance.
+pub fn try_install_prebuilt_canister_from_spec(
+    spec: InstallSpec,
+) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
     let serial_guard =
         try_acquire_pic_serial_guard().map_err(StandaloneCanisterFixtureError::SerialGuard)?;
     let pic = try_pic().map_err(StandaloneCanisterFixtureError::Start)?;
     let canister_id = pic
-        .try_create_and_install_with_args(wasm, init_bytes, install_cycles)
+        .try_create_and_install(spec)
         .map_err(StandaloneCanisterFixtureError::Install)?;
 
     Ok(StandaloneCanisterFixture {

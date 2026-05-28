@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-05-28 - Standalone InstallSpec fixtures
+
+### Added
+
+- Adds `install_prebuilt_canister_from_spec` and
+  `try_install_prebuilt_canister_from_spec` so standalone fixtures can use
+  `InstallSpec` labels and install senders while preserving the
+  `StandaloneCanisterFixture` wrapper.
+
+### Changed
+
+- Routes existing standalone prebuilt-canister install helpers through
+  `InstallSpec` internally so standalone fixture install behavior stays
+  consistent across the simple and explicit APIs.
+
 ## [0.1.8] - 2026-05-28 - Structured call errors and labeled installs
 
 ### Added

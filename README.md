@@ -110,6 +110,20 @@ fn installs_a_prebuilt_canister() {
 }
 ```
 
+Use `install_prebuilt_canister_from_spec` when a standalone fixture needs an
+explicit install sender or diagnostic label:
+
+```rust,no_run
+use candid::{Principal, encode_one};
+use ic_testkit::pic::{InstallSpec, install_prebuilt_canister_from_spec};
+
+let fixture = install_prebuilt_canister_from_spec(
+    InstallSpec::new(counter_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
+        .install_sender(Principal::anonymous())
+        .label("counter"),
+);
+```
+
 For an existing `Pic`, use `create_and_install_with_args` or
 `try_create_and_install_with_args`. Use `InstallSpec` when you want an explicit
 install sender, a diagnostic label, or sequential batch installs:

@@ -32,8 +32,9 @@ pub use runtime::PicRuntimeConfig;
 pub use startup::PicStartError;
 
 pub use standalone::{
-    StandaloneCanisterFixture, install_prebuilt_canister, install_prebuilt_canister_with_cycles,
-    try_install_prebuilt_canister, try_install_prebuilt_canister_with_cycles,
+    StandaloneCanisterFixture, install_prebuilt_canister, install_prebuilt_canister_from_spec,
+    install_prebuilt_canister_with_cycles, try_install_prebuilt_canister,
+    try_install_prebuilt_canister_from_spec, try_install_prebuilt_canister_with_cycles,
 };
 
 ///
