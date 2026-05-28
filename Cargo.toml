@@ -5,7 +5,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 rust-version = "1.88.0"
-version = "0.1.4"
+version = "0.1.5"
 license = "MIT"
 authors = ["borovan <84897664+borovan@users.noreply.github.com>"]
 description = "PocketIC-oriented test utilities for IC canister tests"
@@ -17,11 +17,17 @@ readme = "README.md"
 
 [workspace.dependencies]
 candid = { version = "0.10", default-features = false }
+flate2 = "1.1"
 ic-cdk = "0.20.1"
 ic-testkit = { path = "crates/ic-testkit" }
 pocket-ic = "14.0"
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "rustls-tls",
+] }
 serde = { version = "1.0", default-features = false }
 serde_json = "1.0"
+sha2 = "0.10"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

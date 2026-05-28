@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-28 - PocketIC binary resolution
+
+### Added
+
+- Adds `ic_testkit::pic::ensure_pocket_ic_bin()` and
+  `ic_testkit::pic::try_ensure_pocket_ic_bin()` for resolving the PocketIC
+  server binary before startup.
+- Adds `PicRuntimeConfig` so callers can configure PocketIC server binary
+  resolution from environment or code, including cache directory, default-off
+  download policy, and optional SHA-256 verification.
+- Supports existing `POCKET_IC_BIN` first, then
+  `IC_TESTKIT_POCKET_IC_CACHE_DIR`, `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1`,
+  and `POCKET_IC_SERVER_SHA256`.
+
+### Changed
+
+- Resolves and validates the PocketIC server binary in `PicBuilder::try_build()`
+  before calling into `pocket-ic`, returning `PicStartError::BinaryUnavailable`
+  with setup guidance when no usable binary is available.
+- Skips the repository perf-probe integration test cleanly when no PocketIC
+  server binary is configured and downloads are not enabled.
+- Documents the PocketIC server binary setup and cache behavior in the README.
+
 ## [0.1.4] - 2026-05-27 - Funded snapshot restore
 
 ### Fixed

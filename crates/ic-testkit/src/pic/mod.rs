@@ -12,6 +12,7 @@ mod diagnostics;
 mod errors;
 mod lifecycle;
 mod process_lock;
+mod runtime;
 mod snapshot;
 mod standalone;
 mod startup;
@@ -24,6 +25,7 @@ pub use errors::{PicCallError, PicInstallError, StandaloneCanisterFixtureError};
 pub use process_lock::{
     PicSerialGuard, PicSerialGuardError, acquire_pic_serial_guard, try_acquire_pic_serial_guard,
 };
+pub use runtime::PicRuntimeConfig;
 pub use startup::PicStartError;
 
 pub use standalone::{
@@ -49,6 +51,18 @@ pub fn try_pic() -> Result<Pic, PicStartError> {
     PicBuilder::new().with_application_subnet().try_build()
 }
 
+/// Resolve the PocketIC server binary from environment/config and panic on failure.
+#[must_use]
+pub fn ensure_pocket_ic_bin() -> std::path::PathBuf {
+    try_ensure_pocket_ic_bin()
+        .unwrap_or_else(|err| panic!("failed to resolve PocketIC server binary: {err}"))
+}
+
+/// Resolve the PocketIC server binary from environment/config without panicking.
+pub fn try_ensure_pocket_ic_bin() -> Result<std::path::PathBuf, PicStartError> {
+    runtime::ensure_pocket_ic_bin_from_env()
+}
+
 ///
 /// PicBuilder
 /// Thin wrapper around the PocketIC builder.
@@ -59,34 +73,54 @@ pub fn try_pic() -> Result<Pic, PicStartError> {
 /// Note: this file is test-only infrastructure; simplicity wins over abstraction.
 ///
 
-pub struct PicBuilder(PocketIcBuilder);
+pub struct PicBuilder {
+    inner: PocketIcBuilder,
+    runtime_config: PicRuntimeConfig,
+}
 
 #[expect(clippy::new_without_default)]
 impl PicBuilder {
     /// Start a new PicBuilder with sensible defaults.
     #[must_use]
     pub fn new() -> Self {
-        Self(PocketIcBuilder::new())
+        Self {
+            inner: PocketIcBuilder::new(),
+            runtime_config: PicRuntimeConfig::from_env(),
+        }
+    }
+
+    /// Override the runtime policy used to resolve the PocketIC server binary.
+    #[must_use]
+    pub fn with_runtime_config(mut self, runtime_config: PicRuntimeConfig) -> Self {
+        self.runtime_config = runtime_config;
+        self
+    }
+
+    /// Use one explicit PocketIC server binary path.
+    #[must_use]
+    pub fn with_server_binary(mut self, server_binary: impl Into<std::path::PathBuf>) -> Self {
+        self.runtime_config = self.runtime_config.pocket_ic_bin(server_binary);
+        self
     }
 
     /// Include an application subnet in the PocketIC instance.
     #[must_use]
     pub fn with_application_subnet(mut self) -> Self {
-        self.0 = self.0.with_application_subnet();
+        self.inner = self.inner.with_application_subnet();
         self
     }
 
     /// Include an II subnet so threshold keys are available in the PocketIC instance.
     #[must_use]
     pub fn with_ii_subnet(mut self) -> Self {
-        self.0 = self.0.with_ii_subnet();
+        self.inner = self.inner.with_ii_subnet();
         self
     }
 
     /// Include an NNS subnet in the PocketIC instance.
     #[must_use]
     pub fn with_nns_subnet(mut self) -> Self {
-        self.0 = self.0.with_nns_subnet();
+        self.inner = self.inner.with_nns_subnet();
         self
     }
 
@@ -99,7 +133,8 @@ impl PicBuilder {
 
     /// Finish building the PocketIC instance without panicking on startup failures.
     pub fn try_build(self) -> Result<Pic, PicStartError> {
-        startup::try_build_pic(self.0)
+        let server_binary = self.runtime_config.ensure_binary()?;
+        startup::try_build_pic(self.inner.with_server_binary(server_binary))
     }
 }
 /// Pic

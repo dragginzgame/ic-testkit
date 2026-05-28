@@ -5,7 +5,7 @@ use ic_testkit::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
-    pic::install_prebuilt_canister,
+    pic::{PicStartError, install_prebuilt_canister, try_ensure_pocket_ic_bin},
 };
 use std::{fs, path::PathBuf};
 
@@ -20,6 +20,13 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     {
         eprintln!("skipping perf probe canister test: fixture canister is not packaged");
         return;
+    }
+    if let Err(err) = try_ensure_pocket_ic_bin() {
+        if matches!(err, PicStartError::BinaryUnavailable { .. }) {
+            eprintln!("skipping perf probe canister test: {err}");
+            return;
+        }
+        panic!("failed to resolve PocketIC server binary: {err}");
     }
 
     let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");

@@ -52,6 +52,35 @@ fn calls_a_counter_canister() {
 
 Use `update_call_as` and `query_call_as` when caller identity matters.
 
+## PocketIC Server Binary
+
+`ic-testkit` resolves the PocketIC server binary before starting `pocket-ic`.
+By default it uses `POCKET_IC_BIN` when set, then checks a versioned cache path
+under the system temp directory such as `/tmp/pocket-ic-server-14.0.0/pocket-ic`.
+If the binary is missing, `try_pic()` returns `PicStartError::BinaryUnavailable`
+with setup guidance instead of letting `pocket-ic` panic.
+
+Supported configuration:
+
+- `POCKET_IC_BIN=/trusted/path`: use an existing ungzipped executable binary
+- `IC_TESTKIT_POCKET_IC_CACHE_DIR=...`: override the cache root
+- `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1`: download the pinned server on cache miss
+- `POCKET_IC_SERVER_SHA256=...`: verify the ungzipped binary SHA-256
+
+You can also resolve the binary directly:
+
+```rust,no_run
+use ic_testkit::pic::{PicRuntimeConfig, try_ensure_pocket_ic_bin};
+
+let binary = try_ensure_pocket_ic_bin()?;
+
+let cached = PicRuntimeConfig::from_env()
+    .allow_download(true)
+    .cache_dir(".cache")
+    .ensure_binary()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
 ## Installing Wasm
 
 Install a prebuilt wasm into a fresh PocketIC instance:
