@@ -1,7 +1,7 @@
 use candid::{CandidType, Principal, decode_one, encode_args, utils::ArgumentEncoder};
 use serde::de::DeserializeOwned;
 
-use super::{Pic, PicCallError};
+use super::{Pic, PicCallContext, PicCallError};
 
 #[derive(Clone, Copy)]
 struct CallContext<'a> {
@@ -9,6 +9,12 @@ struct CallContext<'a> {
     canister_id: Principal,
     caller: Principal,
     method: &'a str,
+}
+
+impl CallContext<'_> {
+    fn to_error_context(self) -> PicCallContext {
+        PicCallContext::new(self.operation, self.canister_id, self.caller, self.method)
+    }
 }
 
 impl Pic {
@@ -62,11 +68,7 @@ impl Pic {
         let result = self
             .inner
             .update_call(canister_id, caller, method, bytes)
-            .map_err(|err| {
-                PicCallError::new(format!(
-                    "pocket_ic update_call failed (canister={canister_id}, caller={caller}, method={method}): {err}"
-                ))
-            })?;
+            .map_err(|err| PicCallError::transport(context.to_error_context(), err))?;
 
         decode_call_result(&result, context)
     }
@@ -142,11 +144,7 @@ impl Pic {
         let result = self
             .inner
             .query_call(canister_id, caller, method, bytes)
-            .map_err(|err| {
-                PicCallError::new(format!(
-                    "pocket_ic query_call failed (canister={canister_id}, caller={caller}, method={method}): {err}"
-                ))
-            })?;
+            .map_err(|err| PicCallError::transport(context.to_error_context(), err))?;
 
         decode_call_result(&result, context)
     }
@@ -184,33 +182,22 @@ fn encode_call_args<A>(args: A, context: CallContext<'_>) -> Result<Vec<u8>, Pic
 where
     A: ArgumentEncoder,
 {
-    encode_args(args).map_err(|err| {
-        PicCallError::new(format!(
-            "candid encode_args failed (operation={}, canister={}, caller={}, method={}): {err}",
-            context.operation, context.canister_id, context.caller, context.method
-        ))
-    })
+    encode_args(args).map_err(|err| PicCallError::encode(context.to_error_context(), err))
 }
 
 fn decode_call_result<T>(result: &[u8], context: CallContext<'_>) -> Result<T, PicCallError>
 where
     T: CandidType + DeserializeOwned,
 {
-    decode_one(result).map_err(|err| {
-        PicCallError::new(format!(
-            "candid decode_one failed (operation={}, canister={}, caller={}, method={}, bytes={}): {err}",
-            context.operation,
-            context.canister_id,
-            context.caller,
-            context.method,
-            result.len()
-        ))
-    })
+    decode_one(result)
+        .map_err(|err| PicCallError::decode(context.to_error_context(), result.len(), err))
 }
 
 #[cfg(test)]
 mod tests {
     use candid::Principal;
+
+    use crate::pic::PicCallErrorKind;
 
     use super::{CallContext, decode_call_result};
 
@@ -225,9 +212,11 @@ mod tests {
 
         let err = decode_call_result::<u64>(&[0xde, 0xad], context).expect_err("decode fails");
 
-        assert!(err.message.contains("candid decode_one failed"));
-        assert!(err.message.contains("operation=query_call"));
-        assert!(err.message.contains("method=get"));
-        assert!(err.message.contains("bytes=2"));
+        assert!(err.message().contains("candid decode_one failed"));
+        assert!(err.message().contains("operation=query_call"));
+        assert!(err.message().contains("method=get"));
+        assert!(err.message().contains("bytes=2"));
+        assert_eq!(err.kind(), PicCallErrorKind::Decode);
+        assert_eq!(err.context().expect("decode error context").method(), "get");
     }
 }

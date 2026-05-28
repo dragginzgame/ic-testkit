@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-28 - Structured call errors and labeled installs
+
+### Added
+
+- Adds `StandaloneCanisterFixture::{update_call_or_panic,
+  update_call_as_or_panic, query_call_or_panic, query_call_as_or_panic}` for
+  the same transport/codec-only panic behavior as the `Pic` helpers.
+- Adds `PicCallErrorKind` and `PicCallContext` so downstream tests can inspect
+  encode, decode, and transport failures without matching error strings.
+- Adds `InstallSpec`, `Pic::{create_and_install, try_create_and_install,
+  create_and_install_many, try_create_and_install_many}`, and optional install
+  labels for generic labeled/batch canister installs.
+
+### Changed
+
+- Marks the structured call-error types and `InstallSpec` as non-exhaustive and
+  adds accessor methods so the API can evolve without encouraging direct
+  construction.
+- Includes optional install labels in `PicInstallError` display output and
+  install-trap diagnostics.
+- Documents `InstallSpec` and sequential batch-install partial failure behavior
+  in the README.
+
 ## [0.1.7] - 2026-05-28 - Typed call ergonomics
 
 ### Added

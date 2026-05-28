@@ -24,7 +24,7 @@ Use `pocket-ic` directly when you want the underlying simulator/runtime API. Use
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.1.6"
+ic-testkit = "0.1.8"
 ```
 
 ## Quick Start
@@ -110,7 +110,31 @@ fn installs_a_prebuilt_canister() {
 }
 ```
 
-For an existing `Pic`, use `create_and_install_with_args` or `try_create_and_install_with_args`. If PocketIC reports install-code rate limiting, `retry_install_code_ok` retries while advancing PocketIC time.
+For an existing `Pic`, use `create_and_install_with_args` or
+`try_create_and_install_with_args`. Use `InstallSpec` when you want an explicit
+install sender, a diagnostic label, or sequential batch installs:
+
+```rust,no_run
+use candid::encode_one;
+use ic_testkit::pic::{InstallSpec, Pic};
+
+fn install_pair(pic: &Pic, first_wasm: Vec<u8>, second_wasm: Vec<u8>) {
+    let ids = pic.create_and_install_many([
+        InstallSpec::new(first_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
+            .label("first"),
+        InstallSpec::new(second_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
+            .label("second"),
+    ]);
+
+    assert_eq!(ids.len(), 2);
+}
+```
+
+Batch installs are sequential. If one install fails, earlier installs remain in
+the PocketIC instance, the failed canister may also exist with the id exposed by
+`PicInstallError::canister_id()`, and later installs are not attempted. If
+PocketIC reports install-code rate limiting, `retry_install_code_ok` retries
+while advancing PocketIC time.
 
 ## Artifact Helpers
 

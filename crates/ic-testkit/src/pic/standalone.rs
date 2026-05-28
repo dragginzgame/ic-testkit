@@ -52,6 +52,21 @@ impl StandaloneCanisterFixture {
         self.pic.update_call(self.canister_id, method, args)
     }
 
+    /// Forward one typed update call to this fixture's canister id, panicking
+    /// on transport or Candid codec failure.
+    ///
+    /// This does not unwrap application-level results. For example,
+    /// `update_call_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
+    #[track_caller]
+    pub fn update_call_or_panic<T, A>(&self, method: &str, args: A) -> T
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic
+            .update_call_or_panic(self.canister_id, method, args)
+    }
+
     /// Forward one typed update call with an explicit caller to this fixture's canister id.
     pub fn update_call_as<T, A>(
         &self,
@@ -67,6 +82,21 @@ impl StandaloneCanisterFixture {
             .update_call_as(self.canister_id, caller, method, args)
     }
 
+    /// Forward one typed update call with an explicit caller to this fixture's
+    /// canister id, panicking on transport or Candid codec failure.
+    ///
+    /// This does not unwrap application-level results. For example,
+    /// `update_call_as_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
+    #[track_caller]
+    pub fn update_call_as_or_panic<T, A>(&self, caller: Principal, method: &str, args: A) -> T
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic
+            .update_call_as_or_panic(self.canister_id, caller, method, args)
+    }
+
     /// Forward one typed query call to this fixture's canister id.
     pub fn query_call<T, A>(&self, method: &str, args: A) -> Result<T, PicCallError>
     where
@@ -74,6 +104,20 @@ impl StandaloneCanisterFixture {
         A: ArgumentEncoder,
     {
         self.pic.query_call(self.canister_id, method, args)
+    }
+
+    /// Forward one typed query call to this fixture's canister id, panicking on
+    /// transport or Candid codec failure.
+    ///
+    /// This does not unwrap application-level results. For example,
+    /// `query_call_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
+    #[track_caller]
+    pub fn query_call_or_panic<T, A>(&self, method: &str, args: A) -> T
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic.query_call_or_panic(self.canister_id, method, args)
     }
 
     /// Forward one typed query call with an explicit caller to this fixture's canister id.
@@ -89,6 +133,21 @@ impl StandaloneCanisterFixture {
     {
         self.pic
             .query_call_as(self.canister_id, caller, method, args)
+    }
+
+    /// Forward one typed query call with an explicit caller to this fixture's
+    /// canister id, panicking on transport or Candid codec failure.
+    ///
+    /// This does not unwrap application-level results. For example,
+    /// `query_call_as_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
+    #[track_caller]
+    pub fn query_call_as_or_panic<T, A>(&self, caller: Principal, method: &str, args: A) -> T
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic
+            .query_call_as_or_panic(self.canister_id, caller, method, args)
     }
 }
 

@@ -21,7 +21,10 @@ pub use baseline::{
     CachedPicBaseline, CachedPicBaselineGuard, ControllerSnapshots,
     restore_or_rebuild_cached_pic_baseline,
 };
-pub use errors::{PicCallError, PicInstallError, StandaloneCanisterFixtureError};
+pub use errors::{
+    PicCallContext, PicCallError, PicCallErrorKind, PicInstallError, StandaloneCanisterFixtureError,
+};
+pub use lifecycle::InstallSpec;
 pub use process_lock::{
     PicSerialGuard, PicSerialGuardError, acquire_pic_serial_guard, try_acquire_pic_serial_guard,
 };
