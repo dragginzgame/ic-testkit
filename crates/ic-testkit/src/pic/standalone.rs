@@ -1,5 +1,9 @@
+use candid::{CandidType, Principal, utils::ArgumentEncoder};
+use serde::de::DeserializeOwned;
+
 use super::{
-    Pic, PicSerialGuard, StandaloneCanisterFixtureError, try_acquire_pic_serial_guard, try_pic,
+    Pic, PicCallError, PicSerialGuard, StandaloneCanisterFixtureError,
+    try_acquire_pic_serial_guard, try_pic,
 };
 
 const DEFAULT_EXTRA_INSTALL_CYCLES: u128 = 0;
@@ -10,7 +14,7 @@ const DEFAULT_EXTRA_INSTALL_CYCLES: u128 = 0;
 
 pub struct StandaloneCanisterFixture {
     pic: Pic,
-    canister_id: candid::Principal,
+    canister_id: Principal,
     _serial_guard: PicSerialGuard,
 }
 
@@ -29,14 +33,62 @@ impl StandaloneCanisterFixture {
 
     /// Read the installed canister id for this standalone fixture.
     #[must_use]
-    pub const fn canister_id(&self) -> candid::Principal {
+    pub const fn canister_id(&self) -> Principal {
         self.canister_id
     }
 
     /// Consume the fixture and return the owned PocketIC instance and canister id.
     #[must_use]
-    pub fn into_parts(self) -> (Pic, candid::Principal) {
+    pub fn into_parts(self) -> (Pic, Principal) {
         (self.pic, self.canister_id)
+    }
+
+    /// Forward one typed update call to this fixture's canister id.
+    pub fn update_call<T, A>(&self, method: &str, args: A) -> Result<T, PicCallError>
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic.update_call(self.canister_id, method, args)
+    }
+
+    /// Forward one typed update call with an explicit caller to this fixture's canister id.
+    pub fn update_call_as<T, A>(
+        &self,
+        caller: Principal,
+        method: &str,
+        args: A,
+    ) -> Result<T, PicCallError>
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic
+            .update_call_as(self.canister_id, caller, method, args)
+    }
+
+    /// Forward one typed query call to this fixture's canister id.
+    pub fn query_call<T, A>(&self, method: &str, args: A) -> Result<T, PicCallError>
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic.query_call(self.canister_id, method, args)
+    }
+
+    /// Forward one typed query call with an explicit caller to this fixture's canister id.
+    pub fn query_call_as<T, A>(
+        &self,
+        caller: Principal,
+        method: &str,
+        args: A,
+    ) -> Result<T, PicCallError>
+    where
+        T: CandidType + DeserializeOwned,
+        A: ArgumentEncoder,
+    {
+        self.pic
+            .query_call_as(self.canister_id, caller, method, args)
     }
 }
 

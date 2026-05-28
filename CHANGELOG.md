@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-05-28 - Typed call ergonomics
+
+### Added
+
+- Adds `Pic::{update_call_or_panic, query_call_or_panic,
+  update_call_as_or_panic, query_call_as_or_panic}` for tests that should
+  panic on PocketIC transport or Candid codec failures while preserving
+  application-level return values such as `Result<T, E>`.
+- Adds typed call forwarding helpers on `StandaloneCanisterFixture` so
+  standalone prebuilt-canister tests can call the fixture canister without
+  repeatedly spelling out `fixture.pic()` and `fixture.canister_id()`.
+- Adds a README example for `CachedPicBaseline` with metadata and
+  `restore_or_rebuild_cached_pic_baseline`.
+
+### Changed
+
+- Enriches Candid encode/decode `PicCallError` messages with call operation,
+  canister id, caller, method, and decode byte length where available.
+- Refreshes README setup guidance for `POCKET_IC_BIN`,
+  `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1`, and the current `ic-testkit`
+  dependency version.
+
 ## [0.1.6] - 2026-05-28 - PocketIC binary resolution
 
 ### Added

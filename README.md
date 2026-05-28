@@ -24,11 +24,8 @@ Use `pocket-ic` directly when you want the underlying simulator/runtime API. Use
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.1.1"
+ic-testkit = "0.1.6"
 ```
-
-> [!WARNING]
-> Do not use - some of this may be hallucinations, our best agents are currently auditing the code.
 
 ## Quick Start
 
@@ -50,7 +47,12 @@ fn calls_a_counter_canister() {
 }
 ```
 
-Use `update_call_as` and `query_call_as` when caller identity matters.
+Use `update_call_as` and `query_call_as` when caller identity matters. In
+tests that should fail immediately on transport, PocketIC, or Candid codec
+errors, use `update_call_or_panic`, `query_call_or_panic`,
+`update_call_as_or_panic`, or `query_call_as_or_panic`. These helpers only
+unwrap the outer `PicCallError`; application-level return values such as
+`Result<T, E>` are returned unchanged.
 
 ## PocketIC Server Binary
 
@@ -64,6 +66,16 @@ Supported configuration:
 
 - `POCKET_IC_BIN=/trusted/path`: use an existing ungzipped executable binary
 - `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1`: download the pinned server on cache miss
+
+Recommended setup:
+
+- CI: install or cache the pinned PocketIC binary and set `POCKET_IC_BIN` to
+  that trusted executable path.
+- Local development: either set `POCKET_IC_BIN` to a local executable, or set
+  `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1` when you are comfortable letting
+  `ic-testkit` populate its versioned temp cache.
+- Preflight checks: call `try_ensure_pocket_ic_bin()` from a small setup test or
+  helper command to fail before starting a larger PocketIC suite.
 
 Use `PicRuntimeConfig` when a test harness needs code-level control over the
 cache directory or SHA-256 verification:
@@ -176,6 +188,59 @@ The helper prints the compact `ICTK|...` line with the IC CDK call-context instr
 
 For expensive setup, `CachedPicBaseline` can snapshot canisters once and restore them between tests. If the cached PocketIC instance has died, `restore_or_rebuild_cached_pic_baseline` rebuilds instead of reusing a broken instance.
 
+```rust,no_run
+use std::sync::Mutex;
+
+use candid::Principal;
+use ic_testkit::pic::{
+    CachedPicBaseline, Pic, restore_or_rebuild_cached_pic_baseline,
+};
+
+struct BaselineMetadata {
+    controller_id: Principal,
+    canister_id: Principal,
+}
+
+static BASELINE: Mutex<Option<CachedPicBaseline<BaselineMetadata>>> = Mutex::new(None);
+
+fn baseline_for_test() {
+    let (baseline, cache_hit) = restore_or_rebuild_cached_pic_baseline(
+        &BASELINE,
+        || build_baseline_once(),
+        |baseline| baseline.restore(baseline.metadata().controller_id),
+    );
+
+    if cache_hit {
+        baseline.pic().tick();
+    }
+
+    let canister_id = baseline.metadata().canister_id;
+    let value: u64 = baseline
+        .pic()
+        .query_call_or_panic(canister_id, "get", ());
+    assert_eq!(value, 0);
+}
+
+fn build_baseline_once() -> CachedPicBaseline<BaselineMetadata> {
+    let (pic, controller_id, canister_id) = build_expensive_fixture();
+
+    CachedPicBaseline::capture(
+        pic,
+        controller_id,
+        [canister_id],
+        BaselineMetadata {
+            controller_id,
+            canister_id,
+        },
+    )
+    .expect("snapshot capture must be available")
+}
+
+fn build_expensive_fixture() -> (Pic, Principal, Principal) {
+    unimplemented!("install the canisters needed by this test suite")
+}
+```
+
 ## Deterministic Test Identities
 
 `Fake` gives stable principals and account-like values from numeric seeds:
@@ -193,7 +258,7 @@ assert_eq!(account.owner, Fake::principal(42));
 
 ## What This Adds Over `pocket-ic`
 
-- `Pic` Candid query/update helpers with contextual errors
+- `Pic` Candid query/update helpers with contextual errors and panic-on-transport variants
 - `PicSerialGuard` for cross-process PocketIC serialization
 - generic wasm install helpers, retry helpers, diagnostics, and standalone fixtures
 - cached snapshot baselines for expensive test setup
