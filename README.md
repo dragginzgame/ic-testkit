@@ -63,11 +63,10 @@ with setup guidance instead of letting `pocket-ic` panic.
 Supported configuration:
 
 - `POCKET_IC_BIN=/trusted/path`: use an existing ungzipped executable binary
-- `IC_TESTKIT_POCKET_IC_CACHE_DIR=...`: override the cache root
 - `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1`: download the pinned server on cache miss
-- `POCKET_IC_SERVER_SHA256=...`: verify the ungzipped binary SHA-256
 
-You can also resolve the binary directly:
+Use `PicRuntimeConfig` when a test harness needs code-level control over the
+cache directory or SHA-256 verification:
 
 ```rust,no_run
 use ic_testkit::pic::{PicRuntimeConfig, try_ensure_pocket_ic_bin};

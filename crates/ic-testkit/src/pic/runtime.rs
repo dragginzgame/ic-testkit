@@ -15,9 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use super::startup::PicStartError;
 
 const POCKET_IC_BIN_ENV: &str = "POCKET_IC_BIN";
-const CACHE_DIR_ENV: &str = "IC_TESTKIT_POCKET_IC_CACHE_DIR";
 const ALLOW_DOWNLOAD_ENV: &str = "IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD";
-const SERVER_SHA256_ENV: &str = "POCKET_IC_SERVER_SHA256";
 
 const SERVER_NAME: &str = "pocket-ic";
 
@@ -38,19 +36,14 @@ impl PicRuntimeConfig {
     /// Supported variables:
     ///
     /// - `POCKET_IC_BIN`: explicit trusted PocketIC server binary path
-    /// - `IC_TESTKIT_POCKET_IC_CACHE_DIR`: cache root for resolved binaries
     /// - `IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD=1`: allow network download on cache miss
-    /// - `POCKET_IC_SERVER_SHA256`: optional expected SHA-256 for the ungzipped server binary
     #[must_use]
     pub fn from_env() -> Self {
         Self {
             pocket_ic_bin: non_empty_env_path(POCKET_IC_BIN_ENV),
-            cache_dir: non_empty_env_path(CACHE_DIR_ENV),
+            cache_dir: None,
             allow_download: env::var(ALLOW_DOWNLOAD_ENV).is_ok_and(|value| env_truthy(&value)),
-            server_sha256: env::var(SERVER_SHA256_ENV)
-                .ok()
-                .map(|value| value.trim().to_ascii_lowercase())
-                .filter(|value| !value.is_empty()),
+            server_sha256: None,
         }
     }
 
@@ -307,9 +300,9 @@ fn make_executable(_path: &Path) -> Result<(), PicStartError> {
 fn validate_sha256(path: &Path, expected: &str) -> Result<(), PicStartError> {
     if !is_sha256_hex(expected) {
         return Err(PicStartError::BinaryInvalid {
-            message: format!(
-                "{SERVER_SHA256_ENV} must be a 64-character lowercase or uppercase hex SHA-256 digest"
-            ),
+            message:
+                "PocketIC server SHA-256 must be a 64-character lowercase or uppercase hex digest"
+                    .to_string(),
         });
     }
 
