@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-05-29 - Rust 1.96 internal toolchain
+
+### Changed
+
+- Updates the pinned internal Rust toolchain from 1.95.0 to 1.96.0 while
+  keeping the published MSRV at Rust 1.88.
+
 ## [0.1.10] - 2026-05-29 - PocketIC upstream wishlist
 
 ### Added
