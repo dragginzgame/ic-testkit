@@ -1,5 +1,7 @@
 # ic-testkit
 
+[PocketIC upstream wishlist](POCKET-IC.md)
+
 <p align="center">
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/v/ic-testkit.svg" alt="Crates.io"></a>
   <a href="https://docs.rs/ic-testkit"><img src="https://docs.rs/ic-testkit/badge.svg" alt="Docs.rs"></a>

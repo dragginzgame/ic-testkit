@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-05-29 - PocketIC upstream wishlist
+
+### Added
+
+- Adds a top-level `POCKET-IC.md` working draft that tracks generic
+  upstream-facing `pocket-ic` improvements suggested by current `ic-testkit`
+  wrapper behavior.
+- Links the PocketIC upstream wishlist from the top of the repository README.
+
 ## [0.1.9] - 2026-05-28 - Standalone InstallSpec fixtures
 
 ### Added
