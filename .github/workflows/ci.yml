@@ -41,8 +41,6 @@ jobs:
   checks:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    env:
-      IC_TESTKIT_ALLOW_POCKET_IC_DOWNLOAD: 1
     steps:
       # actions/checkout v6
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -62,3 +60,25 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Run complete CI gate
         run: make ci
+
+  pocket-ic-concurrency:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      # dtolnay/rust-toolchain v1
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
+        with:
+          toolchain: ${{ env.IC_TESTKIT_INTERNAL_TOOLCHAIN }}
+      - name: Pin cargo/rustc to internal toolchain
+        shell: bash
+        run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Prove overlapping independent PocketIC instances
+        run: cargo test -p ic-testkit --locked --test pocket_ic_concurrency -- --nocapture

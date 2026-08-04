@@ -5,7 +5,7 @@ use ic_testkit::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
-    pic::{PicStartError, install_prebuilt_canister, try_ensure_pocket_ic_bin},
+    pic::install_prebuilt_canister,
 };
 use std::{fs, path::PathBuf};
 
@@ -21,14 +21,6 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
         eprintln!("skipping perf probe canister test: fixture canister is not packaged");
         return;
     }
-    if let Err(err) = try_ensure_pocket_ic_bin() {
-        if matches!(err, PicStartError::BinaryUnavailable { .. }) {
-            eprintln!("skipping perf probe canister test: {err}");
-            return;
-        }
-        panic!("failed to resolve PocketIC server binary: {err}");
-    }
-
     let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");
 
     build_wasm_canisters(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], &[], &[]);
@@ -37,14 +29,13 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     let wasm = read_wasm(&target_dir, PERF_PROBE_PACKAGE, "debug");
     let fixture = install_prebuilt_canister(wasm, vec![]);
     let result: u64 = fixture
-        .pic()
-        .update_call(fixture.canister_id(), "benchmark_once", ())
+        .update_call("benchmark_once", ())
         .expect("benchmark_once update call");
 
     assert_eq!(result, 1_498_500);
 
     let logs = fixture
-        .pic()
+        .pocket_ic()
         .fetch_canister_logs(fixture.canister_id(), Principal::anonymous())
         .expect("fetch perf probe logs");
     let log_text = logs

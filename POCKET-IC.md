@@ -26,10 +26,9 @@ upstream.
 
 ### Server Binary Resolution
 
-`ic-testkit` currently resolves and validates the PocketIC server binary before
-constructing a `PocketIc` instance. It supports an explicit `POCKET_IC_BIN`,
-versioned cache paths, opt-in downloads, executable checks, and optional
-SHA-256 verification.
+PocketIC already owns server-binary discovery and downloading. `ic-testkit`
+0.2 removed its duplicate resolver, downloader, and cache rather than growing
+a second runtime manager.
 
 It would be useful if upstream provided a first-class, non-panicking server
 binary resolver with:
@@ -41,8 +40,8 @@ binary resolver with:
 - typed errors with setup guidance;
 - support for offline CI environments.
 
-That would let downstream test harnesses share one trusted startup path instead
-of each wrapper handling binary availability and download behavior differently.
+That would let downstream test harnesses use one trusted, upstream-owned
+startup path without recreating binary management.
 
 ### Typed Startup Errors
 
@@ -54,21 +53,6 @@ failures, startup timeouts, and unreachable server transports.
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
 structured startup error.
-
-### Parallel Test Isolation
-
-`ic-testkit` serializes PocketIC usage across processes with a filesystem lock
-because concurrent local instances can interfere with each other in practice,
-including wasm chunk store exhaustion and shared server/runtime resource
-contention.
-
-Upstream improvements that would reduce or remove this need:
-
-- documented concurrency guarantees for multiple local PocketIC instances;
-- per-instance isolation for runtime directories, chunk stores, and server
-  state;
-- configurable resource roots for independent test workers;
-- clear typed failures when host-level resources are exhausted.
 
 ### Install-Code Rate Limiting
 
@@ -155,14 +139,38 @@ Upstream could expose stable APIs for:
 - effective runtime directories;
 - feature flags or subnet layout configured for an instance.
 
-## Current `ic-testkit` Wrapper Areas To Revisit
+## Reviewed Upstream Capabilities And Local Decisions
+
+### Independent Test Instances
+
+PocketIC 15 supports many independent IC instances, and the official testing
+guidance describes parallel execution as one fresh `PocketIc` instance per
+test. The Rust documentation also says sharing one instance among test cases is
+generally not recommended.
+
+`ic-testkit` 0.2 therefore removes its host-wide PocketIC serialization guard
+rather than request more upstream locking or runtime isolation. It re-exports
+`PocketIc` directly instead of retaining a forwarding `Pic` wrapper,
+while downstream suites tune heavy test capacity through
+`cargo test -- --test-threads=N` or their CI scheduler.
+
+The previous wasm chunk-store rationale was incorrect: the management-canister
+interface defines chunk storage per canister, so it does not justify a lock
+across unrelated PocketIC instances.
+
+Locks remain local to genuinely shared resources owned by `ic-testkit`, such
+as one benchmark output path or one explicitly shared cached baseline. The
+PocketIC server cache and any synchronization around it remain upstream-owned.
+
+See [`docs/design/0.2-concurrency/0.2-design.md`](docs/design/0.2-concurrency/0.2-design.md)
+for the accepted 0.2 direction.
+
+## Current `ic-testkit` Helper Areas To Revisit
 
 These modules should be checked against upstream capabilities when updating
 `pocket-ic`:
 
-- `crates/ic-testkit/src/pic/runtime.rs`
 - `crates/ic-testkit/src/pic/startup.rs`
-- `crates/ic-testkit/src/pic/process_lock.rs`
 - `crates/ic-testkit/src/pic/lifecycle.rs`
 - `crates/ic-testkit/src/pic/calls.rs`
 - `crates/ic-testkit/src/pic/baseline.rs`

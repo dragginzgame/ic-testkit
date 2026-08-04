@@ -8,6 +8,58 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-04 - Direct PocketIC ownership
+
+### Added
+
+- Adds focused extension traits for the harness behavior that remains useful
+  above PocketIC: `CandidCallExt`, `CanisterInstallExt`,
+  `PocketIcSnapshotExt`, `PocketIcDiagnosticsExt`, and `PocketIcTimeExt`.
+- Adds `RetryPolicy`, with `max_attempts` consistently counting the initial
+  attempt, for rate-limited install-code operations.
+- Adds live regression coverage proving that two independent `PocketIc`
+  instances can be constructed, used, isolated, and dropped concurrently.
+  The proof runs on every supported Linux and macOS PocketIC lane.
+- Adds a 0.1-to-0.2 migration table and records the concurrency and API
+  boundary decisions in the 0.2 design document.
+
+### Changed
+
+- Re-exports `PocketIc` and `PocketIcBuilder` directly and removes the `Pic`
+  and `PicBuilder` forwarding wrappers. `pic`, `try_pic`,
+  `build_pocket_ic`, and `try_build_pocket_ic` now return the upstream type.
+- Makes ic-testkit concurrency-neutral: each test normally owns an independent
+  `PocketIc`, while downstream test runners and CI control resource
+  parallelism.
+- Renames cached-baseline and PocketIC-specific error types for direct upstream
+  ownership, including `CachedPocketIcBaseline`, `CandidCallError`,
+  `CanisterInstallError`, and `PocketIcStartError`.
+- Delegates PocketIC server discovery, downloading, and cache ownership back to
+  the upstream crate.
+- Makes controller snapshot sets deterministic, duplicate-checked, fallible,
+  and transactional on capture failure, with structured rejection, panic, and
+  cleanup details.
+
+### Fixed
+
+- Preserves upstream `RejectResponse` values as structured
+  `CandidCallErrorKind::CanisterReject` failures instead of misclassifying
+  canister rejections as transport errors.
+- Cleans up snapshots already captured when a later capture fails and reports
+  both the primary and any cleanup failures without printing from library code.
+- Separates authored benchmark suites named `ALL` from the private cross-suite
+  aggregation scope, preventing the authored suite from being counted twice.
+
+### Removed
+
+- Removes `PicSerialGuard` and all process-wide or host-wide PocketIC ownership
+  locks, leases, owner records, acquisition timeouts, and retry loops.
+- Removes ic-testkit's duplicate PocketIC runtime configuration, downloader,
+  and binary-cache implementation, along with its direct `flate2`, `reqwest`,
+  and `sha2` dependencies.
+- Removes `retry_install_code_ok` and `retry_install_code_err`; callers use
+  `retry_install_code` with an explicit `RetryPolicy`.
+
 ## [0.1.12] - 2026-08-04 - PocketIC 15 compatibility
 
 ### Added

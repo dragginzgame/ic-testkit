@@ -1,260 +1,58 @@
-//! PocketIC wrapper and fixture helpers for host-side canister tests.
+//! PocketIC re-exports and value-adding host-test harness helpers.
 
-use candid::Principal;
-use pocket_ic::{
-    CanisterStatusResult, PocketIc, PocketIcBuilder, RejectResponse, common::rest::RawMessageId,
-};
-use std::time::Duration;
+pub use pocket_ic::{ErrorCode, PocketIc, PocketIcBuilder, RejectCode, RejectResponse};
 
 mod baseline;
 mod calls;
 mod diagnostics;
 mod errors;
 mod lifecycle;
-mod process_lock;
-mod runtime;
 mod snapshot;
 mod standalone;
 mod startup;
+mod time;
 
 pub use baseline::{
-    CachedPicBaseline, CachedPicBaselineGuard, ControllerSnapshots,
-    restore_or_rebuild_cached_pic_baseline,
+    CachedPocketIcBaseline, CachedPocketIcBaselineGuard,
+    restore_or_rebuild_cached_pocket_ic_baseline,
 };
+pub use calls::CandidCallExt;
+pub use diagnostics::PocketIcDiagnosticsExt;
 pub use errors::{
-    PicCallContext, PicCallError, PicCallErrorKind, PicInstallError, StandaloneCanisterFixtureError,
+    CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
+    StandaloneCanisterFixtureError,
 };
-pub use lifecycle::InstallSpec;
-pub use process_lock::{
-    PicSerialGuard, PicSerialGuardError, acquire_pic_serial_guard, try_acquire_pic_serial_guard,
+pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy};
+pub use snapshot::{
+    ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotAttemptFailure,
+    SnapshotCleanupFailure,
 };
-pub use runtime::PicRuntimeConfig;
-pub use startup::PicStartError;
-
 pub use standalone::{
     StandaloneCanisterFixture, install_prebuilt_canister, install_prebuilt_canister_from_spec,
     install_prebuilt_canister_with_cycles, try_install_prebuilt_canister,
     try_install_prebuilt_canister_from_spec, try_install_prebuilt_canister_with_cycles,
 };
+pub use startup::PocketIcStartError;
+pub use time::PocketIcTimeExt;
 
-///
 /// Create a fresh PocketIC instance with the default application subnet layout.
-///
-/// IMPORTANT:
-/// - Each call creates a new IC instance
-/// - WARNING: callers must hold a `PicSerialGuard` for the full `Pic` lifetime
-/// - Required to avoid PocketIC wasm chunk store exhaustion
-///
 #[must_use]
-pub fn pic() -> Pic {
+pub fn pic() -> PocketIc {
     try_pic().unwrap_or_else(|err| panic!("failed to start PocketIC: {err}"))
 }
 
 /// Create a fresh PocketIC instance without panicking on startup failures.
-pub fn try_pic() -> Result<Pic, PicStartError> {
-    PicBuilder::new().with_application_subnet().try_build()
+pub fn try_pic() -> Result<PocketIc, PocketIcStartError> {
+    try_build_pocket_ic(PocketIcBuilder::new().with_application_subnet())
 }
 
-/// Resolve the PocketIC server binary from environment/config and panic on failure.
+/// Build a custom PocketIC topology with typed startup diagnostics.
 #[must_use]
-pub fn ensure_pocket_ic_bin() -> std::path::PathBuf {
-    try_ensure_pocket_ic_bin()
-        .unwrap_or_else(|err| panic!("failed to resolve PocketIC server binary: {err}"))
+pub fn build_pocket_ic(builder: PocketIcBuilder) -> PocketIc {
+    try_build_pocket_ic(builder).unwrap_or_else(|err| panic!("failed to start PocketIC: {err}"))
 }
 
-/// Resolve the PocketIC server binary from environment/config without panicking.
-pub fn try_ensure_pocket_ic_bin() -> Result<std::path::PathBuf, PicStartError> {
-    runtime::ensure_pocket_ic_bin_from_env()
-}
-
-///
-/// PicBuilder
-/// Thin wrapper around the PocketIC builder.
-///
-/// This builder configures one PocketIC instance before startup.
-/// It does not share or reuse a global test runtime.
-///
-/// Note: this file is test-only infrastructure; simplicity wins over abstraction.
-///
-
-pub struct PicBuilder {
-    inner: PocketIcBuilder,
-    runtime_config: PicRuntimeConfig,
-}
-
-#[expect(clippy::new_without_default)]
-impl PicBuilder {
-    /// Start a new PicBuilder with sensible defaults.
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            inner: PocketIcBuilder::new(),
-            runtime_config: PicRuntimeConfig::from_env(),
-        }
-    }
-
-    /// Override the runtime policy used to resolve the PocketIC server binary.
-    #[must_use]
-    pub fn with_runtime_config(mut self, runtime_config: PicRuntimeConfig) -> Self {
-        self.runtime_config = runtime_config;
-        self
-    }
-
-    /// Use one explicit PocketIC server binary path.
-    #[must_use]
-    pub fn with_server_binary(mut self, server_binary: impl Into<std::path::PathBuf>) -> Self {
-        self.runtime_config = self.runtime_config.pocket_ic_bin(server_binary);
-        self
-    }
-
-    /// Include an application subnet in the PocketIC instance.
-    #[must_use]
-    pub fn with_application_subnet(mut self) -> Self {
-        self.inner = self.inner.with_application_subnet();
-        self
-    }
-
-    /// Include an II subnet so threshold keys are available in the PocketIC instance.
-    #[must_use]
-    pub fn with_ii_subnet(mut self) -> Self {
-        self.inner = self.inner.with_ii_subnet();
-        self
-    }
-
-    /// Include an NNS subnet in the PocketIC instance.
-    #[must_use]
-    pub fn with_nns_subnet(mut self) -> Self {
-        self.inner = self.inner.with_nns_subnet();
-        self
-    }
-
-    /// Finish building the PocketIC instance and wrap it.
-    #[must_use]
-    pub fn build(self) -> Pic {
-        self.try_build()
-            .unwrap_or_else(|err| panic!("failed to start PocketIC: {err}"))
-    }
-
-    /// Finish building the PocketIC instance without panicking on startup failures.
-    pub fn try_build(self) -> Result<Pic, PicStartError> {
-        let server_binary = self.runtime_config.ensure_binary()?;
-        startup::try_build_pic(self.inner.with_server_binary(server_binary))
-    }
-}
-/// Pic
-/// Thin wrapper around a PocketIC instance.
-///
-/// This type intentionally exposes only a minimal API surface; callers should
-/// use `pic()` to obtain an instance and then perform installs/calls.
-/// Callers must hold a `PicSerialGuard` for the full `Pic` lifetime.
-///
-
-pub struct Pic {
-    inner: PocketIc,
-}
-
-impl Pic {
-    /// Advance one execution round in the owned PocketIC instance.
-    pub fn tick(&self) {
-        self.inner.tick();
-    }
-
-    /// Advance PocketIC wall-clock time by one duration.
-    pub fn advance_time(&self, duration: Duration) {
-        self.inner.advance_time(duration);
-    }
-
-    /// Create one canister with PocketIC default settings.
-    #[must_use]
-    pub fn create_canister(&self) -> Principal {
-        self.inner.create_canister()
-    }
-
-    /// Add cycles to one existing canister.
-    pub fn add_cycles(&self, canister_id: Principal, amount: u128) {
-        let _ = self.inner.add_cycles(canister_id, amount);
-    }
-
-    /// Install one wasm module on one existing canister.
-    pub fn install_canister(
-        &self,
-        canister_id: Principal,
-        wasm_module: Vec<u8>,
-        arg: Vec<u8>,
-        sender: Option<Principal>,
-    ) {
-        self.inner
-            .install_canister(canister_id, wasm_module, arg, sender);
-    }
-
-    /// Upgrade one existing canister with a new wasm module.
-    pub fn upgrade_canister(
-        &self,
-        canister_id: Principal,
-        wasm_module: Vec<u8>,
-        arg: Vec<u8>,
-        sender: Option<Principal>,
-    ) -> Result<(), RejectResponse> {
-        self.inner
-            .upgrade_canister(canister_id, wasm_module, arg, sender)
-    }
-
-    /// Reinstall one existing canister with a new wasm module.
-    pub fn reinstall_canister(
-        &self,
-        canister_id: Principal,
-        wasm_module: Vec<u8>,
-        arg: Vec<u8>,
-        sender: Option<Principal>,
-    ) -> Result<(), RejectResponse> {
-        self.inner
-            .reinstall_canister(canister_id, wasm_module, arg, sender)
-    }
-
-    /// Submit one raw update call without executing it immediately.
-    pub fn submit_call(
-        &self,
-        canister_id: Principal,
-        sender: Principal,
-        method: &str,
-        payload: Vec<u8>,
-    ) -> Result<RawMessageId, RejectResponse> {
-        self.inner.submit_call(canister_id, sender, method, payload)
-    }
-
-    /// Await one previously submitted raw update call.
-    pub fn await_call(&self, message_id: RawMessageId) -> Result<Vec<u8>, RejectResponse> {
-        self.inner.await_call(message_id)
-    }
-
-    /// Fetch one canister status snapshot from PocketIC.
-    pub fn canister_status(
-        &self,
-        canister_id: Principal,
-        sender: Option<Principal>,
-    ) -> Result<CanisterStatusResult, RejectResponse> {
-        self.inner.canister_status(canister_id, sender)
-    }
-
-    /// Fetch one canister log stream from PocketIC.
-    pub fn fetch_canister_logs(
-        &self,
-        canister_id: Principal,
-        sender: Principal,
-    ) -> Result<Vec<pocket_ic::CanisterLogRecord>, RejectResponse> {
-        self.inner.fetch_canister_logs(canister_id, sender)
-    }
-
-    /// Capture the current PocketIC wall-clock time as nanoseconds since epoch.
-    #[must_use]
-    pub fn current_time_nanos(&self) -> u64 {
-        self.inner.get_time().as_nanos_since_unix_epoch()
-    }
-
-    /// Restore PocketIC wall-clock and certified time from a captured nanosecond value.
-    pub fn restore_time_nanos(&self, nanos_since_epoch: u64) {
-        let restored = pocket_ic::Time::from_nanos_since_unix_epoch(nanos_since_epoch);
-        self.inner.set_time(restored);
-        self.inner.set_certified_time(restored);
-    }
+/// Build a custom PocketIC topology without panicking on startup failures.
+pub fn try_build_pocket_ic(builder: PocketIcBuilder) -> Result<PocketIc, PocketIcStartError> {
+    startup::try_build_pocket_ic(builder)
 }

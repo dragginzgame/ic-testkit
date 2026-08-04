@@ -1,15 +1,13 @@
 use std::{any::Any, panic::catch_unwind};
 
-use pocket_ic::PocketIcBuilder;
-
-use super::Pic;
+use pocket_ic::{PocketIc, PocketIcBuilder};
 
 ///
-/// PicStartError
+/// PocketIcStartError
 ///
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum PicStartError {
+pub enum PocketIcStartError {
     BinaryUnavailable { message: String },
     BinaryInvalid { message: String },
     DownloadFailed { message: String },
@@ -19,21 +17,23 @@ pub enum PicStartError {
 }
 
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum PicPanicKind {
+pub(super) enum PocketIcPanicKind {
     DeadInstanceTransport { message: String },
     Other { message: String },
 }
 
-pub(super) fn try_build_pic(builder: PocketIcBuilder) -> Result<Pic, PicStartError> {
+pub(super) fn try_build_pocket_ic(
+    builder: PocketIcBuilder,
+) -> Result<PocketIc, PocketIcStartError> {
     let build = catch_unwind(|| builder.build());
 
     match build {
-        Ok(inner) => Ok(Pic { inner }),
-        Err(payload) => Err(classify_pic_start_panic(payload)),
+        Ok(pocket_ic) => Ok(pocket_ic),
+        Err(payload) => Err(classify_pocket_ic_start_panic(payload)),
     }
 }
 
-impl std::fmt::Display for PicStartError {
+impl std::fmt::Display for PocketIcStartError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::BinaryUnavailable { message }
@@ -46,7 +46,7 @@ impl std::fmt::Display for PicStartError {
     }
 }
 
-impl std::error::Error for PicStartError {}
+impl std::error::Error for PocketIcStartError {}
 
 // Extract a stable string message from one panic payload.
 pub(super) fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
@@ -62,22 +62,22 @@ pub(super) fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
 
 // Classify one panic payload so callers can recover dead-instance restores
 // without repeating transport-string matching at each call site.
-pub(super) fn classify_pic_panic(payload: Box<dyn Any + Send>) -> PicPanicKind {
+pub(super) fn classify_pocket_ic_panic(payload: Box<dyn Any + Send>) -> PocketIcPanicKind {
     let message = panic_payload_to_string(payload.as_ref());
 
     if is_dead_instance_transport_error(&message) {
-        return PicPanicKind::DeadInstanceTransport { message };
+        return PocketIcPanicKind::DeadInstanceTransport { message };
     }
 
-    PicPanicKind::Other { message }
+    PocketIcPanicKind::Other { message }
 }
 
 // Check whether one panic payload belongs to the dead-instance transport class
 // without consuming it, so callers can still resume the original panic.
 pub(super) fn panic_is_dead_instance_transport(payload: &(dyn Any + Send)) -> bool {
     matches!(
-        classify_pic_panic(Box::new(panic_payload_to_string(payload))),
-        PicPanicKind::DeadInstanceTransport { .. }
+        classify_pocket_ic_panic(Box::new(panic_payload_to_string(payload))),
+        PocketIcPanicKind::DeadInstanceTransport { .. }
     )
 }
 
@@ -92,63 +92,68 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 }
 
 // Classify one PocketIC startup panic into a typed public error.
-fn classify_pic_start_panic(payload: Box<dyn Any + Send>) -> PicStartError {
-    let message = match classify_pic_panic(payload) {
-        PicPanicKind::DeadInstanceTransport { message } | PicPanicKind::Other { message } => {
-            message
-        }
+fn classify_pocket_ic_start_panic(payload: Box<dyn Any + Send>) -> PocketIcStartError {
+    let message = match classify_pocket_ic_panic(payload) {
+        PocketIcPanicKind::DeadInstanceTransport { message }
+        | PocketIcPanicKind::Other { message } => message,
     };
 
     if message.starts_with("Failed to validate PocketIC server binary") {
         if message.contains("No such file or directory") || message.contains("os error 2") {
-            return PicStartError::BinaryUnavailable { message };
+            return PocketIcStartError::BinaryUnavailable { message };
         }
 
-        return PicStartError::BinaryInvalid { message };
+        return PocketIcStartError::BinaryInvalid { message };
     }
 
     if message.starts_with("Failed to download PocketIC server")
         || message.starts_with("Failed to write PocketIC server binary")
     {
-        return PicStartError::DownloadFailed { message };
+        return PocketIcStartError::DownloadFailed { message };
     }
 
     if message.starts_with("Failed to start PocketIC binary")
         || message.starts_with("Failed to create PocketIC server directory")
     {
-        return PicStartError::ServerStartFailed { message };
+        return PocketIcStartError::ServerStartFailed { message };
     }
 
     if message.starts_with("Timed out waiting for PocketIC server being available") {
-        return PicStartError::StartupTimedOut { message };
+        return PocketIcStartError::StartupTimedOut { message };
     }
 
-    PicStartError::Panic { message }
+    PocketIcStartError::Panic { message }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        PicPanicKind, PicStartError, classify_pic_panic, classify_pic_start_panic,
-        is_dead_instance_transport_error,
+        PocketIcPanicKind, PocketIcStartError, classify_pocket_ic_panic,
+        classify_pocket_ic_start_panic, is_dead_instance_transport_error,
     };
 
     #[test]
-    fn pic_start_error_classifies_missing_binary() {
-        let error = classify_pic_start_panic(Box::new(
+    fn pocket_ic_start_error_classifies_missing_binary() {
+        let error = classify_pocket_ic_start_panic(Box::new(
             "Failed to validate PocketIC server binary `/tmp/pocket-ic`: `No such file or directory (os error 2)`.".to_string(),
         ));
 
-        assert!(matches!(error, PicStartError::BinaryUnavailable { .. }));
+        assert!(matches!(
+            error,
+            PocketIcStartError::BinaryUnavailable { .. }
+        ));
     }
 
     #[test]
-    fn pic_start_error_classifies_failed_spawn() {
-        let error = classify_pic_start_panic(Box::new(
+    fn pocket_ic_start_error_classifies_failed_spawn() {
+        let error = classify_pocket_ic_start_panic(Box::new(
             "Failed to start PocketIC binary (/tmp/pocket-ic)".to_string(),
         ));
 
-        assert!(matches!(error, PicStartError::ServerStartFailed { .. }));
+        assert!(matches!(
+            error,
+            PocketIcStartError::ServerStartFailed { .. }
+        ));
     }
 
     #[test]
@@ -166,14 +171,14 @@ mod tests {
     }
 
     #[test]
-    fn classify_pic_panic_marks_dead_instance_transport() {
-        let classified = classify_pic_panic(Box::new(
+    fn classify_pocket_ic_panic_marks_dead_instance_transport() {
+        let classified = classify_pocket_ic_panic(Box::new(
             "reqwest::Error { source: hyper::Error(IncompleteMessage) }".to_string(),
         ));
 
         assert!(matches!(
             classified,
-            PicPanicKind::DeadInstanceTransport { .. }
+            PocketIcPanicKind::DeadInstanceTransport { .. }
         ));
     }
 }

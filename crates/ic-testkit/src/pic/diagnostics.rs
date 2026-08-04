@@ -1,10 +1,17 @@
 use candid::Principal;
+use pocket_ic::PocketIc;
 
-use super::{Pic, startup};
+use super::startup;
 
-impl Pic {
+/// Reusable PocketIC failure diagnostics.
+pub trait PocketIcDiagnosticsExt {
+    /// Print status and canister-log context for a failed test operation.
+    fn dump_canister_debug(&self, canister_id: Principal, context: &str);
+}
+
+impl PocketIcDiagnosticsExt for PocketIc {
     /// Dump basic PocketIC status and log context for one canister.
-    pub fn dump_canister_debug(&self, canister_id: Principal, context: &str) {
+    fn dump_canister_debug(&self, canister_id: Principal, context: &str) {
         eprintln!("{context}: debug for canister {canister_id}");
 
         match self.canister_status(canister_id, None) {

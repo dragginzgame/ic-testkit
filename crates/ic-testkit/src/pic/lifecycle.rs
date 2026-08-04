@@ -2,8 +2,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
 use candid::Principal;
+use pocket_ic::PocketIc;
 
-use super::{Pic, PicInstallError, startup};
+use super::{CanisterInstallError, PocketIcTimeExt, startup};
 
 ///
 /// InstallSpec
@@ -46,13 +47,95 @@ impl InstallSpec {
     }
 }
 
-impl Pic {
+/// Retry limits and simulated cooldown for install-code operations.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RetryPolicy {
+    max_attempts: usize,
+    cooldown: Duration,
+}
+
+impl RetryPolicy {
+    /// Create a policy with an exact, non-zero maximum attempt count.
+    #[must_use]
+    pub const fn new(max_attempts: usize, cooldown: Duration) -> Self {
+        assert!(
+            max_attempts > 0,
+            "retry policy requires at least one attempt"
+        );
+        Self {
+            max_attempts,
+            cooldown,
+        }
+    }
+
+    /// Read the maximum number of operation attempts, including the first.
+    #[must_use]
+    pub const fn max_attempts(self) -> usize {
+        self.max_attempts
+    }
+
+    /// Read the simulated cooldown applied between rate-limited attempts.
+    #[must_use]
+    pub const fn cooldown(self) -> Duration {
+        self.cooldown
+    }
+}
+
+/// Generic canister installation and install-code retry policies.
+pub trait CanisterInstallExt {
+    /// Create and install one canister from raw wasm and init bytes.
+    #[must_use]
+    fn create_and_install_with_args(
+        &self,
+        wasm: Vec<u8>,
+        init_bytes: Vec<u8>,
+        install_cycles: u128,
+    ) -> Principal;
+
+    /// Fallible counterpart to [`create_and_install_with_args`](Self::create_and_install_with_args).
+    fn try_create_and_install_with_args(
+        &self,
+        wasm: Vec<u8>,
+        init_bytes: Vec<u8>,
+        install_cycles: u128,
+    ) -> Result<Principal, CanisterInstallError>;
+
+    /// Create and install one canister from a reusable specification.
+    #[must_use]
+    fn create_and_install(&self, spec: InstallSpec) -> Principal;
+
+    /// Fallible counterpart to [`create_and_install`](Self::create_and_install).
+    fn try_create_and_install(&self, spec: InstallSpec) -> Result<Principal, CanisterInstallError>;
+
+    /// Sequentially create and install multiple canisters.
+    #[must_use]
+    fn create_and_install_many<I>(&self, specs: I) -> Vec<Principal>
+    where
+        I: IntoIterator<Item = InstallSpec>;
+
+    /// Fallible counterpart to [`create_and_install_many`](Self::create_and_install_many).
+    fn try_create_and_install_many<I>(
+        &self,
+        specs: I,
+    ) -> Result<Vec<Principal>, CanisterInstallError>
+    where
+        I: IntoIterator<Item = InstallSpec>;
+
+    /// Advance simulated time and rounds past an install-code cooldown.
+    fn wait_out_install_code_rate_limit(&self, cooldown: Duration);
+
+    /// Retry an operation only while PocketIC reports install-code rate limiting.
+    fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, String>
+    where
+        F: FnMut() -> Result<T, String>;
+}
+
+impl CanisterInstallExt for PocketIc {
     /// Install one arbitrary wasm module with caller-provided init bytes.
     ///
     /// This is the generic install path for downstreams that use `ic-testkit`
     /// without depending on application-specific init payload conventions.
-    #[must_use]
-    pub fn create_and_install_with_args(
+    fn create_and_install_with_args(
         &self,
         wasm: Vec<u8>,
         init_bytes: Vec<u8>,
@@ -63,35 +146,33 @@ impl Pic {
     }
 
     /// Install one arbitrary wasm module with caller-provided init bytes.
-    pub fn try_create_and_install_with_args(
+    fn try_create_and_install_with_args(
         &self,
         wasm: Vec<u8>,
         init_bytes: Vec<u8>,
         install_cycles: u128,
-    ) -> Result<Principal, PicInstallError> {
+    ) -> Result<Principal, CanisterInstallError> {
         self.try_create_and_install(InstallSpec::new(wasm, init_bytes, install_cycles))
     }
 
     /// Install one arbitrary wasm module from a generic install specification.
-    #[must_use]
-    pub fn create_and_install(&self, spec: InstallSpec) -> Principal {
+    fn create_and_install(&self, spec: InstallSpec) -> Principal {
         self.try_create_and_install(spec)
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Install one arbitrary wasm module from a generic install specification.
-    pub fn try_create_and_install(&self, spec: InstallSpec) -> Result<Principal, PicInstallError> {
-        self.try_create_funded_and_install(spec)
+    fn try_create_and_install(&self, spec: InstallSpec) -> Result<Principal, CanisterInstallError> {
+        try_create_funded_and_install(self, spec)
     }
 
-    /// Sequentially install multiple arbitrary wasm modules into this `Pic`.
+    /// Sequentially install multiple arbitrary wasm modules into this PocketIC instance.
     ///
     /// Installs are attempted in iterator order. If one install fails, earlier
     /// installs remain in the PocketIC instance, the failed canister may exist
-    /// with the id exposed by `PicInstallError::canister_id()`, and later
+    /// with the id exposed by `CanisterInstallError::canister_id()`, and later
     /// installs are not attempted.
-    #[must_use]
-    pub fn create_and_install_many<I>(&self, specs: I) -> Vec<Principal>
+    fn create_and_install_many<I>(&self, specs: I) -> Vec<Principal>
     where
         I: IntoIterator<Item = InstallSpec>,
     {
@@ -99,16 +180,16 @@ impl Pic {
             .unwrap_or_else(|err| panic!("{err}"))
     }
 
-    /// Sequentially install multiple arbitrary wasm modules into this `Pic`.
+    /// Sequentially install multiple arbitrary wasm modules into this PocketIC instance.
     ///
     /// Installs are attempted in iterator order. If one install fails, earlier
     /// installs remain in the PocketIC instance, the failed canister may exist
-    /// with the id exposed by `PicInstallError::canister_id()`, and later
+    /// with the id exposed by `CanisterInstallError::canister_id()`, and later
     /// installs are not attempted.
-    pub fn try_create_and_install_many<I>(
+    fn try_create_and_install_many<I>(
         &self,
         specs: I,
-    ) -> Result<Vec<Principal>, PicInstallError>
+    ) -> Result<Vec<Principal>, CanisterInstallError>
     where
         I: IntoIterator<Item = InstallSpec>,
     {
@@ -119,116 +200,124 @@ impl Pic {
     }
 
     /// Wait out the PocketIC `install_code` cooldown window inside the same instance.
-    pub fn wait_out_install_code_rate_limit(&self, cooldown: Duration) {
+    fn wait_out_install_code_rate_limit(&self, cooldown: Duration) {
         self.advance_time(cooldown);
         self.tick_n(2);
     }
 
-    /// Retry one install_code-like operation while PocketIC still reports rate limiting.
-    pub fn retry_install_code_ok<T, F>(
-        &self,
-        retry_limit: usize,
-        cooldown: Duration,
-        mut op: F,
-    ) -> Result<T, String>
+    fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, String>
     where
         F: FnMut() -> Result<T, String>,
     {
-        let mut last_err = None;
+        retry_install_code_with(policy, op, || {
+            self.wait_out_install_code_rate_limit(policy.cooldown());
+        })
+    }
+}
 
-        for _ in 0..retry_limit {
-            match op() {
-                Ok(value) => return Ok(value),
-                Err(err) if is_install_code_rate_limited(&err) => {
-                    last_err = Some(err);
-                    self.wait_out_install_code_rate_limit(cooldown);
-                }
-                Err(err) => return Err(err),
-            }
-        }
-
-        Err(last_err.unwrap_or_else(|| "install_code retry loop exhausted".to_string()))
+// Install a canister after creating it and optionally adding extra cycles.
+fn try_create_funded_and_install(
+    pocket_ic: &PocketIc,
+    spec: InstallSpec,
+) -> Result<Principal, CanisterInstallError> {
+    let canister_id = pocket_ic.create_canister();
+    if spec.cycles > 0 {
+        let _ = pocket_ic.add_cycles(canister_id, spec.cycles);
     }
 
-    /// Retry one install_code-like failure path while PocketIC still reports rate limiting.
-    pub fn retry_install_code_err<F>(
-        &self,
-        retry_limit: usize,
-        cooldown: Duration,
-        first: Result<(), String>,
-        mut op: F,
-    ) -> Result<(), String>
-    where
-        F: FnMut() -> Result<(), String>,
-    {
-        match first {
-            Ok(()) => return Ok(()),
-            Err(err) if !is_install_code_rate_limited(&err) => return Err(err),
-            Err(_) => {}
+    let install = catch_unwind(AssertUnwindSafe(|| {
+        pocket_ic.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
+    }));
+    if let Err(payload) = install {
+        if let Some(label) = &spec.label {
+            eprintln!("install_canister trapped for {canister_id} ({label})");
+        } else {
+            eprintln!("install_canister trapped for {canister_id}");
         }
-
-        self.wait_out_install_code_rate_limit(cooldown);
-
-        for _ in 1..retry_limit {
-            match op() {
-                Ok(()) => return Ok(()),
-                Err(err) if is_install_code_rate_limited(&err) => {
-                    self.wait_out_install_code_rate_limit(cooldown);
-                }
-                Err(err) => return Err(err),
+        if let Ok(status) = pocket_ic.canister_status(canister_id, None) {
+            eprintln!("canister_status for {canister_id}: {status:?}");
+        }
+        if let Ok(logs) = pocket_ic.fetch_canister_logs(canister_id, Principal::anonymous()) {
+            for record in logs {
+                eprintln!("canister_log {canister_id}: {record:?}");
             }
         }
-
-        op()
+        let message = startup::panic_payload_to_string(payload.as_ref());
+        return if let Some(label) = spec.label {
+            Err(CanisterInstallError::labeled(canister_id, label, message))
+        } else {
+            Err(CanisterInstallError::new(canister_id, message))
+        };
     }
 
-    // Install a canister after creating it and optionally adding extra cycles.
-    fn try_create_funded_and_install(
-        &self,
-        spec: InstallSpec,
-    ) -> Result<Principal, PicInstallError> {
-        let canister_id = self.create_canister();
-        if spec.cycles > 0 {
-            self.add_cycles(canister_id, spec.cycles);
-        }
-
-        let install = catch_unwind(AssertUnwindSafe(|| {
-            self.inner.install_canister(
-                canister_id,
-                spec.wasm,
-                spec.init_bytes,
-                spec.install_sender,
-            );
-        }));
-        if let Err(payload) = install {
-            if let Some(label) = &spec.label {
-                eprintln!("install_canister trapped for {canister_id} ({label})");
-            } else {
-                eprintln!("install_canister trapped for {canister_id}");
-            }
-            if let Ok(status) = self.inner.canister_status(canister_id, None) {
-                eprintln!("canister_status for {canister_id}: {status:?}");
-            }
-            if let Ok(logs) = self
-                .inner
-                .fetch_canister_logs(canister_id, Principal::anonymous())
-            {
-                for record in logs {
-                    eprintln!("canister_log {canister_id}: {record:?}");
-                }
-            }
-            let message = startup::panic_payload_to_string(payload.as_ref());
-            return if let Some(label) = spec.label {
-                Err(PicInstallError::labeled(canister_id, label, message))
-            } else {
-                Err(PicInstallError::new(canister_id, message))
-            };
-        }
-
-        Ok(canister_id)
-    }
+    Ok(canister_id)
 }
 
 fn is_install_code_rate_limited(message: &str) -> bool {
     message.contains("CanisterInstallCodeRateLimited")
+}
+
+fn retry_install_code_with<T, F, W>(
+    policy: RetryPolicy,
+    mut op: F,
+    mut wait_out_cooldown: W,
+) -> Result<T, String>
+where
+    F: FnMut() -> Result<T, String>,
+    W: FnMut(),
+{
+    for attempt in 1..=policy.max_attempts() {
+        match op() {
+            Ok(value) => return Ok(value),
+            Err(err) if is_install_code_rate_limited(&err) && attempt < policy.max_attempts() => {
+                wait_out_cooldown();
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    unreachable!("RetryPolicy guarantees at least one attempt")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, time::Duration};
+
+    use super::{RetryPolicy, retry_install_code_with};
+
+    const RATE_LIMITED: &str = "CanisterInstallCodeRateLimited";
+
+    #[test]
+    fn retry_policy_counts_the_first_attempt() {
+        let attempts = Cell::new(0);
+        let waits = Cell::new(0);
+        let result = retry_install_code_with(
+            RetryPolicy::new(3, Duration::from_secs(1)),
+            || {
+                attempts.set(attempts.get() + 1);
+                Err::<(), _>(RATE_LIMITED.to_string())
+            },
+            || waits.set(waits.get() + 1),
+        );
+
+        assert_eq!(result, Err(RATE_LIMITED.to_string()));
+        assert_eq!(attempts.get(), 3);
+        assert_eq!(waits.get(), 2);
+    }
+
+    #[test]
+    fn retry_policy_stops_on_non_rate_limit_failure() {
+        let attempts = Cell::new(0);
+        let result = retry_install_code_with(
+            RetryPolicy::new(3, Duration::from_secs(1)),
+            || {
+                attempts.set(attempts.get() + 1);
+                Err::<(), _>("not retryable".to_string())
+            },
+            || panic!("non-rate-limit failure must not wait"),
+        );
+
+        assert_eq!(result, Err("not retryable".to_string()));
+        assert_eq!(attempts.get(), 1);
+    }
 }

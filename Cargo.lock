@@ -741,13 +741,10 @@ name = "ic-testkit"
 version = "0.1.12"
 dependencies = [
  "candid",
- "flate2",
  "ic-cdk",
  "pocket-ic",
- "reqwest",
  "serde",
  "serde_json",
- "sha2",
 ]
 
 [[package]]

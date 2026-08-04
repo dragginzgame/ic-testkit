@@ -2,7 +2,7 @@
 //!
 //! This crate is intended for host-side test environments (for example via
 //! PocketIC) and provides generic helpers such as stable dummy principals,
-//! PocketIC wrappers, standalone canister fixtures, generic prebuilt wasm
+//! PocketIC re-exports, standalone canister fixtures, generic prebuilt wasm
 //! install helpers, retry helpers for PocketIC install throttling, and cached
 //! baseline primitives.
 

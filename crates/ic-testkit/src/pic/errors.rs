@@ -1,31 +1,34 @@
 use candid::Principal;
+use pocket_ic::RejectResponse;
 
-use super::{PicSerialGuardError, startup::PicStartError};
+use super::startup::PocketIcStartError;
 
 ///
-/// PicCallError
+/// CandidCallError
 ///
 
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PicCallError {
+pub struct CandidCallError {
     pub message: String,
-    pub kind: PicCallErrorKind,
-    pub context: Option<Box<PicCallContext>>,
+    pub kind: CandidCallErrorKind,
+    pub context: Option<Box<CandidCallContext>>,
+    pub reject_response: Option<Box<RejectResponse>>,
 }
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PicCallErrorKind {
+pub enum CandidCallErrorKind {
     Encode,
     Decode,
+    CanisterReject,
     Transport,
     Other,
 }
 
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PicCallContext {
+pub struct CandidCallContext {
     pub operation: &'static str,
     pub canister_id: Principal,
     pub caller: Principal,
@@ -33,11 +36,11 @@ pub struct PicCallContext {
 }
 
 ///
-/// PicInstallError
+/// CanisterInstallError
 ///
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct PicInstallError {
+pub struct CanisterInstallError {
     canister_id: Principal,
     label: Option<String>,
     message: String,
@@ -49,12 +52,11 @@ pub struct PicInstallError {
 
 #[derive(Debug)]
 pub enum StandaloneCanisterFixtureError {
-    SerialGuard(PicSerialGuardError),
-    Start(PicStartError),
-    Install(PicInstallError),
+    Start(PocketIcStartError),
+    Install(CanisterInstallError),
 }
 
-impl PicCallContext {
+impl CandidCallContext {
     /// Capture the stable call metadata attached to one call failure.
     #[must_use]
     pub fn new(
@@ -96,20 +98,21 @@ impl PicCallContext {
     }
 }
 
-impl PicCallError {
+impl CandidCallError {
     /// Capture one PocketIC call/codec failure.
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
-            kind: PicCallErrorKind::Other,
+            kind: CandidCallErrorKind::Other,
             context: None,
+            reject_response: None,
         }
     }
 
     /// Capture one contextual Candid encode failure.
     #[must_use]
-    pub fn encode(context: PicCallContext, source: impl std::fmt::Display) -> Self {
+    pub fn encode(context: CandidCallContext, source: impl std::fmt::Display) -> Self {
         let message = format!(
             "candid encode_args failed (operation={}, canister={}, caller={}, method={}): {source}",
             context.operation, context.canister_id, context.caller, context.method
@@ -117,14 +120,19 @@ impl PicCallError {
 
         Self {
             message,
-            kind: PicCallErrorKind::Encode,
+            kind: CandidCallErrorKind::Encode,
             context: Some(Box::new(context)),
+            reject_response: None,
         }
     }
 
     /// Capture one contextual Candid decode failure.
     #[must_use]
-    pub fn decode(context: PicCallContext, bytes: usize, source: impl std::fmt::Display) -> Self {
+    pub fn decode(
+        context: CandidCallContext,
+        bytes: usize,
+        source: impl std::fmt::Display,
+    ) -> Self {
         let message = format!(
             "candid decode_one failed (operation={}, canister={}, caller={}, method={}, bytes={}): {source}",
             context.operation, context.canister_id, context.caller, context.method, bytes
@@ -132,14 +140,31 @@ impl PicCallError {
 
         Self {
             message,
-            kind: PicCallErrorKind::Decode,
+            kind: CandidCallErrorKind::Decode,
             context: Some(Box::new(context)),
+            reject_response: None,
+        }
+    }
+
+    /// Capture one structured rejection returned by PocketIC.
+    #[must_use]
+    pub fn canister_reject(context: CandidCallContext, response: RejectResponse) -> Self {
+        let message = format!(
+            "pocket_ic {} was rejected (canister={}, caller={}, method={}): {response}",
+            context.operation, context.canister_id, context.caller, context.method
+        );
+
+        Self {
+            message,
+            kind: CandidCallErrorKind::CanisterReject,
+            context: Some(Box::new(context)),
+            reject_response: Some(Box::new(response)),
         }
     }
 
     /// Capture one contextual PocketIC transport failure.
     #[must_use]
-    pub fn transport(context: PicCallContext, source: impl std::fmt::Display) -> Self {
+    pub fn transport(context: CandidCallContext, source: impl std::fmt::Display) -> Self {
         let message = format!(
             "pocket_ic {} failed (canister={}, caller={}, method={}): {source}",
             context.operation, context.canister_id, context.caller, context.method
@@ -147,8 +172,9 @@ impl PicCallError {
 
         Self {
             message,
-            kind: PicCallErrorKind::Transport,
+            kind: CandidCallErrorKind::Transport,
             context: Some(Box::new(context)),
+            reject_response: None,
         }
     }
 
@@ -160,26 +186,32 @@ impl PicCallError {
 
     /// Read the structured failure kind.
     #[must_use]
-    pub const fn kind(&self) -> PicCallErrorKind {
+    pub const fn kind(&self) -> CandidCallErrorKind {
         self.kind
     }
 
     /// Read the structured call context, when available.
     #[must_use]
-    pub fn context(&self) -> Option<&PicCallContext> {
+    pub fn context(&self) -> Option<&CandidCallContext> {
         self.context.as_deref()
+    }
+
+    /// Read the structured PocketIC rejection, when the call reached the IC.
+    #[must_use]
+    pub fn reject_response(&self) -> Option<&RejectResponse> {
+        self.reject_response.as_deref()
     }
 }
 
-impl std::fmt::Display for PicCallError {
+impl std::fmt::Display for CandidCallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.message)
     }
 }
 
-impl std::error::Error for PicCallError {}
+impl std::error::Error for CandidCallError {}
 
-impl PicInstallError {
+impl CanisterInstallError {
     /// Capture one install failure for a specific canister id.
     #[must_use]
     pub const fn new(canister_id: Principal, message: String) -> Self {
@@ -223,7 +255,7 @@ impl PicInstallError {
     }
 }
 
-impl std::fmt::Display for PicInstallError {
+impl std::fmt::Display for CanisterInstallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(label) = &self.label {
             write!(
@@ -241,12 +273,11 @@ impl std::fmt::Display for PicInstallError {
     }
 }
 
-impl std::error::Error for PicInstallError {}
+impl std::error::Error for CanisterInstallError {}
 
 impl std::fmt::Display for StandaloneCanisterFixtureError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::SerialGuard(err) => write!(f, "{err}"),
             Self::Start(err) => write!(f, "{err}"),
             Self::Install(err) => write!(f, "{err}"),
         }
@@ -256,7 +287,6 @@ impl std::fmt::Display for StandaloneCanisterFixtureError {
 impl std::error::Error for StandaloneCanisterFixtureError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::SerialGuard(err) => Some(err),
             Self::Start(err) => Some(err),
             Self::Install(err) => Some(err),
         }
@@ -266,14 +296,37 @@ impl std::error::Error for StandaloneCanisterFixtureError {
 #[cfg(test)]
 mod tests {
     use candid::Principal;
+    use pocket_ic::{ErrorCode, RejectCode, RejectResponse};
 
-    use super::PicInstallError;
+    use super::{CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError};
 
     #[test]
     fn labeled_install_error_display_includes_label() {
-        let err = PicInstallError::labeled(Principal::anonymous(), "authority", "trap");
+        let err = CanisterInstallError::labeled(Principal::anonymous(), "authority", "trap");
 
         assert_eq!(err.label(), Some("authority"));
         assert!(err.to_string().contains("(authority): trap"));
+    }
+
+    #[test]
+    fn canister_reject_preserves_the_upstream_response() {
+        let response = RejectResponse {
+            reject_code: RejectCode::DestinationInvalid,
+            reject_message: "missing canister".to_string(),
+            error_code: ErrorCode::CanisterNotFound,
+            certified: true,
+        };
+        let error = CandidCallError::canister_reject(
+            CandidCallContext::new(
+                "query_call",
+                Principal::anonymous(),
+                Principal::management_canister(),
+                "get",
+            ),
+            response.clone(),
+        );
+
+        assert_eq!(error.kind(), CandidCallErrorKind::CanisterReject);
+        assert_eq!(error.reject_response(), Some(&response));
     }
 }

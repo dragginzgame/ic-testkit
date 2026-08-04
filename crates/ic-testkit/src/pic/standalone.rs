@@ -1,9 +1,10 @@
 use candid::{CandidType, Principal, utils::ArgumentEncoder};
+use pocket_ic::PocketIc;
 use serde::de::DeserializeOwned;
 
 use super::{
-    InstallSpec, Pic, PicCallError, PicSerialGuard, StandaloneCanisterFixtureError,
-    try_acquire_pic_serial_guard, try_pic,
+    CandidCallError, CandidCallExt, CanisterInstallExt, InstallSpec,
+    StandaloneCanisterFixtureError, try_pic,
 };
 
 const DEFAULT_EXTRA_INSTALL_CYCLES: u128 = 0;
@@ -13,22 +14,15 @@ const DEFAULT_EXTRA_INSTALL_CYCLES: u128 = 0;
 ///
 
 pub struct StandaloneCanisterFixture {
-    pic: Pic,
+    pocket_ic: PocketIc,
     canister_id: Principal,
-    _serial_guard: PicSerialGuard,
 }
 
 impl StandaloneCanisterFixture {
     /// Borrow the PocketIC instance that owns this standalone fixture.
     #[must_use]
-    pub const fn pic(&self) -> &Pic {
-        &self.pic
-    }
-
-    /// Mutably borrow the PocketIC instance that owns this standalone fixture.
-    #[must_use]
-    pub const fn pic_mut(&mut self) -> &mut Pic {
-        &mut self.pic
+    pub const fn pocket_ic(&self) -> &PocketIc {
+        &self.pocket_ic
     }
 
     /// Read the installed canister id for this standalone fixture.
@@ -39,21 +33,21 @@ impl StandaloneCanisterFixture {
 
     /// Consume the fixture and return the owned PocketIC instance and canister id.
     #[must_use]
-    pub fn into_parts(self) -> (Pic, Principal) {
-        (self.pic, self.canister_id)
+    pub fn into_parts(self) -> (PocketIc, Principal) {
+        (self.pocket_ic, self.canister_id)
     }
 
     /// Forward one typed update call to this fixture's canister id.
-    pub fn update_call<T, A>(&self, method: &str, args: A) -> Result<T, PicCallError>
+    pub fn update_call<T, A>(&self, method: &str, args: A) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic.update_call(self.canister_id, method, args)
+        self.pocket_ic.update_candid(self.canister_id, method, args)
     }
 
     /// Forward one typed update call to this fixture's canister id, panicking
-    /// on transport or Candid codec failure.
+    /// on rejection or Candid codec failure.
     ///
     /// This does not unwrap application-level results. For example,
     /// `update_call_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
@@ -63,8 +57,8 @@ impl StandaloneCanisterFixture {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic
-            .update_call_or_panic(self.canister_id, method, args)
+        self.pocket_ic
+            .update_candid_or_panic(self.canister_id, method, args)
     }
 
     /// Forward one typed update call with an explicit caller to this fixture's canister id.
@@ -73,17 +67,17 @@ impl StandaloneCanisterFixture {
         caller: Principal,
         method: &str,
         args: A,
-    ) -> Result<T, PicCallError>
+    ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic
-            .update_call_as(self.canister_id, caller, method, args)
+        self.pocket_ic
+            .update_candid_as(self.canister_id, caller, method, args)
     }
 
     /// Forward one typed update call with an explicit caller to this fixture's
-    /// canister id, panicking on transport or Candid codec failure.
+    /// canister id, panicking on rejection or Candid codec failure.
     ///
     /// This does not unwrap application-level results. For example,
     /// `update_call_as_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
@@ -93,21 +87,21 @@ impl StandaloneCanisterFixture {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic
-            .update_call_as_or_panic(self.canister_id, caller, method, args)
+        self.pocket_ic
+            .update_candid_as_or_panic(self.canister_id, caller, method, args)
     }
 
     /// Forward one typed query call to this fixture's canister id.
-    pub fn query_call<T, A>(&self, method: &str, args: A) -> Result<T, PicCallError>
+    pub fn query_call<T, A>(&self, method: &str, args: A) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic.query_call(self.canister_id, method, args)
+        self.pocket_ic.query_candid(self.canister_id, method, args)
     }
 
     /// Forward one typed query call to this fixture's canister id, panicking on
-    /// transport or Candid codec failure.
+    /// rejection or Candid codec failure.
     ///
     /// This does not unwrap application-level results. For example,
     /// `query_call_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
@@ -117,7 +111,8 @@ impl StandaloneCanisterFixture {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic.query_call_or_panic(self.canister_id, method, args)
+        self.pocket_ic
+            .query_candid_or_panic(self.canister_id, method, args)
     }
 
     /// Forward one typed query call with an explicit caller to this fixture's canister id.
@@ -126,17 +121,17 @@ impl StandaloneCanisterFixture {
         caller: Principal,
         method: &str,
         args: A,
-    ) -> Result<T, PicCallError>
+    ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic
-            .query_call_as(self.canister_id, caller, method, args)
+        self.pocket_ic
+            .query_candid_as(self.canister_id, caller, method, args)
     }
 
     /// Forward one typed query call with an explicit caller to this fixture's
-    /// canister id, panicking on transport or Candid codec failure.
+    /// canister id, panicking on rejection or Candid codec failure.
     ///
     /// This does not unwrap application-level results. For example,
     /// `query_call_as_or_panic::<Result<T, E>, _>(...)` returns `Result<T, E>`.
@@ -146,8 +141,8 @@ impl StandaloneCanisterFixture {
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.pic
-            .query_call_as_or_panic(self.canister_id, caller, method, args)
+        self.pocket_ic
+            .query_candid_as_or_panic(self.canister_id, caller, method, args)
     }
 }
 
@@ -207,16 +202,13 @@ pub fn install_prebuilt_canister_from_spec(spec: InstallSpec) -> StandaloneCanis
 pub fn try_install_prebuilt_canister_from_spec(
     spec: InstallSpec,
 ) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
-    let serial_guard =
-        try_acquire_pic_serial_guard().map_err(StandaloneCanisterFixtureError::SerialGuard)?;
-    let pic = try_pic().map_err(StandaloneCanisterFixtureError::Start)?;
-    let canister_id = pic
+    let pocket_ic = try_pic().map_err(StandaloneCanisterFixtureError::Start)?;
+    let canister_id = pocket_ic
         .try_create_and_install(spec)
         .map_err(StandaloneCanisterFixtureError::Install)?;
 
     Ok(StandaloneCanisterFixture {
-        pic,
+        pocket_ic,
         canister_id,
-        _serial_guard: serial_guard,
     })
 }

@@ -1,40 +1,28 @@
 use candid::Principal;
+use pocket_ic::PocketIc;
 use std::{
-    collections::HashMap,
     panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     sync::{Mutex, MutexGuard},
 };
 
-use super::{Pic, PicSerialGuard, acquire_pic_serial_guard, startup};
-
-struct ControllerSnapshot {
-    snapshot_id: Vec<u8>,
-    sender: Option<Principal>,
-}
+use super::{ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, startup};
 
 ///
-/// ControllerSnapshots
+/// CachedPocketIcBaseline
 ///
 
-pub struct ControllerSnapshots(HashMap<Principal, ControllerSnapshot>);
-
-///
-/// CachedPicBaseline
-///
-
-pub struct CachedPicBaseline<T> {
-    pic: Pic,
+pub struct CachedPocketIcBaseline<T> {
+    pocket_ic: PocketIc,
     snapshots: ControllerSnapshots,
     metadata: T,
-    _serial_guard: PicSerialGuard,
 }
 
 ///
-/// CachedPicBaselineGuard
+/// CachedPocketIcBaselineGuard
 ///
 
-pub struct CachedPicBaselineGuard<'a, T> {
-    guard: MutexGuard<'a, Option<CachedPicBaseline<T>>>,
+pub struct CachedPocketIcBaselineGuard<'a, T> {
+    guard: MutexGuard<'a, Option<CachedPocketIcBaseline<T>>>,
 }
 
 enum CachedBaselineRestoreFailure {
@@ -43,12 +31,12 @@ enum CachedBaselineRestoreFailure {
 }
 
 /// Acquire one process-local cached PocketIC baseline, building it on first use.
-fn acquire_cached_pic_baseline<T, F>(
-    slot: &'static Mutex<Option<CachedPicBaseline<T>>>,
+fn acquire_cached_pocket_ic_baseline<T, F>(
+    slot: &'static Mutex<Option<CachedPocketIcBaseline<T>>>,
     build: F,
-) -> (CachedPicBaselineGuard<'static, T>, bool)
+) -> (CachedPocketIcBaselineGuard<'static, T>, bool)
 where
-    F: FnOnce() -> CachedPicBaseline<T>,
+    F: FnOnce() -> CachedPocketIcBaseline<T>,
 {
     let mut guard = slot
         .lock()
@@ -59,26 +47,26 @@ where
         *guard = Some(build());
     }
 
-    (CachedPicBaselineGuard { guard }, cache_hit)
+    (CachedPocketIcBaselineGuard { guard }, cache_hit)
 }
 
 /// Restore one cached PocketIC baseline, rebuilding it if the owned PocketIC
 /// instance has died between tests.
-pub fn restore_or_rebuild_cached_pic_baseline<T, B, R>(
-    slot: &'static Mutex<Option<CachedPicBaseline<T>>>,
+pub fn restore_or_rebuild_cached_pocket_ic_baseline<T, B, R>(
+    slot: &'static Mutex<Option<CachedPocketIcBaseline<T>>>,
     build: B,
     restore: R,
-) -> (CachedPicBaselineGuard<'static, T>, bool)
+) -> (CachedPocketIcBaselineGuard<'static, T>, bool)
 where
-    B: Fn() -> CachedPicBaseline<T>,
-    R: Fn(&CachedPicBaseline<T>),
+    B: Fn() -> CachedPocketIcBaseline<T>,
+    R: Fn(&CachedPocketIcBaseline<T>),
 {
-    let (baseline, cache_hit) = acquire_cached_pic_baseline(slot, &build);
+    let (baseline, cache_hit) = acquire_cached_pocket_ic_baseline(slot, &build);
     if !cache_hit {
         return (baseline, false);
     }
 
-    match try_restore_cached_pic_baseline(
+    match try_restore_cached_pocket_ic_baseline(
         baseline
             .guard
             .as_ref()
@@ -93,20 +81,20 @@ where
     }
 
     drop(baseline);
-    drop_stale_cached_pic_baseline(slot);
+    drop_stale_cached_pocket_ic_baseline(slot);
 
-    let (rebuilt, _cache_hit) = acquire_cached_pic_baseline(slot, build);
+    let (rebuilt, _cache_hit) = acquire_cached_pocket_ic_baseline(slot, build);
     (rebuilt, false)
 }
 
 // Attempt one cached baseline restore and classify only the one recovery path
 // we intentionally swallow: a dead PocketIC transport instance.
-fn try_restore_cached_pic_baseline<T, R>(
-    baseline: &CachedPicBaseline<T>,
+fn try_restore_cached_pocket_ic_baseline<T, R>(
+    baseline: &CachedPocketIcBaseline<T>,
     restore: R,
 ) -> Result<(), CachedBaselineRestoreFailure>
 where
-    R: Fn(&CachedPicBaseline<T>),
+    R: Fn(&CachedPocketIcBaseline<T>),
 {
     match catch_unwind(AssertUnwindSafe(|| restore(baseline))) {
         Ok(()) => Ok(()),
@@ -122,7 +110,9 @@ where
 
 /// Remove one dead cached baseline and swallow teardown panics from a broken
 /// PocketIC instance so callers can rebuild cleanly.
-fn drop_stale_cached_pic_baseline<T>(slot: &'static Mutex<Option<CachedPicBaseline<T>>>) {
+fn drop_stale_cached_pocket_ic_baseline<T>(
+    slot: &'static Mutex<Option<CachedPocketIcBaseline<T>>>,
+) {
     let stale = {
         let mut slot = slot
             .lock()
@@ -137,23 +127,14 @@ fn drop_stale_cached_pic_baseline<T>(slot: &'static Mutex<Option<CachedPicBaseli
     }
 }
 
-impl<T> CachedPicBaselineGuard<'_, T> {
+impl<T> CachedPocketIcBaselineGuard<'_, T> {
     /// Borrow the owned PocketIC instance behind this cached baseline guard.
     #[must_use]
-    pub fn pic(&self) -> &Pic {
+    pub fn pocket_ic(&self) -> &PocketIc {
         self.guard
             .as_ref()
             .expect("cached PocketIC baseline must exist")
-            .pic()
-    }
-
-    /// Mutably borrow the owned PocketIC instance behind this cached baseline guard.
-    #[must_use]
-    pub fn pic_mut(&mut self) -> &mut Pic {
-        self.guard
-            .as_mut()
-            .expect("cached PocketIC baseline must exist")
-            .pic_mut()
+            .pocket_ic()
     }
 
     /// Borrow the captured metadata behind this cached baseline guard.
@@ -175,51 +156,44 @@ impl<T> CachedPicBaselineGuard<'_, T> {
     }
 
     /// Restore the captured snapshot set back into the owned PocketIC instance.
-    pub fn restore(&self, controller_id: Principal) {
+    pub fn restore(&self, controller_id: Principal) -> Result<(), ControllerSnapshotError> {
         self.guard
             .as_ref()
             .expect("cached PocketIC baseline must exist")
-            .restore(controller_id);
+            .restore(controller_id)
     }
 }
 
-impl<T> CachedPicBaseline<T> {
+impl<T> CachedPocketIcBaseline<T> {
     /// Capture one immutable cached baseline from the current PocketIC instance.
     pub fn capture<I>(
-        pic: Pic,
+        pocket_ic: PocketIc,
         controller_id: Principal,
         canister_ids: I,
         metadata: T,
-    ) -> Option<Self>
+    ) -> Result<Self, ControllerSnapshotError>
     where
         I: IntoIterator<Item = Principal>,
     {
-        let snapshots = pic.capture_controller_snapshots(controller_id, canister_ids)?;
+        let snapshots = pocket_ic.capture_controller_snapshots(controller_id, canister_ids)?;
 
-        Some(Self {
-            pic,
+        Ok(Self {
+            pocket_ic,
             snapshots,
             metadata,
-            _serial_guard: acquire_pic_serial_guard(),
         })
     }
 
     /// Restore the captured snapshot set back into the owned PocketIC instance.
-    pub fn restore(&self, controller_id: Principal) {
-        self.pic
-            .restore_controller_snapshots(controller_id, &self.snapshots);
+    pub fn restore(&self, controller_id: Principal) -> Result<(), ControllerSnapshotError> {
+        self.pocket_ic
+            .restore_controller_snapshots(controller_id, &self.snapshots)
     }
 
     /// Borrow the owned PocketIC instance behind this cached baseline.
     #[must_use]
-    pub const fn pic(&self) -> &Pic {
-        &self.pic
-    }
-
-    /// Mutably borrow the owned PocketIC instance behind this cached baseline.
-    #[must_use]
-    pub const fn pic_mut(&mut self) -> &mut Pic {
-        &mut self.pic
+    pub const fn pocket_ic(&self) -> &PocketIc {
+        &self.pocket_ic
     }
 
     /// Borrow the captured metadata associated with this cached baseline.
@@ -232,34 +206,5 @@ impl<T> CachedPicBaseline<T> {
     #[must_use]
     pub const fn metadata_mut(&mut self) -> &mut T {
         &mut self.metadata
-    }
-}
-
-impl ControllerSnapshots {
-    pub(super) fn new(snapshots: HashMap<Principal, (Vec<u8>, Option<Principal>)>) -> Self {
-        Self(
-            snapshots
-                .into_iter()
-                .map(|(canister_id, (snapshot_id, sender))| {
-                    (
-                        canister_id,
-                        ControllerSnapshot {
-                            snapshot_id,
-                            sender,
-                        },
-                    )
-                })
-                .collect(),
-        )
-    }
-
-    pub(super) fn iter(&self) -> impl Iterator<Item = (Principal, &[u8], Option<Principal>)> + '_ {
-        self.0.iter().map(|(canister_id, snapshot)| {
-            (
-                *canister_id,
-                snapshot.snapshot_id.as_slice(),
-                snapshot.sender,
-            )
-        })
     }
 }

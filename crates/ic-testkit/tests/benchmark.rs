@@ -1,9 +1,9 @@
 use ic_testkit::benchmark::{
     BenchmarkAggregateReport, BenchmarkCounters, BenchmarkEventKind, BenchmarkEventSource,
     BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata, BenchmarkRunReport,
-    BenchmarkSpanReport, DEFAULT_PREFIX, aggregate_benchmark_spans, benchmark_run_directory_name,
-    compare_benchmark_aggregates, find_latest_previous_run, format_marker,
-    next_benchmark_run_directory, pair_benchmark_spans, parse_benchmark_events,
+    BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation, aggregate_benchmark_spans,
+    benchmark_run_directory_name, compare_benchmark_aggregates, find_latest_previous_run,
+    format_marker, next_benchmark_run_directory, pair_benchmark_spans, parse_benchmark_events,
     parse_benchmark_events_from_captured_output, parse_benchmark_events_from_source,
     read_benchmark_run_metadata, write_benchmark_report_dir,
 };
@@ -194,12 +194,12 @@ ICTK|app/a:end|300|60|90|120
     let app = aggregates
         .rows
         .iter()
-        .find(|row| row.suite == "app" && row.span_label == "app/a")
+        .find(|row| !row.is_all_suites() && row.suite == "app" && row.span_label == "app/a")
         .expect("app aggregate");
     let all = aggregates
         .rows
         .iter()
-        .find(|row| row.suite == "ALL" && row.span_label == "app/a")
+        .find(|row| row.is_all_suites() && row.span_label == "app/a")
         .expect("ALL aggregate");
 
     assert_eq!(app.runs, 2);
@@ -208,6 +208,38 @@ ICTK|app/a:end|300|60|90|120
     assert_eq!(app.min.instructions, 100);
     assert_eq!(app.max.instructions, 200);
     assert_eq!(all.runs, 2);
+}
+
+#[test]
+fn authored_all_suite_does_not_collide_with_cross_suite_aggregate() {
+    let config = BenchmarkParserConfig {
+        suite_derivation: SuiteDerivation::Fixed("ALL".to_string()),
+        ..BenchmarkParserConfig::default()
+    };
+    let parse = parse_benchmark_events(
+        "\
+ICTK|benchmark:start|0|0|0|0
+ICTK|benchmark:end|100|20|30|40
+",
+        &config,
+    );
+    let aggregates = aggregate_benchmark_spans(&pair_benchmark_spans(&parse.events).spans);
+
+    assert_eq!(aggregates.rows.len(), 2);
+    let authored = aggregates
+        .rows
+        .iter()
+        .find(|row| !row.is_all_suites())
+        .expect("authored ALL suite");
+    let all = aggregates
+        .rows
+        .iter()
+        .find(|row| row.is_all_suites())
+        .expect("cross-suite ALL aggregate");
+    assert_eq!(authored.suite, "ALL");
+    assert_eq!(all.suite, "ALL");
+    assert_eq!(authored.runs, 1);
+    assert_eq!(all.runs, 1);
 }
 
 #[test]

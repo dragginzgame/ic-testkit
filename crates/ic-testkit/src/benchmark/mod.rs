@@ -11,7 +11,22 @@ use std::{
 use serde_json::Value;
 
 pub const DEFAULT_PREFIX: &str = "ICTK";
-pub const ALL_SUITES: &str = "ALL";
+const ALL_SUITES_LABEL: &str = "ALL";
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum AggregateScope {
+    Suite(String),
+    All,
+}
+
+impl AggregateScope {
+    fn label(&self) -> &str {
+        match self {
+            Self::Suite(suite) => suite,
+            Self::All => ALL_SUITES_LABEL,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BenchmarkParserConfig {
@@ -193,6 +208,7 @@ pub struct BenchmarkAggregateRow {
     pub min: BenchmarkCounters,
     pub max: BenchmarkCounters,
     pub peak_end: BenchmarkCounters,
+    scope: AggregateScope,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -218,6 +234,23 @@ pub struct BenchmarkComparisonRow {
     pub heap_bytes_avg_change_percent: Option<f64>,
     pub memory_bytes_avg_change_percent: Option<f64>,
     pub total_allocation_avg_change_percent: Option<f64>,
+    scope: AggregateScope,
+}
+
+impl BenchmarkAggregateRow {
+    /// Report whether this row aggregates matching spans across every suite.
+    #[must_use]
+    pub const fn is_all_suites(&self) -> bool {
+        matches!(self.scope, AggregateScope::All)
+    }
+}
+
+impl BenchmarkComparisonRow {
+    /// Report whether this row compares the aggregate across every suite.
+    #[must_use]
+    pub const fn is_all_suites(&self) -> bool {
+        matches!(self.scope, AggregateScope::All)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -475,11 +508,16 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
 
 #[must_use]
 pub fn aggregate_benchmark_spans(spans: &[BenchmarkSpan]) -> BenchmarkAggregateReport {
-    let mut rows: BTreeMap<(String, String), AggregateBuilder> = BTreeMap::new();
+    let mut rows: BTreeMap<(AggregateScope, String), AggregateBuilder> = BTreeMap::new();
 
     for span in spans {
-        add_span_to_aggregate(&mut rows, &span.suite, &span.span_label, span);
-        add_span_to_aggregate(&mut rows, ALL_SUITES, &span.span_label, span);
+        add_span_to_aggregate(
+            &mut rows,
+            AggregateScope::Suite(span.suite.clone()),
+            &span.span_label,
+            span,
+        );
+        add_span_to_aggregate(&mut rows, AggregateScope::All, &span.span_label, span);
     }
 
     BenchmarkAggregateReport {
@@ -508,11 +546,11 @@ pub fn compare_benchmark_aggregates(
     BenchmarkComparisonReport {
         rows: keys
             .into_iter()
-            .map(|(suite, span_label)| {
-                let current_row = current_by_key.get(&(suite.clone(), span_label.clone()));
-                let previous_row = previous_by_key.get(&(suite.clone(), span_label.clone()));
+            .map(|(scope, span_label)| {
+                let current_row = current_by_key.get(&(scope.clone(), span_label.clone()));
+                let previous_row = previous_by_key.get(&(scope.clone(), span_label.clone()));
                 BenchmarkComparisonRow {
-                    suite,
+                    suite: scope.label().to_string(),
                     span_label,
                     current_runs: current_row.map(|row| row.runs),
                     previous_runs: previous_row.map(|row| row.runs),
@@ -532,6 +570,7 @@ pub fn compare_benchmark_aggregates(
                         current_row.map(|row| row.average.total_allocation),
                         previous_row.map(|row| row.average.total_allocation),
                     ),
+                    scope,
                 }
             })
             .collect(),
@@ -569,7 +608,7 @@ pub fn write_benchmark_report_dir(
                 .aggregates
                 .rows
                 .iter()
-                .filter(|row| row.suite != ALL_SUITES),
+                .filter(|row| !row.is_all_suites()),
         ),
     )?;
     fs::write(
@@ -579,7 +618,7 @@ pub fn write_benchmark_report_dir(
                 .aggregates
                 .rows
                 .iter()
-                .filter(|row| row.suite == ALL_SUITES),
+                .filter(|row| row.is_all_suites()),
         ),
     )?;
     fs::write(
@@ -743,7 +782,7 @@ fn push_paired_span(
 
 #[derive(Clone, Debug)]
 struct AggregateBuilder {
-    suite: String,
+    scope: AggregateScope,
     span_label: String,
     runs: u64,
     total: BenchmarkCounters,
@@ -753,9 +792,9 @@ struct AggregateBuilder {
 }
 
 impl AggregateBuilder {
-    fn new(suite: &str, span_label: &str, span: &BenchmarkSpan) -> Self {
+    fn new(scope: AggregateScope, span_label: &str, span: &BenchmarkSpan) -> Self {
         Self {
-            suite: suite.to_string(),
+            scope,
             span_label: span_label.to_string(),
             runs: 1,
             total: span.delta,
@@ -775,7 +814,7 @@ impl AggregateBuilder {
 
     fn finish(self) -> BenchmarkAggregateRow {
         BenchmarkAggregateRow {
-            suite: self.suite,
+            suite: self.scope.label().to_string(),
             span_label: self.span_label,
             runs: self.runs,
             total: self.total,
@@ -783,20 +822,21 @@ impl AggregateBuilder {
             min: self.min,
             max: self.max,
             peak_end: self.peak_end,
+            scope: self.scope,
         }
     }
 }
 
 fn add_span_to_aggregate(
-    rows: &mut BTreeMap<(String, String), AggregateBuilder>,
-    suite: &str,
+    rows: &mut BTreeMap<(AggregateScope, String), AggregateBuilder>,
+    scope: AggregateScope,
     span_label: &str,
     span: &BenchmarkSpan,
 ) {
-    match rows.entry((suite.to_string(), span_label.to_string())) {
+    match rows.entry((scope.clone(), span_label.to_string())) {
         Entry::Occupied(mut entry) => entry.get_mut().push(span),
         Entry::Vacant(entry) => {
-            entry.insert(AggregateBuilder::new(suite, span_label, span));
+            entry.insert(AggregateBuilder::new(scope, span_label, span));
         }
     }
 }
@@ -814,9 +854,9 @@ fn averages(total: BenchmarkCounters, runs: u64) -> BenchmarkAverages {
 
 fn aggregate_rows_by_key(
     rows: &[BenchmarkAggregateRow],
-) -> BTreeMap<(String, String), &BenchmarkAggregateRow> {
+) -> BTreeMap<(AggregateScope, String), &BenchmarkAggregateRow> {
     rows.iter()
-        .map(|row| ((row.suite.clone(), row.span_label.clone()), row))
+        .map(|row| ((row.scope.clone(), row.span_label.clone()), row))
         .collect()
 }
 
@@ -982,7 +1022,7 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
         comparison
             .rows
             .iter()
-            .map(|row| ((row.suite.clone(), row.span_label.clone()), row))
+            .map(|row| ((row.scope.clone(), row.span_label.clone()), row))
             .collect::<BTreeMap<_, _>>()
     });
     let mut out = String::from(
@@ -993,10 +1033,10 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
         .aggregates
         .rows
         .iter()
-        .filter(|row| row.suite != ALL_SUITES)
+        .filter(|row| !row.is_all_suites())
     {
         let comparison = comparison_by_key.as_ref().and_then(|rows| {
-            rows.get(&(row.suite.clone(), row.span_label.clone()))
+            rows.get(&(row.scope.clone(), row.span_label.clone()))
                 .copied()
         });
         let _ = writeln!(
