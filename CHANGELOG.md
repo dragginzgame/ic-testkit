@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [0.1.12] - 2026-08-04 - PocketIC 15 compatibility
 
+### Added
+
+- Adds the guarded `make release-patch` and `make publish` release flow used by
+  `ic-query`, including changelog, clean-tree, tag-at-HEAD, CI, and retry-safe
+  publication checks.
+
 ### Changed
 
 - Updates the workspace `pocket-ic` dependency from 14.0 to 15.0.

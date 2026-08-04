@@ -10,7 +10,7 @@
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
   <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.96.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-14.0-green.svg" alt="PocketIC"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-15.0-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
 </p>
 
@@ -26,7 +26,7 @@ Use `pocket-ic` directly when you want the underlying simulator/runtime API. Use
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.1.8"
+ic-testkit = "0.1.12"
 ```
 
 ## Quick Start
@@ -60,7 +60,7 @@ unwrap the outer `PicCallError`; application-level return values such as
 
 `ic-testkit` resolves the PocketIC server binary before starting `pocket-ic`.
 By default it uses `POCKET_IC_BIN` when set, then checks a versioned cache path
-under the system temp directory such as `/tmp/pocket-ic-server-14.0.0/pocket-ic`.
+under the system temp directory such as `/tmp/pocket-ic-server-15.0.0/pocket-ic`.
 If the binary is missing, `try_pic()` returns `PicStartError::BinaryUnavailable`
 with setup guidance instead of letting `pocket-ic` panic.
 
@@ -318,9 +318,29 @@ This crate does not define application init payloads, endpoint names, role model
 
 ## Local Checks
 
-```sh
+```bash
 make test
 make test-canisters
 make build-test-canisters
 make release-check
 ```
+
+## Releases
+
+Patch releases use the same guarded local flow as `ic-query`. Commit the
+changelog entry for the next patch and start from a clean worktree, then run:
+
+```bash
+make release-patch
+```
+
+This runs CI, bumps the workspace package version, stages the version files,
+commits and tags the release, re-runs CI, and pushes the commit and tag. After
+the tag CI succeeds, publish the tagged commit with:
+
+```bash
+make publish
+```
+
+Publication requires a clean worktree and a matching `v<version>` tag at
+`HEAD`. Re-running it is safe when that crate version is already on crates.io.
