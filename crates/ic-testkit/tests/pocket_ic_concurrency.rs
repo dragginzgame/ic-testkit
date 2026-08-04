@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     thread,
@@ -8,10 +8,17 @@ use std::{
 };
 
 use candid::Principal;
-use ic_testkit::pic::{PocketIc, PocketIcBuilder, try_build_pocket_ic};
+use ic_testkit::pic::{
+    CachedPocketIcBaseline, PocketIc, PocketIcBuilder, install_prebuilt_canister, pic,
+    restore_or_rebuild_cached_pocket_ic_baseline, try_build_pocket_ic,
+};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
+
+static BASELINE_A: Mutex<Option<CachedPocketIcBaseline<()>>> = Mutex::new(None);
+static BASELINE_B: Mutex<Option<CachedPocketIcBaseline<()>>> = Mutex::new(None);
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -53,6 +60,81 @@ fn ic_testkit_construction_preserves_overlapping_instances() {
         try_build_pocket_ic(PocketIcBuilder::new().with_application_subnet())
             .expect("ic-testkit should construct an independent PocketIC instance")
     });
+}
+
+#[test]
+fn standalone_into_parts_preserves_the_live_instance() {
+    let fixture = install_prebuilt_canister(EMPTY_WASM.to_vec(), vec![]);
+    let (pocket_ic, canister_id) = fixture.into_parts();
+
+    pocket_ic
+        .canister_status(canister_id, None)
+        .expect("PocketIC returned by into_parts should remain usable");
+}
+
+#[test]
+fn cached_baseline_guards_are_scoped_to_their_own_slots() {
+    let (baseline_a, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
+        &BASELINE_A,
+        build_empty_cached_baseline,
+        |_| {},
+    );
+    assert!(!cache_hit, "baseline A should be built for this test");
+
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel::<()>();
+    let worker = thread::spawn(move || {
+        let fresh = pic();
+        let canister_id = fresh.create_canister();
+        fresh
+            .canister_status(canister_id, None)
+            .expect("fresh instance should remain usable beside baseline A");
+
+        let (_baseline_b, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
+            &BASELINE_B,
+            build_empty_cached_baseline,
+            |_| {},
+        );
+        assert!(!cache_hit, "baseline B should have an independent slot");
+
+        if ready_tx.send(()).is_ok() {
+            let _ = release_rx.recv();
+        }
+    });
+
+    let result = ready_rx
+        .recv_timeout(READY_TIMEOUT)
+        .map_err(|err| format!("fresh instance or independent baseline was blocked: {err}"));
+
+    // Release the retained baseline and cancellation channel before joining so
+    // an accidentally introduced shared lock can unwind instead of hanging.
+    drop(baseline_a);
+    drop(release_tx);
+    let join_result = worker.join();
+
+    BASELINE_A
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    BASELINE_B
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+
+    if let Err(message) = result {
+        panic!("{message}");
+    }
+    join_result.expect("cached-baseline concurrency worker should exit cleanly");
+}
+
+fn build_empty_cached_baseline() -> CachedPocketIcBaseline<()> {
+    CachedPocketIcBaseline::capture(
+        pic(),
+        Principal::anonymous(),
+        std::iter::empty::<Principal>(),
+        (),
+    )
+    .expect("empty cached baseline should capture")
 }
 
 fn assert_two_instances_overlap<F>(build: F)
@@ -206,6 +288,7 @@ fn run_worker<F>(
         match command {
             Command::Initialize => {
                 let id = pocket_ic.create_canister();
+                pocket_ic.install_canister(id, EMPTY_WASM.to_vec(), vec![], None);
                 let balance = pocket_ic.add_cycles(id, (worker as u128 + 1) * 1_000_000);
                 canister_id = Some(id);
                 if events

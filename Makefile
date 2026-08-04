@@ -1,6 +1,6 @@
 .PHONY: \
 	actions-check build-test-canisters changelog-check check check-wasm ci clean \
-	clippy ensure-clean fmt fmt-check help msrv package patch publish \
+	clippy docs-check ensure-clean fmt fmt-check help msrv package patch publish \
 	minor publish-dry-run publish-guards-check release-check release-commit \
 	release-guards-check release-minor release-patch release-push release-stage \
 	release-tag-check tags test test-canisters version
@@ -11,7 +11,7 @@ MSRV ?= 1.88.0
 CHANGELOG_VERSION ?=
 
 CI_TARGETS := changelog-check actions-check publish-guards-check \
-	release-guards-check fmt-check check check-wasm clippy test \
+	release-guards-check fmt-check check check-wasm clippy docs-check test \
 	build-test-canisters test-canisters package publish-dry-run
 
 RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
@@ -24,6 +24,7 @@ help:
 	@echo "  check           Check the host crate with locked dependencies"
 	@echo "  check-wasm      Check the crate for wasm32"
 	@echo "  clippy          Run Clippy with warnings denied"
+	@echo "  docs-check      Build public API documentation with warnings denied"
 	@echo "  test            Run the ic-testkit test suite"
 	@echo "  test-canisters  Run the PocketIC canister integration test"
 	@echo "  msrv            Check the crate with the declared MSRV"
@@ -73,6 +74,9 @@ check-wasm:
 
 clippy:
 	cargo clippy -p ic-testkit --all-targets --locked -- -D warnings
+
+docs-check:
+	RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit --locked --no-deps
 
 msrv:
 	cargo +$(MSRV) check -p ic-testkit --locked

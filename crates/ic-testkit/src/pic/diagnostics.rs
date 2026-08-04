@@ -1,3 +1,5 @@
+use std::panic::{AssertUnwindSafe, catch_unwind};
+
 use candid::Principal;
 use pocket_ic::PocketIc;
 
@@ -14,9 +16,9 @@ impl PocketIcDiagnosticsExt for PocketIc {
     fn dump_canister_debug(&self, canister_id: Principal, context: &str) {
         eprintln!("{context}: debug for canister {canister_id}");
 
-        match self.canister_status(canister_id, None) {
-            Ok(status) => eprintln!("canister_status: {status:?}"),
-            Err(err) => {
+        match catch_unwind(AssertUnwindSafe(|| self.canister_status(canister_id, None))) {
+            Ok(Ok(status)) => eprintln!("canister_status: {status:?}"),
+            Ok(Err(err)) => {
                 let message = err.to_string();
                 if startup::is_dead_instance_transport_error(&message) {
                     eprintln!("canister_status unavailable: PocketIC instance no longer reachable");
@@ -24,10 +26,20 @@ impl PocketIcDiagnosticsExt for PocketIc {
                 }
                 eprintln!("canister_status failed: {err:?}");
             }
+            Err(payload) => {
+                let message = startup::panic_payload_to_string(payload.as_ref());
+                if startup::is_dead_instance_transport_error(&message) {
+                    eprintln!("canister_status unavailable: PocketIC instance no longer reachable");
+                    return;
+                }
+                eprintln!("canister_status panicked: {message}");
+            }
         }
 
-        match self.fetch_canister_logs(canister_id, Principal::anonymous()) {
-            Ok(records) => {
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.fetch_canister_logs(canister_id, Principal::anonymous())
+        })) {
+            Ok(Ok(records)) => {
                 if records.is_empty() {
                     eprintln!("canister logs: <empty>");
                 } else {
@@ -36,7 +48,7 @@ impl PocketIcDiagnosticsExt for PocketIc {
                     }
                 }
             }
-            Err(err) => {
+            Ok(Err(err)) => {
                 let message = err.to_string();
                 if startup::is_dead_instance_transport_error(&message) {
                     eprintln!(
@@ -45,6 +57,16 @@ impl PocketIcDiagnosticsExt for PocketIc {
                     return;
                 }
                 eprintln!("fetch_canister_logs failed: {err:?}");
+            }
+            Err(payload) => {
+                let message = startup::panic_payload_to_string(payload.as_ref());
+                if startup::is_dead_instance_transport_error(&message) {
+                    eprintln!(
+                        "fetch_canister_logs unavailable: PocketIC instance no longer reachable"
+                    );
+                    return;
+                }
+                eprintln!("fetch_canister_logs panicked: {message}");
             }
         }
     }

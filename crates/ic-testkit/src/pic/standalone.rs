@@ -146,16 +146,16 @@ impl StandaloneCanisterFixture {
     }
 }
 
-// Install one already-built wasm module into a fresh PocketIC instance with
-// caller-provided init args and no application-specific bootstrap assumptions.
+/// Install one already-built wasm module into a fresh PocketIC instance with
+/// caller-provided init args and no application-specific bootstrap assumptions.
 #[must_use]
 pub fn install_prebuilt_canister(wasm: Vec<u8>, init_bytes: Vec<u8>) -> StandaloneCanisterFixture {
     try_install_prebuilt_canister(wasm, init_bytes)
         .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
 }
 
-// Install one already-built wasm module into a fresh PocketIC instance with
-// caller-provided init args and no application-specific bootstrap assumptions.
+/// Install one already-built wasm module into a fresh PocketIC instance with
+/// caller-provided init args and no application-specific bootstrap assumptions.
 pub fn try_install_prebuilt_canister(
     wasm: Vec<u8>,
     init_bytes: Vec<u8>,
@@ -167,8 +167,8 @@ pub fn try_install_prebuilt_canister(
     ))
 }
 
-// Install one already-built wasm module into a fresh PocketIC instance with
-// caller-provided init args and explicit install cycles.
+/// Install one already-built wasm module into a fresh PocketIC instance with
+/// caller-provided init args and explicit install cycles.
 #[must_use]
 pub fn install_prebuilt_canister_with_cycles(
     wasm: Vec<u8>,
@@ -179,8 +179,8 @@ pub fn install_prebuilt_canister_with_cycles(
         .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
 }
 
-// Install one already-built wasm module into a fresh PocketIC instance with
-// caller-provided init args and explicit install cycles.
+/// Install one already-built wasm module into a fresh PocketIC instance with
+/// caller-provided init args and explicit install cycles.
 pub fn try_install_prebuilt_canister_with_cycles(
     wasm: Vec<u8>,
     init_bytes: Vec<u8>,
@@ -189,16 +189,16 @@ pub fn try_install_prebuilt_canister_with_cycles(
     try_install_prebuilt_canister_from_spec(InstallSpec::new(wasm, init_bytes, install_cycles))
 }
 
-// Install one already-built wasm module from a generic install specification
-// into a fresh PocketIC instance.
+/// Install one already-built wasm module from a generic install specification
+/// into a fresh PocketIC instance.
 #[must_use]
 pub fn install_prebuilt_canister_from_spec(spec: InstallSpec) -> StandaloneCanisterFixture {
     try_install_prebuilt_canister_from_spec(spec)
         .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
 }
 
-// Install one already-built wasm module from a generic install specification
-// into a fresh PocketIC instance.
+/// Install one already-built wasm module from a generic install specification
+/// into a fresh PocketIC instance.
 pub fn try_install_prebuilt_canister_from_spec(
     spec: InstallSpec,
 ) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {

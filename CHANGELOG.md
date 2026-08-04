@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-04 - Ownership and diagnostics hardening
+
+### Added
+
+- Completes the live concurrency acceptance coverage for standalone
+  `into_parts`, resource-scoped cached-baseline slots, and fresh PocketIC
+  construction while another cached baseline is retained.
+
+### Changed
+
+- Updates the root and packaged crate documentation for the direct PocketIC
+  ownership model and the released `0.2` dependency line.
+- Adds rustdoc for the public standalone prebuilt-canister constructors.
+- Adds `make docs-check` to the ordinary CI and release gates so rustdoc
+  warnings fail before publication.
+- Clarifies that benchmark run paths are caller-owned and that concurrent
+  writers must use unique paths or synchronize only the shared destination.
+
+### Fixed
+
+- Makes install-failure status and log diagnostics best-effort so a secondary
+  PocketIC or stderr panic cannot replace the original `CanisterInstallError`.
+
 ## [0.2.0] - 2026-08-04 - Direct PocketIC ownership
 
 ### Added

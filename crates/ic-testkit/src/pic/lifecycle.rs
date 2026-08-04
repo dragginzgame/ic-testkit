@@ -4,7 +4,7 @@ use std::time::Duration;
 use candid::Principal;
 use pocket_ic::PocketIc;
 
-use super::{CanisterInstallError, PocketIcTimeExt, startup};
+use super::{CanisterInstallError, PocketIcDiagnosticsExt, PocketIcTimeExt, startup};
 
 ///
 /// InstallSpec
@@ -229,20 +229,18 @@ fn try_create_funded_and_install(
         pocket_ic.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
     }));
     if let Err(payload) = install {
-        if let Some(label) = &spec.label {
-            eprintln!("install_canister trapped for {canister_id} ({label})");
-        } else {
-            eprintln!("install_canister trapped for {canister_id}");
-        }
-        if let Ok(status) = pocket_ic.canister_status(canister_id, None) {
-            eprintln!("canister_status for {canister_id}: {status:?}");
-        }
-        if let Ok(logs) = pocket_ic.fetch_canister_logs(canister_id, Principal::anonymous()) {
-            for record in logs {
-                eprintln!("canister_log {canister_id}: {record:?}");
-            }
-        }
         let message = startup::panic_payload_to_string(payload.as_ref());
+        let context = if let Some(label) = &spec.label {
+            format!("install_canister trapped ({label})")
+        } else {
+            "install_canister trapped".to_string()
+        };
+        // Diagnostics are best-effort and must never replace the original
+        // structured install failure, including if stderr or PocketIC fails.
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            pocket_ic.dump_canister_debug(canister_id, &context);
+        }));
+
         return if let Some(label) = spec.label {
             Err(CanisterInstallError::labeled(canister_id, label, message))
         } else {

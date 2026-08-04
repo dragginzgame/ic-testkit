@@ -315,6 +315,11 @@ pub fn benchmark_run_directory_name(
     format!("{timestamp}-{commit}-{run_index:04}")
 }
 
+/// Compute the next available benchmark run path for one timestamp and commit.
+///
+/// This function does not create or reserve the returned directory. Callers
+/// allocating the same prefix concurrently must synchronize that shared
+/// resource or provide unique timestamps.
 pub fn next_benchmark_run_directory(
     runs_root: impl AsRef<Path>,
     timestamp: &str,
@@ -577,6 +582,10 @@ pub fn compare_benchmark_aggregates(
     }
 }
 
+/// Write one complete benchmark report into the requested directory.
+///
+/// The directory is caller-owned. Concurrent writers must use unique paths or
+/// synchronize access to the same path outside this function.
 pub fn write_benchmark_report_dir(
     report: &BenchmarkRunReport,
     path: impl AsRef<Path>,

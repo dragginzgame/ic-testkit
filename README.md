@@ -26,7 +26,7 @@ Use PocketIC's inherent methods for simulator operations. Use `ic-testkit` when 
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.1.12"
+ic-testkit = "0.2"
 ```
 
 ## Quick Start
@@ -223,7 +223,12 @@ assert_eq!(aggregates.rows[0].span_label, "app/myfunc/something");
 Use `BenchmarkAggregateRow::is_all_suites()` to distinguish the cross-suite
 aggregate from an authored suite that is literally named `ALL`.
 
-The report writer emits CSV artifacts for raw events, spans, aggregates, malformed/unpaired/invalid markers, and comparisons, plus `bench-summary.md` and `metadata.json`. Run helpers create directories such as `reports/runs/2026-05-24T162600Z-a1b2c3d-0001/` and discover compatible previous runs.
+The report writer emits CSV artifacts for raw events, spans, aggregates,
+malformed/unpaired/invalid markers, and comparisons, plus `bench-summary.md`
+and `metadata.json`. Run helpers derive paths such as
+`reports/runs/2026-05-24T162600Z-a1b2c3d-0001/`, write reports, and discover
+compatible previous runs. The path remains caller-owned: concurrent writers
+must use unique paths or synchronize access to the same path.
 
 ## Canister-Side Markers
 
