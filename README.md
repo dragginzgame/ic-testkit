@@ -26,17 +26,17 @@ Use PocketIC's inherent methods for simulator operations. Use `ic-testkit` when 
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.2"
+ic-testkit = "0.3"
 ```
 
 ## Quick Start
 
 Each test normally creates and directly owns one fresh `PocketIc`. Import
-`CandidCallExt` for typed Candid calls; all simulator operations remain the
+extension traits from `pic::prelude`; all simulator operations remain the
 upstream type's inherent methods.
 
 ```rust,no_run
-use ic_testkit::pic::{CandidCallExt, PocketIc};
+use ic_testkit::pic::{PocketIc, prelude::*};
 
 #[test]
 fn calls_a_counter_canister() {
@@ -79,6 +79,11 @@ let pocket_ic = PocketIcBuilder::new()
     .with_ii_subnet()
     .build();
 ```
+
+When a harness needs bounded startup retry, import `PocketIcBuilderExt` (or the
+prelude) and call `try_build()`. It catches the upstream builder's panic and
+returns `PocketIcStartupError` without classifying brittle panic text. Recreate
+the consumed builder for each retry attempt.
 
 For benchmark metadata, `ic_testkit::pic::LATEST_SERVER_VERSION` exposes the
 server version expected by the PocketIC client and `PocketIc::get_server_url()`
@@ -330,7 +335,11 @@ fn build_expensive_fixture() -> (PocketIc, Principal, Principal) {
 
 Snapshot sets reject duplicate canister ids before capture, store entries in
 deterministic order, return `ControllerSnapshotError`, and remove snapshots
-already captured if a later canister fails.
+already captured if a later canister fails. Restore preserves canister cycle
+balances by default. Use `restore_controller_snapshots_with_funding` or cached
+baseline `restore_with_funding` with
+`SnapshotRestoreFunding::TopUpTo { minimum_cycles }` when a top-up is an
+intentional part of the fixture policy.
 
 ## Deterministic Test Identities
 
@@ -349,6 +358,8 @@ assert_eq!(alice, Fake::principal(1));
 ## What This Adds Over `pocket-ic`
 
 - direct re-exports of `PocketIc` and `PocketIcBuilder`
+- a typed fallible boundary around PocketIC builder panics
+- a trait-only `pic::prelude` and focused nanosecond time conversion
 - `CandidCallExt` query/update helpers with structured rejections, contextual errors, and panic variants
 - generic wasm install helpers, retry helpers, diagnostics, and standalone fixtures
 - cached snapshot baselines for expensive test setup
@@ -356,39 +367,6 @@ assert_eq!(alice, Fake::principal(1));
 - wasm path/build/readiness helpers, including generated `.icp` freshness checks
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
-
-## Migrating From 0.1
-
-| 0.1 API | 0.2 API |
-| --- | --- |
-| `Pic` | re-exported `PocketIc` |
-| `pic()` | `PocketIc::new()` |
-| `PicBuilder` | re-exported `PocketIcBuilder`; call `build()` directly |
-| `PicSerialGuard` and acquisition helpers | remove them; each test owns an independent instance |
-| `Pic::query_call` / `update_call` | `CandidCallExt::query_candid` / `update_candid` |
-| `PicCallError` | `CandidCallError` with structured `CanisterReject` responses |
-| `PicInstallError` | `CanisterInstallError` |
-| `PicRuntimeConfig` and binary preflight helpers | upstream `PocketIcBuilder`, `POCKET_IC_BIN`, and PocketIC's cache |
-| `CachedPicBaseline` | `CachedPocketIcBaseline` |
-| `fixture.pic()` | `fixture.pocket_ic()` |
-| `retry_install_code_ok` / `retry_install_code_err` | `retry_install_code(RetryPolicy, operation)` |
-| snapshot capture returning `Option` | ordered capture returning `Result<_, ControllerSnapshotError>` |
-
-### 0.2.2 hard cut
-
-| Removed API | Replacement |
-| --- | --- |
-| `install_prebuilt_canister*` free functions | `StandaloneCanisterFixture::install(caller_built_pocket_ic, InstallSpec)` |
-| `try_install_prebuilt_canister*` free functions | `StandaloneCanisterFixture::try_install(caller_built_pocket_ic, InstallSpec)` |
-| `StandaloneCanisterFixtureError` | `StandaloneCanisterInstallError`, which retains the caller's `PocketIc` and the `CanisterInstallError` |
-| `PocketIcStartError` | upstream `PocketIc::new()` / `PocketIcBuilder::build()` behavior |
-| string-returning `retry_install_code` operation | operation returning `Result<T, RejectResponse>` |
-
-### 0.3.0 hard cut
-
-| Removed API | Replacement |
-| --- | --- |
-| `RetryPolicy::new` | `RetryPolicy::try_new`, which rejects a zero attempt count without panicking |
 
 ## Boundaries
 

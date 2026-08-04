@@ -5,7 +5,10 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use super::{ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, transport};
+use super::{
+    ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotRestoreFunding,
+    transport,
+};
 
 ///
 /// CachedPocketIcBaseline
@@ -155,12 +158,24 @@ impl<T> CachedPocketIcBaselineGuard<'_, T> {
             .metadata_mut()
     }
 
-    /// Restore the captured snapshot set back into the owned PocketIC instance.
+    /// Restore the captured snapshot set without adding cycles.
     pub fn restore(&self, controller_id: Principal) -> Result<(), ControllerSnapshotError> {
         self.guard
             .as_ref()
             .expect("cached PocketIC baseline must exist")
             .restore(controller_id)
+    }
+
+    /// Restore the captured snapshot set with an explicit cycle-funding policy.
+    pub fn restore_with_funding(
+        &self,
+        controller_id: Principal,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError> {
+        self.guard
+            .as_ref()
+            .expect("cached PocketIC baseline must exist")
+            .restore_with_funding(controller_id, funding)
     }
 }
 
@@ -184,10 +199,23 @@ impl<T> CachedPocketIcBaseline<T> {
         })
     }
 
-    /// Restore the captured snapshot set back into the owned PocketIC instance.
+    /// Restore the captured snapshot set without adding cycles.
     pub fn restore(&self, controller_id: Principal) -> Result<(), ControllerSnapshotError> {
         self.pocket_ic
             .restore_controller_snapshots(controller_id, &self.snapshots)
+    }
+
+    /// Restore the captured snapshot set with an explicit cycle-funding policy.
+    pub fn restore_with_funding(
+        &self,
+        controller_id: Principal,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError> {
+        self.pocket_ic.restore_controller_snapshots_with_funding(
+            controller_id,
+            &self.snapshots,
+            funding,
+        )
     }
 
     /// Borrow the owned PocketIC instance behind this cached baseline.

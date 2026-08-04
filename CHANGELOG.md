@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-04 - Downstream harness ergonomics
+
+### Added
+
+- Adds `PocketIcBuilderExt::try_build` and `PocketIcStartupError` as a narrow,
+  unclassified panic boundary for bounded downstream startup retry.
+- Adds a trait-only `pic::prelude` for the PocketIC harness extension traits.
+- Restores the focused `PocketIcTimeExt::current_time_nanos` conversion without
+  mirroring PocketIC's broader time API.
+- Adds explicit `SnapshotRestoreFunding::{Preserve, TopUpTo}` policy and cached
+  baseline funding methods.
+
+### Changed
+
+- Makes snapshot restore preserve the current cycle balance by default instead
+  of silently topping every restored canister up to 200T cycles.
+- Renames standalone fixture calls to match `CandidCallExt`'s
+  `update_candid*` and `query_candid*` vocabulary.
+- Updates README examples and dependency guidance for the 0.3 API.
+
+### Removed
+
+- Removes the standalone fixture `update_call*` and `query_call*` names without
+  compatibility aliases.
+
 ## [0.3.0] - 2026-08-04 - Fallible retries and upstream boundaries
 
 ### Added

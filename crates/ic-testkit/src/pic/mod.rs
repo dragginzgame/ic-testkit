@@ -11,6 +11,8 @@ mod errors;
 mod lifecycle;
 mod snapshot;
 mod standalone;
+mod startup;
+mod time;
 mod transport;
 
 pub use baseline::{
@@ -26,6 +28,16 @@ pub use errors::{
 pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
 pub use snapshot::{
     ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotAttemptFailure,
-    SnapshotCleanupFailure,
+    SnapshotCleanupFailure, SnapshotRestoreFunding,
 };
 pub use standalone::StandaloneCanisterFixture;
+pub use startup::{PocketIcBuilderExt, PocketIcStartupError};
+pub use time::PocketIcTimeExt;
+
+/// Extension traits for common PocketIC harness operations.
+pub mod prelude {
+    pub use super::{
+        CandidCallExt, CanisterInstallExt, PocketIcBuilderExt, PocketIcDiagnosticsExt,
+        PocketIcSnapshotExt, PocketIcTimeExt,
+    };
+}

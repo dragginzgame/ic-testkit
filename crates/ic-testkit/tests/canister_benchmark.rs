@@ -30,7 +30,7 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     let fixture =
         StandaloneCanisterFixture::install(PocketIc::new(), InstallSpec::new(wasm, vec![], 0));
     let result: u64 = fixture
-        .update_call("benchmark_once", ())
+        .update_candid("benchmark_once", ())
         .expect("benchmark_once update call");
 
     assert_eq!(result, 1_498_500);

@@ -8,8 +8,6 @@ use pocket_ic::{PocketIc, RejectResponse};
 
 use super::transport;
 
-const SNAPSHOT_RESTORE_MIN_CYCLES: u128 = 200_000_000_000_000;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ControllerSnapshot {
     snapshot_id: Vec<u8>,
@@ -34,6 +32,16 @@ pub struct SnapshotCleanupFailure {
     sender: Option<Principal>,
     response: Option<Box<RejectResponse>>,
     panic_message: Option<String>,
+}
+
+/// Caller-selected cycle funding applied immediately before snapshot restore.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SnapshotRestoreFunding {
+    /// Preserve the canister's current cycle balance.
+    Preserve,
+    /// Add cycles only when needed to reach the given minimum balance.
+    TopUpTo { minimum_cycles: u128 },
 }
 
 /// Structured controller-snapshot failure.
@@ -84,10 +92,21 @@ pub trait PocketIcSnapshotExt {
         I: IntoIterator<Item = Principal>;
 
     /// Restore a previously captured snapshot set using the same controller.
+    ///
+    /// This default path preserves each canister's current cycle balance and
+    /// never funds the canister before restore.
     fn restore_controller_snapshots(
         &self,
         controller_id: Principal,
         snapshots: &ControllerSnapshots,
+    ) -> Result<(), ControllerSnapshotError>;
+
+    /// Restore a snapshot set with an explicit cycle-funding policy.
+    fn restore_controller_snapshots_with_funding(
+        &self,
+        controller_id: Principal,
+        snapshots: &ControllerSnapshots,
+        funding: SnapshotRestoreFunding,
     ) -> Result<(), ControllerSnapshotError>;
 }
 
@@ -135,8 +154,28 @@ impl PocketIcSnapshotExt for PocketIc {
         controller_id: Principal,
         snapshots: &ControllerSnapshots,
     ) -> Result<(), ControllerSnapshotError> {
+        self.restore_controller_snapshots_with_funding(
+            controller_id,
+            snapshots,
+            SnapshotRestoreFunding::Preserve,
+        )
+    }
+
+    fn restore_controller_snapshots_with_funding(
+        &self,
+        controller_id: Principal,
+        snapshots: &ControllerSnapshots,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError> {
         for (canister_id, snapshot_id, sender) in snapshots.iter() {
-            restore_controller_snapshot(self, controller_id, canister_id, sender, snapshot_id)?;
+            restore_controller_snapshot(
+                self,
+                controller_id,
+                canister_id,
+                sender,
+                snapshot_id,
+                funding,
+            )?;
         }
         Ok(())
     }
@@ -340,6 +379,7 @@ fn restore_controller_snapshot(
     canister_id: Principal,
     snapshot_sender: Option<Principal>,
     snapshot_id: &[u8],
+    funding: SnapshotRestoreFunding,
 ) -> Result<(), ControllerSnapshotError> {
     let fallback_sender = if snapshot_sender.is_some() {
         None
@@ -351,7 +391,7 @@ fn restore_controller_snapshot(
 
     for sender in candidates {
         let restore = catch_unwind(AssertUnwindSafe(|| {
-            ensure_snapshot_restore_cycles(pocket_ic, canister_id);
+            apply_snapshot_restore_funding(pocket_ic, canister_id, funding);
             pocket_ic.load_canister_snapshot(canister_id, sender, snapshot_id.to_vec())
         }));
         match restore {
@@ -372,11 +412,28 @@ fn restore_controller_snapshot(
     })
 }
 
-fn ensure_snapshot_restore_cycles(pocket_ic: &PocketIc, canister_id: Principal) {
+fn apply_snapshot_restore_funding(
+    pocket_ic: &PocketIc,
+    canister_id: Principal,
+    funding: SnapshotRestoreFunding,
+) {
+    if funding == SnapshotRestoreFunding::Preserve {
+        return;
+    }
+
     let balance = pocket_ic.cycle_balance(canister_id);
-    if balance < SNAPSHOT_RESTORE_MIN_CYCLES {
-        let top_up = SNAPSHOT_RESTORE_MIN_CYCLES - balance;
+    let top_up = snapshot_restore_top_up(balance, funding);
+    if top_up > 0 {
         let _ = pocket_ic.add_cycles(canister_id, top_up);
+    }
+}
+
+const fn snapshot_restore_top_up(balance: u128, funding: SnapshotRestoreFunding) -> u128 {
+    match funding {
+        SnapshotRestoreFunding::Preserve => 0,
+        SnapshotRestoreFunding::TopUpTo { minimum_cycles } => {
+            minimum_cycles.saturating_sub(balance)
+        }
     }
 }
 
@@ -395,7 +452,10 @@ fn controller_sender_candidates(
 mod tests {
     use candid::Principal;
 
-    use super::{ControllerSnapshotError, ordered_unique_canister_ids};
+    use super::{
+        ControllerSnapshotError, SnapshotRestoreFunding, ordered_unique_canister_ids,
+        snapshot_restore_top_up,
+    };
 
     #[test]
     fn duplicate_canister_ids_are_rejected_before_capture() {
@@ -416,6 +476,22 @@ mod tests {
         assert_eq!(
             ordered_unique_canister_ids([second, first]).unwrap(),
             vec![first, second]
+        );
+    }
+
+    #[test]
+    fn snapshot_restore_funding_is_explicit() {
+        assert_eq!(
+            snapshot_restore_top_up(10, SnapshotRestoreFunding::Preserve),
+            0
+        );
+        assert_eq!(
+            snapshot_restore_top_up(10, SnapshotRestoreFunding::TopUpTo { minimum_cycles: 25 }),
+            15
+        );
+        assert_eq!(
+            snapshot_restore_top_up(30, SnapshotRestoreFunding::TopUpTo { minimum_cycles: 25 }),
+            0
         );
     }
 }

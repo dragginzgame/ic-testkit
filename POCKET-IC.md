@@ -46,13 +46,16 @@ startup path without recreating binary management.
 ### Typed Startup Errors
 
 Some PocketIC startup failures currently surface as panics or stringly-typed
-messages. ic-testkit previously caught and classified selected panic text, but
-0.2.2 removes that brittle parallel startup API. Callers now construct
-`PocketIc` directly before passing it to a fixture.
+messages. ic-testkit 0.3.1 provides a narrow `PocketIcBuilderExt::try_build`
+boundary for downstream bounded retry. It preserves the panic message in a
+typed error but deliberately does not classify that text. Callers still
+configure the upstream builder directly before passing the resulting
+`PocketIc` to a fixture.
 
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
-structured startup error.
+structured startup error. Once that exists, ic-testkit should delegate to it or
+remove its panic-catching extension.
 
 ### Fallible Lifecycle and Transport APIs
 

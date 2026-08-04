@@ -10,7 +10,7 @@ use std::{
 use candid::Principal;
 use ic_testkit::pic::{
     CachedPocketIcBaseline, InstallSpec, PocketIc, PocketIcBuilder, StandaloneCanisterFixture,
-    restore_or_rebuild_cached_pocket_ic_baseline,
+    prelude::*, restore_or_rebuild_cached_pocket_ic_baseline,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -55,6 +55,28 @@ fn upstream_supports_two_overlapping_instances() {
 }
 
 #[test]
+fn builder_extension_returns_a_typed_startup_error() {
+    let missing_binary = std::env::temp_dir().join(format!(
+        "ic-testkit-missing-pocket-ic-{}",
+        std::process::id()
+    ));
+    let result = PocketIcBuilder::new()
+        .with_server_binary(missing_binary)
+        .with_application_subnet()
+        .try_build();
+
+    let Err(error) = result else {
+        panic!("an explicitly missing PocketIC binary should fail startup");
+    };
+    assert!(
+        error
+            .message()
+            .contains("Failed to validate PocketIC server binary"),
+        "unexpected startup error: {error}"
+    );
+}
+
+#[test]
 fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
     let caller_built = PocketIcBuilder::new()
         .with_application_subnet()
@@ -66,6 +88,10 @@ fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
     );
     let (pocket_ic, canister_id) = fixture.into_parts();
 
+    assert_eq!(
+        pocket_ic.current_time_nanos(),
+        pocket_ic.get_time().as_nanos_since_unix_epoch()
+    );
     pocket_ic
         .canister_status(canister_id, None)
         .expect("PocketIC returned by into_parts should remain usable");
