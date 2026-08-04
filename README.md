@@ -20,7 +20,7 @@
 
 `ic-testkit` is a small helper layer around [`pocket-ic`](https://crates.io/crates/pocket-ic), the local Internet Computer testing runtime this crate stands on. It re-exports PocketIC's native types and adds reusable Rust test-harness conveniences without wrapping or replacing the simulator API.
 
-Use PocketIC's inherent methods for simulator operations. Use `ic-testkit` when you want typed Candid calls, install helpers, typed startup diagnostics, cached baselines, deterministic fake principals, wasm artifact utilities, and compact benchmark reporting.
+Use PocketIC's inherent methods for simulator operations. Use `ic-testkit` when you want typed Candid calls, fixture installation with contextual diagnostics, cached baselines, deterministic fake principals, wasm artifact utilities, and compact benchmark reporting.
 
 ## Install
 
@@ -36,11 +36,11 @@ Each test normally creates and directly owns one fresh `PocketIc`. Import
 upstream type's inherent methods.
 
 ```rust,no_run
-use ic_testkit::pic::{CandidCallExt, pic};
+use ic_testkit::pic::{CandidCallExt, PocketIc};
 
 #[test]
 fn calls_a_counter_canister() {
-    let pocket_ic = pic();
+    let pocket_ic = PocketIc::new();
     let counter = install_counter(&pocket_ic);
 
     let _: () = pocket_ic.update_candid(counter, "increment", ()).unwrap();
@@ -68,21 +68,25 @@ downloads, and its cache. `ic-testkit` does not maintain a second downloader or
 cache policy. Use `PocketIcBuilder::with_server_binary` when a harness needs an
 explicit binary.
 
-`try_pic()` and `try_build_pocket_ic()` add only typed classification around
-upstream startup panics; they do not change how PocketIC finds or acquires its
-server.
-
-For a custom topology, configure the re-exported upstream builder and let the
-construction helper add ic-testkit's typed startup classification:
+Use `PocketIc::new()` for the default application subnet. For a custom topology,
+configure the re-exported upstream builder and call its native `build()` method:
 
 ```rust,no_run
-use ic_testkit::pic::{PocketIcBuilder, try_build_pocket_ic};
+use ic_testkit::pic::PocketIcBuilder;
 
-let pocket_ic = try_build_pocket_ic(
-    PocketIcBuilder::new().with_application_subnet().with_ii_subnet(),
-)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+let pocket_ic = PocketIcBuilder::new()
+    .with_application_subnet()
+    .with_ii_subnet()
+    .build();
 ```
+
+For benchmark metadata, `ic_testkit::pic::LATEST_SERVER_VERSION` exposes the
+server version expected by the PocketIC client and `PocketIc::get_server_url()`
+exposes the active endpoint. PocketIC 15 does not expose the resolved server
+binary path or digest from a built instance. A benchmark requiring that
+provenance should select an explicit path with `with_server_binary`, record and
+hash that caller-owned file, and then build the instance. ic-testkit does not
+guess the path from environment or cache conventions.
 
 There is no crate-level PocketIC ownership lock. If a heavy E2E target exceeds
 CI capacity, tune that target through the test runner, starting conservatively
@@ -97,10 +101,14 @@ downstream capacity tuning, not an ic-testkit correctness requirement.
 
 ## Installing Wasm
 
-Install a prebuilt wasm into a fresh PocketIC instance:
+Build the exact PocketIC instance required by the test, then move it into the
+standalone fixture installer:
 
 ```rust,no_run
-use ic_testkit::{artifacts, pic::install_prebuilt_canister};
+use ic_testkit::{
+    artifacts,
+    pic::{InstallSpec, PocketIcBuilder, StandaloneCanisterFixture},
+};
 
 #[test]
 fn installs_a_prebuilt_canister() {
@@ -108,23 +116,33 @@ fn installs_a_prebuilt_canister() {
     let target = artifacts::test_target_dir(&workspace, "pic-wasm");
     let wasm = artifacts::read_wasm(&target, "counter_canister", "release");
 
-    let fixture = install_prebuilt_canister(wasm, vec![]);
+    let pocket_ic = PocketIcBuilder::new()
+        .with_application_subnet()
+        .build();
+    let fixture = StandaloneCanisterFixture::install(
+        pocket_ic,
+        InstallSpec::new(wasm, vec![], 0),
+    );
     fixture.pocket_ic().tick();
 }
 ```
 
-Use `install_prebuilt_canister_from_spec` when a standalone fixture needs an
-explicit install sender or diagnostic label:
+The builder may select a custom topology or an exact server binary before
+construction. Use `try_install` when installation failure should remain typed;
+`StandaloneCanisterInstallError` returns both the instance and the underlying
+`CanisterInstallError` for inspection or recovery:
 
 ```rust,no_run
 use candid::{Principal, encode_one};
-use ic_testkit::pic::{InstallSpec, install_prebuilt_canister_from_spec};
+use ic_testkit::pic::{InstallSpec, PocketIc, StandaloneCanisterFixture};
 
-let fixture = install_prebuilt_canister_from_spec(
+let fixture = StandaloneCanisterFixture::try_install(
+    PocketIc::new(),
     InstallSpec::new(counter_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
         .install_sender(Principal::anonymous())
         .label("counter"),
-);
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 For an existing `PocketIc`, import `CanisterInstallExt` and use
@@ -152,13 +170,15 @@ Batch installs are sequential. If one install fails, earlier installs remain in
 the PocketIC instance, the failed canister may also exist with the id exposed by
 `CanisterInstallError::canister_id()`, and later installs are not attempted. If
 PocketIC reports install-code rate limiting, one `RetryPolicy` defines the
-exact maximum attempt count and simulated cooldown:
+exact maximum attempt count and simulated cooldown. The operation returns
+PocketIC's `RejectResponse`; retry classification compares its structured
+`error_code` and returns the original response unchanged:
 
 ```rust,no_run
 use std::time::Duration;
-use ic_testkit::pic::{CanisterInstallExt, RetryPolicy};
+use ic_testkit::pic::{CanisterInstallExt, RejectResponse, RetryPolicy};
 
-let result = pocket_ic.retry_install_code(
+let result: Result<(), RejectResponse> = pocket_ic.retry_install_code(
     RetryPolicy::new(3, Duration::from_secs(60)),
     || install_again(),
 );
@@ -312,17 +332,16 @@ already captured if a later canister fails.
 
 ## Deterministic Test Identities
 
-`Fake` gives stable principals and account-like values from numeric seeds:
+`Fake` gives stable principals from numeric seeds:
 
 ```rust
 use ic_testkit::Fake;
 
 let alice = Fake::principal(1);
 let bob = Fake::principal(2);
-let account = Fake::account(42);
 
 assert_ne!(alice, bob);
-assert_eq!(account.owner, Fake::principal(42));
+assert_eq!(alice, Fake::principal(1));
 ```
 
 ## What This Adds Over `pocket-ic`
@@ -331,7 +350,7 @@ assert_eq!(account.owner, Fake::principal(42));
 - `CandidCallExt` query/update helpers with structured rejections, contextual errors, and panic variants
 - generic wasm install helpers, retry helpers, diagnostics, and standalone fixtures
 - cached snapshot baselines for expensive test setup
-- deterministic fake principals and accounts
+- deterministic fake principals
 - wasm path/build/readiness helpers, including generated `.icp` freshness checks
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
@@ -341,7 +360,8 @@ assert_eq!(account.owner, Fake::principal(42));
 | 0.1 API | 0.2 API |
 | --- | --- |
 | `Pic` | re-exported `PocketIc` |
-| `PicBuilder` | re-exported `PocketIcBuilder` plus `try_build_pocket_ic(builder)` |
+| `pic()` | `PocketIc::new()` |
+| `PicBuilder` | re-exported `PocketIcBuilder`; call `build()` directly |
 | `PicSerialGuard` and acquisition helpers | remove them; each test owns an independent instance |
 | `Pic::query_call` / `update_call` | `CandidCallExt::query_candid` / `update_candid` |
 | `PicCallError` | `CandidCallError` with structured `CanisterReject` responses |
@@ -351,6 +371,16 @@ assert_eq!(account.owner, Fake::principal(42));
 | `fixture.pic()` | `fixture.pocket_ic()` |
 | `retry_install_code_ok` / `retry_install_code_err` | `retry_install_code(RetryPolicy, operation)` |
 | snapshot capture returning `Option` | ordered capture returning `Result<_, ControllerSnapshotError>` |
+
+### 0.2.2 hard cut
+
+| Removed API | Replacement |
+| --- | --- |
+| `install_prebuilt_canister*` free functions | `StandaloneCanisterFixture::install(caller_built_pocket_ic, InstallSpec)` |
+| `try_install_prebuilt_canister*` free functions | `StandaloneCanisterFixture::try_install(caller_built_pocket_ic, InstallSpec)` |
+| `StandaloneCanisterFixtureError` | `StandaloneCanisterInstallError`, which retains the caller's `PocketIc` and the `CanisterInstallError` |
+| `PocketIcStartError` | upstream `PocketIc::new()` / `PocketIcBuilder::build()` behavior |
+| string-returning `retry_install_code` operation | operation returning `Result<T, RejectResponse>` |
 
 ## Boundaries
 

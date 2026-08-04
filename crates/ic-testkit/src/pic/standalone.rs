@@ -3,11 +3,8 @@ use pocket_ic::PocketIc;
 use serde::de::DeserializeOwned;
 
 use super::{
-    CandidCallError, CandidCallExt, CanisterInstallExt, InstallSpec,
-    StandaloneCanisterFixtureError, try_pic,
+    CandidCallError, CandidCallExt, CanisterInstallExt, InstallSpec, StandaloneCanisterInstallError,
 };
-
-const DEFAULT_EXTRA_INSTALL_CYCLES: u128 = 0;
 
 ///
 /// StandaloneCanisterFixture
@@ -19,6 +16,32 @@ pub struct StandaloneCanisterFixture {
 }
 
 impl StandaloneCanisterFixture {
+    /// Install one canister into a caller-configured PocketIC instance.
+    #[must_use]
+    pub fn install(pocket_ic: PocketIc, spec: InstallSpec) -> Self {
+        Self::try_install(pocket_ic, spec)
+            .unwrap_or_else(|err| panic!("failed to install standalone canister fixture: {err}"))
+    }
+
+    /// Fallible counterpart to [`install`](Self::install).
+    ///
+    /// On failure, the error retains both the caller's PocketIC instance and
+    /// the structured install failure.
+    pub fn try_install(
+        pocket_ic: PocketIc,
+        spec: InstallSpec,
+    ) -> Result<Self, StandaloneCanisterInstallError> {
+        let canister_id = match pocket_ic.try_create_and_install(spec) {
+            Ok(canister_id) => canister_id,
+            Err(error) => return Err(StandaloneCanisterInstallError::new(pocket_ic, error)),
+        };
+
+        Ok(Self {
+            pocket_ic,
+            canister_id,
+        })
+    }
+
     /// Borrow the PocketIC instance that owns this standalone fixture.
     #[must_use]
     pub const fn pocket_ic(&self) -> &PocketIc {
@@ -144,71 +167,4 @@ impl StandaloneCanisterFixture {
         self.pocket_ic
             .query_candid_as_or_panic(self.canister_id, caller, method, args)
     }
-}
-
-/// Install one already-built wasm module into a fresh PocketIC instance with
-/// caller-provided init args and no application-specific bootstrap assumptions.
-#[must_use]
-pub fn install_prebuilt_canister(wasm: Vec<u8>, init_bytes: Vec<u8>) -> StandaloneCanisterFixture {
-    try_install_prebuilt_canister(wasm, init_bytes)
-        .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
-}
-
-/// Install one already-built wasm module into a fresh PocketIC instance with
-/// caller-provided init args and no application-specific bootstrap assumptions.
-pub fn try_install_prebuilt_canister(
-    wasm: Vec<u8>,
-    init_bytes: Vec<u8>,
-) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
-    try_install_prebuilt_canister_from_spec(InstallSpec::new(
-        wasm,
-        init_bytes,
-        DEFAULT_EXTRA_INSTALL_CYCLES,
-    ))
-}
-
-/// Install one already-built wasm module into a fresh PocketIC instance with
-/// caller-provided init args and explicit install cycles.
-#[must_use]
-pub fn install_prebuilt_canister_with_cycles(
-    wasm: Vec<u8>,
-    init_bytes: Vec<u8>,
-    install_cycles: u128,
-) -> StandaloneCanisterFixture {
-    try_install_prebuilt_canister_with_cycles(wasm, init_bytes, install_cycles)
-        .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
-}
-
-/// Install one already-built wasm module into a fresh PocketIC instance with
-/// caller-provided init args and explicit install cycles.
-pub fn try_install_prebuilt_canister_with_cycles(
-    wasm: Vec<u8>,
-    init_bytes: Vec<u8>,
-    install_cycles: u128,
-) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
-    try_install_prebuilt_canister_from_spec(InstallSpec::new(wasm, init_bytes, install_cycles))
-}
-
-/// Install one already-built wasm module from a generic install specification
-/// into a fresh PocketIC instance.
-#[must_use]
-pub fn install_prebuilt_canister_from_spec(spec: InstallSpec) -> StandaloneCanisterFixture {
-    try_install_prebuilt_canister_from_spec(spec)
-        .unwrap_or_else(|err| panic!("failed to install prebuilt canister fixture: {err}"))
-}
-
-/// Install one already-built wasm module from a generic install specification
-/// into a fresh PocketIC instance.
-pub fn try_install_prebuilt_canister_from_spec(
-    spec: InstallSpec,
-) -> Result<StandaloneCanisterFixture, StandaloneCanisterFixtureError> {
-    let pocket_ic = try_pic().map_err(StandaloneCanisterFixtureError::Start)?;
-    let canister_id = pocket_ic
-        .try_create_and_install(spec)
-        .map_err(StandaloneCanisterFixtureError::Install)?;
-
-    Ok(StandaloneCanisterFixture {
-        pocket_ic,
-        canister_id,
-    })
 }

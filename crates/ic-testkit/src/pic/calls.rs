@@ -3,7 +3,7 @@ use pocket_ic::{PocketIc, RejectResponse};
 use serde::de::DeserializeOwned;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
-use super::{CandidCallContext, CandidCallError, startup};
+use super::{CandidCallContext, CandidCallError, transport};
 
 #[derive(Clone, Copy)]
 struct CallContext<'a> {
@@ -285,10 +285,10 @@ where
             context.to_error_context(),
             response,
         )),
-        Err(payload) if startup::panic_is_dead_instance_transport(payload.as_ref()) => {
+        Err(payload) if transport::panic_is_dead_instance_transport(payload.as_ref()) => {
             Err(CandidCallError::transport(
                 context.to_error_context(),
-                startup::panic_payload_to_string(payload.as_ref()),
+                transport::panic_payload_to_string(payload.as_ref()),
             ))
         }
         Err(payload) => resume_unwind(payload),

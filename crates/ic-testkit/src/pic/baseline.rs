@@ -5,7 +5,7 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-use super::{ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, startup};
+use super::{ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, transport};
 
 ///
 /// CachedPocketIcBaseline
@@ -99,7 +99,7 @@ where
     match catch_unwind(AssertUnwindSafe(|| restore(baseline))) {
         Ok(()) => Ok(()),
         Err(payload) => {
-            if startup::panic_is_dead_instance_transport(payload.as_ref()) {
+            if transport::panic_is_dead_instance_transport(payload.as_ref()) {
                 Err(CachedBaselineRestoreFailure::DeadInstanceTransport)
             } else {
                 Err(CachedBaselineRestoreFailure::Panic(payload))

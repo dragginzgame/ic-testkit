@@ -6,7 +6,7 @@ use std::{
 use candid::Principal;
 use pocket_ic::{PocketIc, RejectResponse};
 
-use super::startup;
+use super::transport;
 
 const SNAPSHOT_RESTORE_MIN_CYCLES: u128 = 200_000_000_000_000;
 
@@ -284,7 +284,7 @@ fn try_take_controller_snapshot(
         match capture {
             Err(payload) => {
                 return Err(SnapshotCaptureFailure::Panicked(
-                    startup::panic_payload_to_string(payload.as_ref()),
+                    transport::panic_payload_to_string(payload.as_ref()),
                 ));
             }
             Ok(snapshot) => match snapshot {
@@ -327,7 +327,7 @@ fn cleanup_captured_snapshots(
                 canister_id: *canister_id,
                 sender: snapshot.sender,
                 response: None,
-                panic_message: Some(startup::panic_payload_to_string(payload.as_ref())),
+                panic_message: Some(transport::panic_payload_to_string(payload.as_ref())),
             }),
         }
     }
@@ -358,7 +358,7 @@ fn restore_controller_snapshot(
             Err(payload) => {
                 return Err(ControllerSnapshotError::RestorePanicked {
                     canister_id,
-                    message: startup::panic_payload_to_string(payload.as_ref()),
+                    message: transport::panic_payload_to_string(payload.as_ref()),
                 });
             }
             Ok(Ok(())) => return Ok(()),

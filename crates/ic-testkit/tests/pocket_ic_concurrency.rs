@@ -9,8 +9,8 @@ use std::{
 
 use candid::Principal;
 use ic_testkit::pic::{
-    CachedPocketIcBaseline, PocketIc, PocketIcBuilder, install_prebuilt_canister, pic,
-    restore_or_rebuild_cached_pocket_ic_baseline, try_build_pocket_ic,
+    CachedPocketIcBaseline, InstallSpec, PocketIc, PocketIcBuilder, StandaloneCanisterFixture,
+    restore_or_rebuild_cached_pocket_ic_baseline,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -55,16 +55,15 @@ fn upstream_supports_two_overlapping_instances() {
 }
 
 #[test]
-fn ic_testkit_construction_preserves_overlapping_instances() {
-    assert_two_instances_overlap(move || {
-        try_build_pocket_ic(PocketIcBuilder::new().with_application_subnet())
-            .expect("ic-testkit should construct an independent PocketIC instance")
-    });
-}
-
-#[test]
-fn standalone_into_parts_preserves_the_live_instance() {
-    let fixture = install_prebuilt_canister(EMPTY_WASM.to_vec(), vec![]);
+fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
+    let caller_built = PocketIcBuilder::new()
+        .with_application_subnet()
+        .with_ii_subnet()
+        .build();
+    let fixture = StandaloneCanisterFixture::install(
+        caller_built,
+        InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
+    );
     let (pocket_ic, canister_id) = fixture.into_parts();
 
     pocket_ic
@@ -84,7 +83,7 @@ fn cached_baseline_guards_are_scoped_to_their_own_slots() {
     let (ready_tx, ready_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel::<()>();
     let worker = thread::spawn(move || {
-        let fresh = pic();
+        let fresh = PocketIc::new();
         let canister_id = fresh.create_canister();
         fresh
             .canister_status(canister_id, None)
@@ -129,7 +128,7 @@ fn cached_baseline_guards_are_scoped_to_their_own_slots() {
 
 fn build_empty_cached_baseline() -> CachedPocketIcBaseline<()> {
     CachedPocketIcBaseline::capture(
-        pic(),
+        PocketIc::new(),
         Principal::anonymous(),
         std::iter::empty::<Principal>(),
         (),

@@ -46,9 +46,9 @@ startup path without recreating binary management.
 ### Typed Startup Errors
 
 Some PocketIC startup failures currently surface as panics or stringly-typed
-messages. `ic-testkit` catches and classifies a small set of those failures so
-test harnesses can distinguish missing binaries, invalid binaries, download
-failures, startup timeouts, and unreachable server transports.
+messages. ic-testkit previously caught and classified selected panic text, but
+0.2.2 removes that brittle parallel startup API. Callers now construct
+`PocketIc` directly before passing it to a fixture.
 
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
@@ -56,13 +56,13 @@ structured startup error.
 
 ### Install-Code Rate Limiting
 
-`ic-testkit` contains helpers that advance PocketIC time and retry operations
-when install-code rate limiting is hit. This is useful, but it requires callers
-to recognize the rate-limit message and encode retry policy themselves.
+PocketIC exposes `RejectResponse::error_code` and the structured
+`ErrorCode::CanisterInstallCodeRateLimited` variant. ic-testkit 0.2.2 uses that
+field directly when applying install retry policy and never classifies the
+display text.
 
 Useful upstream behavior would include:
 
-- a typed reject/error variant for install-code rate limiting;
 - an accessor for the required cooldown, when available;
 - a helper that advances simulated time enough for a retry in deterministic
   tests;
@@ -84,19 +84,16 @@ Upstream could expose richer install errors that include:
 
 ### Candid-Aware Call Helpers
 
-`ic-testkit` wraps PocketIC calls with Candid encode/decode helpers and
-contextual errors. This is a convenience layer, but the underlying need is
-common for Rust canister tests.
+PocketIC 15 already provides typed `query_candid`, `update_candid`, and
+caller-aware variants. They panic on Candid encoding and decoding failures and
+return `RejectResponse` for canister rejection. `ic-testkit` therefore does not
+claim typed calls themselves as missing upstream functionality.
 
-Potential upstream additions:
-
-- typed `update_call` and `query_call` helpers that encode arguments and decode
-  replies;
-- caller-aware variants;
-- error types that distinguish transport/reject failures from Candid encoding
-  and decoding failures;
-- optional panic-on-transport helpers for tests where application-level
-  `Result<T, E>` values should remain explicit.
+The remaining upstream opportunity is a structured error model that can
+distinguish Candid encoding, Candid decoding, transport failure, and canister
+rejection while preserving call context. If upstream gains that behavior,
+`CandidCallExt` should be reduced or removed rather than maintained as a
+parallel call API.
 
 ### Snapshot Baselines
 
@@ -131,10 +128,16 @@ Upstream improvements that would help:
 Test harnesses often need to know which runtime they used when writing reports
 or debugging CI failures.
 
-Upstream could expose stable APIs for:
+PocketIC 15 exposes the expected server version through
+`LATEST_SERVER_VERSION` and the active endpoint through
+`PocketIc::get_server_url()`. ic-testkit re-exports the version constant. A
+built instance does not expose the resolved binary path or its digest, so
+ic-testkit cannot truthfully forward those values.
 
-- PocketIC server version;
-- server binary path;
+Useful additional upstream APIs are:
+
+- resolved PocketIC server version;
+- resolved server binary path and digest;
 - server process or endpoint metadata;
 - effective runtime directories;
 - feature flags or subnet layout configured for an instance.
@@ -170,7 +173,7 @@ for the accepted 0.2 direction.
 These modules should be checked against upstream capabilities when updating
 `pocket-ic`:
 
-- `crates/ic-testkit/src/pic/startup.rs`
+- `crates/ic-testkit/src/pic/transport.rs`
 - `crates/ic-testkit/src/pic/lifecycle.rs`
 - `crates/ic-testkit/src/pic/calls.rs`
 - `crates/ic-testkit/src/pic/baseline.rs`

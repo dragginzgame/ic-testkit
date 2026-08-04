@@ -2,9 +2,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
 use candid::Principal;
-use pocket_ic::PocketIc;
+use pocket_ic::{ErrorCode, PocketIc, RejectResponse};
 
-use super::{CanisterInstallError, PocketIcDiagnosticsExt, PocketIcTimeExt, startup};
+use super::{CanisterInstallError, PocketIcDiagnosticsExt, transport};
 
 ///
 /// InstallSpec
@@ -125,9 +125,9 @@ pub trait CanisterInstallExt {
     fn wait_out_install_code_rate_limit(&self, cooldown: Duration);
 
     /// Retry an operation only while PocketIC reports install-code rate limiting.
-    fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, String>
+    fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, RejectResponse>
     where
-        F: FnMut() -> Result<T, String>;
+        F: FnMut() -> Result<T, RejectResponse>;
 }
 
 impl CanisterInstallExt for PocketIc {
@@ -202,12 +202,13 @@ impl CanisterInstallExt for PocketIc {
     /// Wait out the PocketIC `install_code` cooldown window inside the same instance.
     fn wait_out_install_code_rate_limit(&self, cooldown: Duration) {
         self.advance_time(cooldown);
-        self.tick_n(2);
+        self.tick();
+        self.tick();
     }
 
-    fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, String>
+    fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, RejectResponse>
     where
-        F: FnMut() -> Result<T, String>,
+        F: FnMut() -> Result<T, RejectResponse>,
     {
         retry_install_code_with(policy, op, || {
             self.wait_out_install_code_rate_limit(policy.cooldown());
@@ -229,7 +230,7 @@ fn try_create_funded_and_install(
         pocket_ic.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
     }));
     if let Err(payload) = install {
-        let message = startup::panic_payload_to_string(payload.as_ref());
+        let message = transport::panic_payload_to_string(payload.as_ref());
         let context = if let Some(label) = &spec.label {
             format!("install_canister trapped ({label})")
         } else {
@@ -251,17 +252,17 @@ fn try_create_funded_and_install(
     Ok(canister_id)
 }
 
-fn is_install_code_rate_limited(message: &str) -> bool {
-    message.contains("CanisterInstallCodeRateLimited")
+fn is_install_code_rate_limited(response: &RejectResponse) -> bool {
+    response.error_code == ErrorCode::CanisterInstallCodeRateLimited
 }
 
 fn retry_install_code_with<T, F, W>(
     policy: RetryPolicy,
     mut op: F,
     mut wait_out_cooldown: W,
-) -> Result<T, String>
+) -> Result<T, RejectResponse>
 where
-    F: FnMut() -> Result<T, String>,
+    F: FnMut() -> Result<T, RejectResponse>,
     W: FnMut(),
 {
     for attempt in 1..=policy.max_attempts() {
@@ -281,24 +282,37 @@ where
 mod tests {
     use std::{cell::Cell, time::Duration};
 
+    use pocket_ic::{ErrorCode, RejectCode, RejectResponse};
+
     use super::{RetryPolicy, retry_install_code_with};
 
-    const RATE_LIMITED: &str = "CanisterInstallCodeRateLimited";
+    fn rejection(error_code: ErrorCode, message: &str) -> RejectResponse {
+        RejectResponse {
+            reject_code: RejectCode::SysTransient,
+            reject_message: message.to_string(),
+            error_code,
+            certified: false,
+        }
+    }
 
     #[test]
     fn retry_policy_counts_the_first_attempt() {
         let attempts = Cell::new(0);
         let waits = Cell::new(0);
+        let rate_limited = rejection(
+            ErrorCode::CanisterInstallCodeRateLimited,
+            "install-code rate limit",
+        );
         let result = retry_install_code_with(
             RetryPolicy::new(3, Duration::from_secs(1)),
             || {
                 attempts.set(attempts.get() + 1);
-                Err::<(), _>(RATE_LIMITED.to_string())
+                Err::<(), _>(rate_limited.clone())
             },
             || waits.set(waits.get() + 1),
         );
 
-        assert_eq!(result, Err(RATE_LIMITED.to_string()));
+        assert_eq!(result, Err(rate_limited));
         assert_eq!(attempts.get(), 3);
         assert_eq!(waits.get(), 2);
     }
@@ -306,16 +320,17 @@ mod tests {
     #[test]
     fn retry_policy_stops_on_non_rate_limit_failure() {
         let attempts = Cell::new(0);
+        let not_retryable = rejection(ErrorCode::CanisterRejectedMessage, "not retryable");
         let result = retry_install_code_with(
             RetryPolicy::new(3, Duration::from_secs(1)),
             || {
                 attempts.set(attempts.get() + 1);
-                Err::<(), _>("not retryable".to_string())
+                Err::<(), _>(not_retryable.clone())
             },
             || panic!("non-rate-limit failure must not wait"),
         );
 
-        assert_eq!(result, Err("not retryable".to_string()));
+        assert_eq!(result, Err(not_retryable));
         assert_eq!(attempts.get(), 1);
     }
 }

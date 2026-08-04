@@ -1,7 +1,5 @@
 use candid::Principal;
-use pocket_ic::RejectResponse;
-
-use super::startup::PocketIcStartError;
+use pocket_ic::{PocketIc, RejectResponse};
 
 ///
 /// CandidCallError
@@ -46,14 +44,10 @@ pub struct CanisterInstallError {
     message: String,
 }
 
-///
-/// StandaloneCanisterFixtureError
-///
-
-#[derive(Debug)]
-pub enum StandaloneCanisterFixtureError {
-    Start(PocketIcStartError),
-    Install(CanisterInstallError),
+/// A failed standalone install that returns ownership of the caller's instance.
+pub struct StandaloneCanisterInstallError {
+    pocket_ic: Box<PocketIc>,
+    install_error: CanisterInstallError,
 }
 
 impl CandidCallContext {
@@ -275,21 +269,50 @@ impl std::fmt::Display for CanisterInstallError {
 
 impl std::error::Error for CanisterInstallError {}
 
-impl std::fmt::Display for StandaloneCanisterFixtureError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Start(err) => write!(f, "{err}"),
-            Self::Install(err) => write!(f, "{err}"),
+impl StandaloneCanisterInstallError {
+    pub(super) fn new(pocket_ic: PocketIc, install_error: CanisterInstallError) -> Self {
+        Self {
+            pocket_ic: Box::new(pocket_ic),
+            install_error,
         }
+    }
+
+    /// Borrow the caller-created instance retained after the failed install.
+    #[must_use]
+    pub fn pocket_ic(&self) -> &PocketIc {
+        self.pocket_ic.as_ref()
+    }
+
+    /// Inspect the structured install failure.
+    #[must_use]
+    pub const fn install_error(&self) -> &CanisterInstallError {
+        &self.install_error
+    }
+
+    /// Recover ownership of the instance and install failure.
+    #[must_use]
+    pub fn into_parts(self) -> (PocketIc, CanisterInstallError) {
+        (*self.pocket_ic, self.install_error)
     }
 }
 
-impl std::error::Error for StandaloneCanisterFixtureError {
+impl std::fmt::Debug for StandaloneCanisterInstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StandaloneCanisterInstallError")
+            .field("install_error", &self.install_error)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for StandaloneCanisterInstallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.install_error.fmt(f)
+    }
+}
+
+impl std::error::Error for StandaloneCanisterInstallError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Start(err) => Some(err),
-            Self::Install(err) => Some(err),
-        }
+        Some(&self.install_error)
     }
 }
 

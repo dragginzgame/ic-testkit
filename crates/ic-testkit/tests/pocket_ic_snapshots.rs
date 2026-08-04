@@ -1,9 +1,9 @@
 use candid::Principal;
-use ic_testkit::pic::{ControllerSnapshotError, PocketIcSnapshotExt, pic};
+use ic_testkit::pic::{ControllerSnapshotError, PocketIc, PocketIcSnapshotExt};
 
 #[test]
 fn failed_snapshot_set_capture_cleans_up_earlier_snapshots() {
-    let pocket_ic = pic();
+    let pocket_ic = PocketIc::new();
     let captured_first = pocket_ic.create_canister();
     pocket_ic.install_canister(captured_first, b"\0asm\x01\0\0\0".to_vec(), vec![], None);
     pocket_ic

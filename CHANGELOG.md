@@ -8,6 +8,43 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-08-04 - Focused harness surface
+
+### Changed
+
+- Makes direct upstream construction the only public construction path: callers
+  use `PocketIc::new()` or `PocketIcBuilder::build()`.
+- Makes `StandaloneCanisterFixture::{install, try_install}` consume a
+  caller-built `PocketIc`, allowing exact topology and server-binary selection
+  without mirroring `PocketIcBuilder`.
+- Returns the caller's instance inside `StandaloneCanisterInstallError` when a
+  fallible fixture install fails, alongside the underlying
+  `CanisterInstallError`.
+- Changes `retry_install_code` operations to return `RejectResponse` and
+  classifies rate limiting through
+  `ErrorCode::CanisterInstallCodeRateLimited`, preserving the structured
+  rejection instead of matching display text.
+- Re-exports PocketIC's `LATEST_SERVER_VERSION` for benchmark metadata and
+  documents that resolved binary path and digest provenance require upstream
+  support or caller-owned explicit binary selection.
+- Keeps install-code cooldown advancement private to `CanisterInstallExt`
+  instead of exposing general time conveniences over PocketIC's native API.
+- Corrects the PocketIC wishlist to recognize upstream's existing typed Candid
+  helpers and describe only ic-testkit's structured-error value delta.
+
+### Removed
+
+- Removes the `pic()`, `try_pic()`, `build_pocket_ic()`, and
+  `try_build_pocket_ic()` construction shims.
+- Removes all `install_prebuilt_canister*` free-function variants and
+  `StandaloneCanisterFixtureError` in favor of the two fixture methods and
+  the install-only `StandaloneCanisterInstallError`.
+- Removes `PocketIcStartError` and all startup panic-text classification.
+- Removes `PocketIcTimeExt`; callers use PocketIC's inherent time and round
+  methods directly.
+- Removes the unused crate-specific `Account` type and `Fake::account()`;
+  `Fake::principal()` remains the generic deterministic identity helper.
+
 ## [0.2.1] - 2026-08-04 - Ownership and diagnostics hardening
 
 ### Added

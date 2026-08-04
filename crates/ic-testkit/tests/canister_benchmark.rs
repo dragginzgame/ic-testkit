@@ -5,7 +5,7 @@ use ic_testkit::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
-    pic::install_prebuilt_canister,
+    pic::{InstallSpec, PocketIc, StandaloneCanisterFixture},
 };
 use std::{fs, path::PathBuf};
 
@@ -27,7 +27,8 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     assert!(wasm_path(&target_dir, PERF_PROBE_PACKAGE, "debug").is_file());
 
     let wasm = read_wasm(&target_dir, PERF_PROBE_PACKAGE, "debug");
-    let fixture = install_prebuilt_canister(wasm, vec![]);
+    let fixture =
+        StandaloneCanisterFixture::install(PocketIc::new(), InstallSpec::new(wasm, vec![], 0));
     let result: u64 = fixture
         .update_call("benchmark_once", ())
         .expect("benchmark_once update call");
