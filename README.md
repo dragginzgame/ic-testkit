@@ -1,7 +1,5 @@
 # ic-testkit
 
-[PocketIC upstream wishlist](POCKET-IC.md)
-
 <p align="center">
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/v/ic-testkit.svg" alt="Crates.io"></a>
   <a href="https://docs.rs/ic-testkit"><img src="https://docs.rs/ic-testkit/badge.svg" alt="Docs.rs"></a>
@@ -18,182 +16,279 @@
   <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/cave.png" alt="ic-testkit banner" width="640">
 </p>
 
-`ic-testkit` is a small helper layer around [`pocket-ic`](https://crates.io/crates/pocket-ic), the local Internet Computer testing runtime this crate stands on. It re-exports PocketIC's native types and adds reusable Rust test-harness conveniences without wrapping or replacing the simulator API.
+`ic-testkit` is a focused test-harness layer around
+[`pocket-ic`](https://crates.io/crates/pocket-ic). It re-exports PocketIC's
+primary native types and adds reusable behavior where a harness benefits from
+typed errors, deterministic policy, or shared test infrastructure.
 
-Use PocketIC's inherent methods for simulator operations. Use `ic-testkit` when you want typed Candid calls, fixture installation with contextual diagnostics, cached baselines, deterministic fake principals, wasm artifact utilities, and compact benchmark reporting.
+It does not wrap the simulator, mirror PocketIC's API, manage a second server
+binary cache, or serialize independent PocketIC instances.
 
 ## Install
 
+Host-side test crates normally add:
+
 ```toml
 [dev-dependencies]
-ic-testkit = "0.3"
+ic-testkit = "0.3.1"
 ```
 
-## Quick Start
+Canister crates that emit benchmark markers can add the same version under
+`[dependencies]` and use `ic_testkit::performance`.
 
-Each test normally creates and directly owns one fresh `PocketIc`. Import
-extension traits from `pic::prelude`; all simulator operations remain the
-upstream type's inherent methods.
+The crate supports Rust 1.88 and uses PocketIC 15.
+
+## API at a glance
+
+| Area | Main surface | Value added by ic-testkit |
+| --- | --- | --- |
+| PocketIC runtime | `PocketIc`, `PocketIcBuilder` | Direct upstream re-exports; no wrapper |
+| Startup | `PocketIcBuilderExt` | Converts the currently panicking builder boundary into a typed result |
+| Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
+| Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
+| Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
+| Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline` | Ordered transactional capture, explicit restore funding, scoped caching |
+| Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
+| Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
+| Artifacts | `artifacts` | Wasm build paths, freshness checks, and dedicated target directories |
+| Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
+| Test identities | `Fake` | Stable deterministic principals |
+
+`ic_testkit::pic::prelude::*` imports the six extension traits only. Data types
+and PocketIC types remain explicit imports.
+
+## PocketIC ownership and concurrency
+
+Each test normally constructs and directly owns one fresh `PocketIc`:
 
 ```rust,no_run
 use ic_testkit::pic::{PocketIc, prelude::*};
 
-#[test]
-fn calls_a_counter_canister() {
-    let pocket_ic = PocketIc::new();
-    let counter = install_counter(&pocket_ic);
+let pocket_ic = PocketIc::new();
+let canister_id = install_counter(&pocket_ic);
 
-    let _: () = pocket_ic.update_candid(counter, "increment", ()).unwrap();
-    let value: u64 = pocket_ic.query_candid(counter, "get", ()).unwrap();
-
-    assert_eq!(value, 1);
-}
+let value: u64 = pocket_ic.query_candid(canister_id, "get", ())?;
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Use `update_candid_as` and `query_candid_as` when caller identity matters. In
-tests that should fail immediately on rejection, transport, or Candid codec
-errors, use `update_candid_or_panic`, `query_candid_or_panic`,
-`update_candid_as_or_panic`, or `query_candid_as_or_panic`. These helpers only
-unwrap the outer `CandidCallError`; application-level return values such as
-`Result<T, E>` are returned unchanged.
+Use PocketIC's inherent methods for topology, controllers, raw ingress, time,
+rounds, cycles, and lifecycle operations. ic-testkit does not implement
+`Deref`, retain a process-wide runtime guard, or reconnect to an instance by
+port.
 
-When PocketIC rejects a call, `CandidCallError::reject_response()` preserves
-the complete upstream `RejectResponse`; rejection is not classified as a
-transport failure.
-
-## PocketIC Server Binary
-
-PocketIC remains the authority for server-binary discovery, `POCKET_IC_BIN`,
-downloads, and its cache. `ic-testkit` does not maintain a second downloader or
-cache policy. Use `PocketIcBuilder::with_server_binary` when a harness needs an
-explicit binary.
-
-Use `PocketIc::new()` for the default application subnet. For a custom topology,
-configure the re-exported upstream builder and call its native `build()` method:
-
-```rust,no_run
-use ic_testkit::pic::PocketIcBuilder;
-
-let pocket_ic = PocketIcBuilder::new()
-    .with_application_subnet()
-    .with_ii_subnet()
-    .build();
-```
-
-When a harness needs bounded startup retry, import `PocketIcBuilderExt` (or the
-prelude) and call `try_build()`. It catches the upstream builder's panic and
-returns `PocketIcStartupError` without classifying brittle panic text. Recreate
-the consumed builder for each retry attempt.
-
-For benchmark metadata, `ic_testkit::pic::LATEST_SERVER_VERSION` exposes the
-server version expected by the PocketIC client and `PocketIc::get_server_url()`
-exposes the active endpoint. PocketIC 15 does not expose the resolved server
-binary path or digest from a built instance. A benchmark requiring reproducible
-provenance should require an explicit `POCKET_IC_BIN` path (or pass the same
-explicit path to `with_server_binary`), resolve and hash that caller-owned file
-before building, and record those values with the report. ic-testkit treats the
-environment as caller-owned, read-only configuration and does not guess the
-path from cache conventions.
-
-There is no crate-level PocketIC ownership lock. If a heavy E2E target exceeds
-CI capacity, tune that target through the test runner, starting conservatively
-when needed:
+Independent instances may run concurrently. If a heavy E2E target exceeds CI
+capacity, tune that target through libtest or the CI scheduler:
 
 ```bash
 cargo test --test pocket_ic_e2e -- --test-threads=1
 ```
 
-Ordinary unit tests should remain parallel. Raising or lowering this value is
-downstream capacity tuning, not an ic-testkit correctness requirement.
+Keep ordinary unit tests parallel. The thread count is downstream capacity
+tuning, not an ic-testkit correctness requirement.
 
-## Installing Wasm
+## Typed Candid calls
 
-Build the exact PocketIC instance required by the test, then move it into the
-standalone fixture installer:
-
-```rust,no_run
-use ic_testkit::{
-    artifacts,
-    pic::{InstallSpec, PocketIcBuilder, StandaloneCanisterFixture},
-};
-
-#[test]
-fn installs_a_prebuilt_canister() {
-    let workspace = artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"));
-    let target = artifacts::test_target_dir(&workspace, "pic-wasm");
-    let wasm = artifacts::read_wasm(&target, "counter_canister", "release");
-
-    let pocket_ic = PocketIcBuilder::new()
-        .with_application_subnet()
-        .build();
-    let fixture = StandaloneCanisterFixture::install(
-        pocket_ic,
-        InstallSpec::new(wasm, vec![], 0),
-    );
-    fixture.pocket_ic().tick();
-}
-```
-
-The builder may select a custom topology or an exact server binary before
-construction. Use `try_install` when installation failure should remain typed;
-`StandaloneCanisterInstallError` returns both the instance and the underlying
-`CanisterInstallError` for inspection or recovery:
+`CandidCallExt` supplies anonymous and caller-aware query/update variants:
 
 ```rust,no_run
-use candid::{Principal, encode_one};
-use ic_testkit::pic::{InstallSpec, PocketIc, StandaloneCanisterFixture};
+use candid::Principal;
+use ic_testkit::pic::{CandidCallExt, PocketIc};
 
-let fixture = StandaloneCanisterFixture::try_install(
-    PocketIc::new(),
-    InstallSpec::new(counter_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
-        .install_sender(Principal::anonymous())
-        .label("counter"),
+let pocket_ic = PocketIc::new();
+let canister_id = install_counter(&pocket_ic);
+
+let _: () = pocket_ic.update_candid(canister_id, "increment", ())?;
+let value: u64 = pocket_ic.query_candid_as(
+    canister_id,
+    Principal::anonymous(),
+    "get",
+    (),
 )?;
+assert_eq!(value, 1);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-For an existing `PocketIc`, import `CanisterInstallExt` and use
-`create_and_install_with_args` or
-`try_create_and_install_with_args`. Use `InstallSpec` when you want an explicit
-install sender, a diagnostic label, or sequential batch installs:
+The corresponding `_or_panic` methods unwrap only `CandidCallError`.
+Application values such as `Result<T, E>` remain unchanged.
+
+`CandidCallErrorKind` distinguishes:
+
+- `Encode` and `Decode` failures with call context;
+- `CanisterReject`, retaining the complete upstream `RejectResponse`;
+- `Transport` when the PocketIC instance is unreachable;
+- `Other` for uncategorized harness failures.
+
+A canister rejection is not a transport failure. Inspect it through
+`CandidCallError::reject_response()`.
+
+## Startup and runtime provenance
+
+Configure topology and binary selection on the upstream builder:
 
 ```rust,no_run
-use candid::encode_one;
-use ic_testkit::pic::{CanisterInstallExt, InstallSpec, PocketIc};
+use ic_testkit::pic::{PocketIc, PocketIcBuilder, PocketIcBuilderExt};
 
-fn install_pair(pocket_ic: &PocketIc, first_wasm: Vec<u8>, second_wasm: Vec<u8>) {
-    let ids = pocket_ic.create_and_install_many([
-        InstallSpec::new(first_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
-            .label("first"),
-        InstallSpec::new(second_wasm, encode_one(()).unwrap(), 1_000_000_000_000)
-            .label("second"),
-    ]);
-
-    assert_eq!(ids.len(), 2);
+fn build_test_ic() -> Result<PocketIc, ic_testkit::pic::PocketIcStartupError> {
+    PocketIcBuilder::new()
+        .with_application_subnet()
+        .with_ii_subnet()
+        .try_build()
 }
 ```
 
-Batch installs are sequential. If one install fails, earlier installs remain in
-the PocketIC instance, the failed canister may also exist with the id exposed by
-`CanisterInstallError::canister_id()`, and later installs are not attempted. If
-PocketIC reports install-code rate limiting, one `RetryPolicy` defines the
-exact maximum attempt count and simulated cooldown. The operation returns
-PocketIC's `RejectResponse`; retry classification compares its structured
-`error_code` and returns the original response unchanged:
+`try_build()` catches PocketIC's current builder panic and returns
+`PocketIcStartupError`. It deliberately preserves the message without parsing
+it into guessed categories. The upstream panic hook may still print before the
+panic is caught. Recreate the consumed builder for each bounded retry attempt.
+
+PocketIC remains responsible for `POCKET_IC_BIN`, downloads, validation, and
+its cache. ic-testkit never mutates the process environment and does not
+maintain a parallel binary resolver.
+
+For reproducible benchmarks, require an explicit `POCKET_IC_BIN` or pass an
+explicit path to `PocketIcBuilder::with_server_binary`. Resolve and hash that
+caller-owned file before construction and record it with the report.
+`LATEST_SERVER_VERSION` exposes the version expected by the client, and
+`PocketIc::get_server_url()` exposes the active endpoint. PocketIC 15 does not
+expose the resolved binary path or digest from a built instance.
+
+## Canister installation and fixtures
+
+`InstallSpec` keeps generic install inputs and diagnostics together:
+
+```rust,no_run
+use candid::Principal;
+use ic_testkit::pic::{
+    InstallSpec, PocketIcBuilder, StandaloneCanisterFixture,
+};
+
+let pocket_ic = PocketIcBuilder::new()
+    .with_application_subnet()
+    .build();
+let fixture = StandaloneCanisterFixture::try_install(
+    pocket_ic,
+    InstallSpec::new(wasm, init_bytes, 1_000_000_000_000)
+        .install_sender(Principal::anonymous())
+        .label("counter"),
+)?;
+
+let value: u64 = fixture.query_candid("get", ())?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The fixture owns exactly one `PocketIc`. `pocket_ic()` borrows it,
+`canister_id()` identifies the installed canister, and `into_parts()` returns
+both without changing instance ownership. Failed `try_install` returns a
+`StandaloneCanisterInstallError` containing both the caller's instance and the
+`CanisterInstallError`.
+
+For installation into an existing instance, import `CanisterInstallExt` and
+use `try_create_and_install` or `try_create_and_install_many`. Batch installs
+run in iterator order. If one fails, earlier installs remain, the failed
+canister may already exist, and later installs are not attempted.
+
+### Install-code rate limiting
+
+`retry_install_code` retries only a structured
+`ErrorCode::CanisterInstallCodeRateLimited` rejection:
 
 ```rust,no_run
 use std::time::Duration;
 use ic_testkit::pic::{CanisterInstallExt, RejectResponse, RetryPolicy};
 
-let result: Result<(), RejectResponse> = pocket_ic.retry_install_code(
-    RetryPolicy::try_new(3, Duration::from_secs(60)).expect("non-zero attempt count"),
-    || install_again(),
-);
+let policy = RetryPolicy::try_new(3, Duration::from_secs(60))?;
+let result: Result<(), RejectResponse> =
+    pocket_ic.retry_install_code(policy, || install_again());
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-## Artifact Helpers
+`max_attempts` includes the first call. Between retryable attempts, the helper
+advances simulated time by the configured cooldown and executes two ticks. It
+returns all non-rate-limit rejections unchanged.
 
-Build wasm packages into a dedicated target directory and check expected artifacts:
+## Snapshots and cached baselines
+
+Snapshot capture validates duplicate ids before doing work, stores entries in
+deterministic principal order, and cleans up earlier snapshots if a later
+capture fails:
+
+```rust,no_run
+use ic_testkit::pic::{PocketIcSnapshotExt, SnapshotRestoreFunding};
+
+let snapshots = pocket_ic.capture_controller_snapshots(
+    controller_id,
+    [first_canister, second_canister],
+)?;
+
+// Default: do not add cycles.
+pocket_ic.restore_controller_snapshots(controller_id, &snapshots)?;
+
+// Optional explicit fixture policy.
+pocket_ic.restore_controller_snapshots_with_funding(
+    controller_id,
+    &snapshots,
+    SnapshotRestoreFunding::TopUpTo {
+        minimum_cycles: 200_000_000_000_000,
+    },
+)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`ControllerSnapshotError` preserves rejected sender attempts, panic context,
+and any cleanup failures. Restore never adds cycles unless `TopUpTo` is
+explicitly selected.
+
+`CachedPocketIcBaseline<T>` stores one owned instance, its snapshots, and
+caller metadata. `restore_or_rebuild_cached_pocket_ic_baseline` synchronizes
+only the supplied `Mutex` slot. On a cache hit it invokes the caller's restore
+closure; it rebuilds only when the owned PocketIC transport is dead and resumes
+unrelated panics.
+
+```rust,no_run
+use std::sync::Mutex;
+use ic_testkit::pic::{
+    CachedPocketIcBaseline, restore_or_rebuild_cached_pocket_ic_baseline,
+};
+
+static BASELINE: Mutex<Option<CachedPocketIcBaseline<Metadata>>> = Mutex::new(None);
+
+let (baseline, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
+    &BASELINE,
+    build_baseline,
+    |baseline| baseline.restore(baseline.metadata().controller_id).unwrap(),
+);
+
+if cache_hit {
+    baseline.pocket_ic().tick();
+}
+```
+
+The returned guard retains exclusive access to that slot until dropped. It
+does not block fresh PocketIC instances or baselines stored in other slots.
+
+## Diagnostics and time
+
+`PocketIcDiagnosticsExt::dump_canister_debug` prints best-effort status and
+canister logs without allowing a secondary diagnostics failure to replace the
+original operation error.
+
+`PocketIcTimeExt` intentionally contains one convenience:
+
+```rust,no_run
+use ic_testkit::pic::{PocketIc, PocketIcTimeExt};
+
+let pocket_ic = PocketIc::new();
+let now_ns = pocket_ic.current_time_nanos();
+```
+
+Use PocketIC's inherent `get_time`, `set_time`, `set_certified_time`,
+`advance_time`, and `tick` methods for everything else.
+
+## Wasm artifact helpers
+
+The host-only `artifacts` module provides workspace-relative paths, dedicated
+test target directories, build orchestration, Wasm loading, and generated
+`.icp` freshness checks:
 
 ```rust,no_run
 use ic_testkit::artifacts;
@@ -209,141 +304,59 @@ artifacts::build_wasm_canisters(
     &[],
 );
 
-assert!(artifacts::wasm_artifacts_ready(
-    &target,
-    &["counter_canister"],
-    "release",
-));
+let wasm = artifacts::read_wasm(&target, "counter_canister", "release");
 ```
 
-There are also helpers for reading wasm files and checking generated `.icp` artifacts against watched inputs.
+Builds use the caller-selected target directory so fixture Wasm does not
+collide with the repository's normal target output.
 
-## Benchmark Reports
+## Benchmark markers and reports
 
-`ic_testkit::benchmark` turns compact canister log markers into parsed events, paired spans, aggregate rows, CSV files, and a Markdown summary. The default marker prefix is `ICTK`:
-
-```text
-ICTK|<label>:start|<instructions>|<heap_bytes>|<memory_bytes>|<total_allocation>
-ICTK|<label>:end|<instructions>|<heap_bytes>|<memory_bytes>|<total_allocation>
-```
-
-Parse, pair, and aggregate captured logs:
-
-```rust
-use ic_testkit::benchmark::{
-    aggregate_benchmark_spans, pair_benchmark_spans, parse_benchmark_events,
-    BenchmarkParserConfig,
-};
-
-let logs = "\
-ICTK|app/myfunc/something:start|100|200|300|400
-ICTK|app/myfunc/something:end|150|260|390|430
-";
-
-let parsed = parse_benchmark_events(logs, &BenchmarkParserConfig::default());
-let spans = pair_benchmark_spans(&parsed.events);
-let aggregates = aggregate_benchmark_spans(&spans.spans);
-
-assert_eq!(aggregates.rows[0].span_label, "app/myfunc/something");
-```
-
-Use `BenchmarkAggregateRow::is_all_suites()` to distinguish the cross-suite
-aggregate from an authored suite that is literally named `ALL`.
-
-The report writer emits CSV artifacts for raw events, spans, aggregates,
-malformed/unpaired/invalid markers, and comparisons, plus `bench-summary.md`
-and `metadata.json`. Run helpers derive paths such as
-`reports/runs/2026-05-24T162600Z-a1b2c3d-0001/`, write reports, and discover
-compatible previous runs. The path remains caller-owned: concurrent writers
-must use unique paths or synchronize access to the same path.
-
-## Canister-Side Markers
-
-Call `Performance::measure` around the region under measurement:
+Canister code emits compact markers around the measured region:
 
 ```rust,no_run
 use ic_testkit::performance::Performance;
 
-Performance::measure("app/myfunc/something:start");
-// code under measurement
-Performance::measure("app/myfunc/something:end");
+Performance::measure("storage/write:start");
+// measured work
+Performance::measure("storage/write:end");
 ```
 
-The helper prints the compact `ICTK|...` line with the IC CDK call-context instruction counter, Wasm linear memory size, stable memory size, and a `total_allocation` slot. The in-repo `canisters/test/perf_probe` fixture tests this end to end.
+The default line format is:
 
-## Cached Baselines
+```text
+ICTK|<label>:<start-or-end>|<instructions>|<heap_bytes>|<memory_bytes>|<total_allocation>
+```
 
-For expensive setup, `CachedPocketIcBaseline` can snapshot canisters once and restore them between tests. If the cached PocketIC instance has died, `restore_or_rebuild_cached_pocket_ic_baseline` rebuilds instead of reusing a broken instance.
+Host code parses, pairs, and aggregates captured markers:
 
-```rust,no_run
-use std::sync::Mutex;
-
-use candid::Principal;
-use ic_testkit::pic::{
-    CachedPocketIcBaseline, CandidCallExt, PocketIc,
-    restore_or_rebuild_cached_pocket_ic_baseline,
+```rust
+use ic_testkit::benchmark::{
+    BenchmarkParserConfig, aggregate_benchmark_spans,
+    pair_benchmark_spans, parse_benchmark_events,
 };
 
-struct BaselineMetadata {
-    controller_id: Principal,
-    canister_id: Principal,
-}
+let input = "\
+ICTK|storage/write:start|100|200|300|400
+ICTK|storage/write:end|150|260|390|430
+";
+let parsed = parse_benchmark_events(input, &BenchmarkParserConfig::default());
+let spans = pair_benchmark_spans(&parsed.events);
+let aggregates = aggregate_benchmark_spans(&spans.spans);
 
-static BASELINE: Mutex<Option<CachedPocketIcBaseline<BaselineMetadata>>> = Mutex::new(None);
-
-fn baseline_for_test() {
-    let (baseline, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
-        &BASELINE,
-        || build_baseline_once(),
-        |baseline| {
-            baseline
-                .restore(baseline.metadata().controller_id)
-                .expect("restore cached snapshot set");
-        },
-    );
-
-    if cache_hit {
-        baseline.pocket_ic().tick();
-    }
-
-    let canister_id = baseline.metadata().canister_id;
-    let value: u64 = baseline
-        .pocket_ic()
-        .query_candid_or_panic(canister_id, "get", ());
-    assert_eq!(value, 0);
-}
-
-fn build_baseline_once() -> CachedPocketIcBaseline<BaselineMetadata> {
-    let (pocket_ic, controller_id, canister_id) = build_expensive_fixture();
-
-    CachedPocketIcBaseline::capture(
-        pocket_ic,
-        controller_id,
-        [canister_id],
-        BaselineMetadata {
-            controller_id,
-            canister_id,
-        },
-    )
-    .expect("snapshot capture must be available")
-}
-
-fn build_expensive_fixture() -> (PocketIc, Principal, Principal) {
-    unimplemented!("install the canisters needed by this test suite")
-}
+assert_eq!(aggregates.rows[0].span_label, "storage/write");
 ```
 
-Snapshot sets reject duplicate canister ids before capture, store entries in
-deterministic order, return `ControllerSnapshotError`, and remove snapshots
-already captured if a later canister fails. Restore preserves canister cycle
-balances by default. Use `restore_controller_snapshots_with_funding` or cached
-baseline `restore_with_funding` with
-`SnapshotRestoreFunding::TopUpTo { minimum_cycles }` when a top-up is an
-intentional part of the fixture policy.
+The report writer emits raw events, spans, aggregates, comparisons, malformed
+and unpaired markers, `bench-summary.md`, and `metadata.json`. Run-directory
+helpers discover compatible previous runs but do not reserve paths. Concurrent
+writers must use unique destinations or synchronize only the shared output
+path.
 
-## Deterministic Test Identities
+An authored suite named `ALL` remains distinct from the internal cross-suite
+aggregate. Use `BenchmarkAggregateRow::is_all_suites()` to distinguish them.
 
-`Fake` gives stable principals from numeric seeds:
+## Deterministic principals
 
 ```rust
 use ic_testkit::Fake;
@@ -355,55 +368,64 @@ assert_ne!(alice, bob);
 assert_eq!(alice, Fake::principal(1));
 ```
 
-## What This Adds Over `pocket-ic`
+## Scope boundaries
 
-- direct re-exports of `PocketIc` and `PocketIcBuilder`
-- a typed fallible boundary around PocketIC builder panics
-- a trait-only `pic::prelude` and focused nanosecond time conversion
-- `CandidCallExt` query/update helpers with structured rejections, contextual errors, and panic variants
-- generic wasm install helpers, retry helpers, diagnostics, and standalone fixtures
-- cached snapshot baselines for expensive test setup
-- deterministic fake principals
-- wasm path/build/readiness helpers, including generated `.icp` freshness checks
-- compact benchmark marker parsing, aggregation, comparison, and report writing
-- canister-side `Performance::measure` marker emission
+ic-testkit remains generic. It does not define application init payloads,
+endpoint names, role models, readiness polling, canister graph topology,
+benchmark labels, regression thresholds, CI failure policy, or broad self-test
+orchestration.
 
-## Boundaries
+Mutable host resources must either be unique to one test invocation or
+synchronized by a guard scoped only to that resource. The crate treats process
+environment variables as caller-owned, read-only configuration.
 
-This crate does not define application init payloads, endpoint names, role models, readiness polling, canister graph topology, benchmark labels, threshold policy, CI failure policy, or broad self-test orchestration. Those belong in the application or framework that owns the canisters being tested.
+See the maintained [PocketIC upstream boundary](https://github.com/dragginzgame/ic-testkit/blob/main/POCKET-IC.md)
+for limitations that should ultimately be solved in PocketIC. The documents
+under [`docs/design`](https://github.com/dragginzgame/ic-testkit/tree/main/docs/design)
+are historical decision records; current behavior is documented here and in
+rustdoc.
 
-## Toolchains
+## Toolchains and checks
 
-- MSRV: Rust 1.88
-- internal build/test lane: Rust 1.96
+- Published MSRV: Rust 1.88
+- Repository toolchain: Rust 1.96
+- PocketIC client/server line: 15
 
-## Local Checks
+Run the ordinary checks with:
 
 ```bash
 make test
 make test-canisters
-make build-test-canisters
+```
+
+Before release-oriented changes, run the complete gate:
+
+```bash
 make release-check
 ```
 
+The release gate includes formatting, native and Wasm checks, warnings-denied
+Clippy, rustdoc, unit and live PocketIC tests, canister fixture builds, package
+verification, publish dry-run, and the Rust 1.88 MSRV check.
+
 ## Releases
 
-Patch and minor releases use the same guarded local flow as `ic-query`. Commit
-the changelog entry for the target version and start from a clean worktree,
-then run one of:
+Commit the changelog entry for the target version and start from a clean
+worktree, then run:
 
 ```bash
 make release-patch
-make release-minor
+# or: make release-minor
 ```
 
-This runs CI, bumps the workspace package version, stages the version files,
-commits and tags the release, re-runs CI, and pushes the commit and tag. After
-the tag CI succeeds, publish the tagged commit with:
+The guarded flow runs CI, bumps and stages the version files, creates the
+release commit and tag, reruns CI, and pushes the commit and tag. After tag CI
+succeeds:
 
 ```bash
 make publish
 ```
 
 Publication requires a clean worktree and a matching `v<version>` tag at
-`HEAD`. Re-running it is safe when that crate version is already on crates.io.
+`HEAD`. Re-running `make publish` is safe when that version already exists on
+crates.io.

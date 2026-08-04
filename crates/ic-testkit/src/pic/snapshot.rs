@@ -38,35 +38,54 @@ pub struct SnapshotCleanupFailure {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SnapshotRestoreFunding {
-    /// Preserve the canister's current cycle balance.
+    /// Do not add cycles before the restore operation.
     Preserve,
     /// Add cycles only when needed to reach the given minimum balance.
-    TopUpTo { minimum_cycles: u128 },
+    TopUpTo {
+        /// Minimum balance established immediately before each restore attempt.
+        minimum_cycles: u128,
+    },
 }
 
 /// Structured controller-snapshot failure.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ControllerSnapshotError {
+    /// Input contained the same canister more than once.
     DuplicateCanisterId {
+        /// Repeated canister id.
         canister_id: Principal,
     },
+    /// PocketIC rejected every sender attempted for capture.
     CaptureFailed {
+        /// Canister whose capture failed.
         canister_id: Principal,
+        /// Rejected sender attempts in execution order.
         attempts: Vec<SnapshotAttemptFailure>,
+        /// Failures while deleting snapshots captured earlier in the set.
         cleanup_failures: Vec<SnapshotCleanupFailure>,
     },
+    /// PocketIC panicked while capturing a snapshot.
     CapturePanicked {
+        /// Canister whose capture panicked.
         canister_id: Principal,
+        /// Captured panic message.
         message: String,
+        /// Failures while deleting snapshots captured earlier in the set.
         cleanup_failures: Vec<SnapshotCleanupFailure>,
     },
+    /// PocketIC rejected every sender attempted for restore.
     RestoreFailed {
+        /// Canister whose restore failed.
         canister_id: Principal,
+        /// Rejected sender attempts in execution order.
         attempts: Vec<SnapshotAttemptFailure>,
     },
+    /// PocketIC panicked while restoring a snapshot.
     RestorePanicked {
+        /// Canister whose restore panicked.
         canister_id: Principal,
+        /// Captured panic message.
         message: String,
     },
 }
@@ -93,8 +112,8 @@ pub trait PocketIcSnapshotExt {
 
     /// Restore a previously captured snapshot set using the same controller.
     ///
-    /// This default path preserves each canister's current cycle balance and
-    /// never funds the canister before restore.
+    /// This default path never funds the canister before restore. PocketIC may
+    /// still charge cycles as part of the restore operation itself.
     fn restore_controller_snapshots(
         &self,
         controller_id: Principal,
@@ -102,6 +121,9 @@ pub trait PocketIcSnapshotExt {
     ) -> Result<(), ControllerSnapshotError>;
 
     /// Restore a snapshot set with an explicit cycle-funding policy.
+    ///
+    /// `TopUpTo` is evaluated immediately before each restore attempt. No
+    /// cycles are removed when the current balance already meets the minimum.
     fn restore_controller_snapshots_with_funding(
         &self,
         controller_id: Principal,

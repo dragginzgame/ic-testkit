@@ -1,10 +1,21 @@
-//! Reusable PocketIC-oriented test utilities for IC canister tests.
+//! Focused PocketIC test-harness utilities for Internet Computer canisters.
 //!
-//! This crate is intended for host-side test environments (for example via
-//! PocketIC) and provides generic helpers such as stable dummy principals,
-//! PocketIC re-exports, standalone canister fixtures, generic prebuilt wasm
-//! install helpers, retry helpers for PocketIC install throttling, and cached
-//! baseline primitives.
+//! `ic-testkit` keeps PocketIC itself visible: [`pic`] re-exports the upstream
+//! `PocketIc` and `PocketIcBuilder` types and adds extension traits for typed
+//! Candid calls, generic installation, diagnostics, snapshots, startup errors,
+//! and a small time conversion. It does not provide a simulator wrapper or a
+//! host-wide runtime lock.
+//!
+//! The crate also provides:
+//!
+//! - host-only Wasm build and freshness helpers in [`artifacts`];
+//! - marker parsing, aggregation, comparison, and reports in [`benchmark`];
+//! - canister-side marker emission in [`performance`];
+//! - deterministic test principals through [`Fake`].
+//!
+//! The [`pic`] and [`artifacts`] modules are unavailable when compiling for
+//! `wasm32`; benchmark data types and marker emission remain available to
+//! canister code.
 
 pub mod benchmark;
 
@@ -17,19 +28,14 @@ pub mod pic;
 pub mod performance;
 use candid::Principal;
 
+/// Deterministic principal generator for tests.
 ///
-/// Deterministic dummy-value generator for tests.
-///
-/// Produces stable principals derived from a numeric seed, which makes tests
-/// reproducible without hardcoding raw byte arrays.
-///
-
+/// Values are derived directly from a numeric seed, making fixtures stable
+/// without embedding textual principal literals.
 pub struct Fake;
 
 impl Fake {
-    ///
     /// Deterministically derive a [`Principal`] from `seed`.
-    ///
     #[must_use]
     pub fn principal(seed: u32) -> Principal {
         let mut buf = [0u8; 29];

@@ -1,42 +1,51 @@
 use candid::Principal;
 use pocket_ic::{PocketIc, RejectResponse};
 
-///
-/// CandidCallError
-///
-
+/// Structured failure from a [`super::CandidCallExt`] operation.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidCallError {
+    /// Human-readable error with available call context.
     pub message: String,
+    /// Stable high-level failure classification.
     pub kind: CandidCallErrorKind,
+    /// Target, caller, method, and raw PocketIC operation when available.
     pub context: Option<Box<CandidCallContext>>,
+    /// Complete upstream rejection for [`CandidCallErrorKind::CanisterReject`].
     pub reject_response: Option<Box<RejectResponse>>,
 }
 
+/// High-level Candid call failure classification.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CandidCallErrorKind {
+    /// Arguments could not be Candid-encoded.
     Encode,
+    /// Successful response bytes could not be Candid-decoded.
     Decode,
+    /// PocketIC returned a structured canister rejection.
     CanisterReject,
+    /// The PocketIC instance became unreachable.
     Transport,
+    /// A harness failure without a narrower stable classification.
     Other,
 }
 
+/// Stable call metadata attached to a contextual call failure.
 #[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CandidCallContext {
+    /// Underlying PocketIC operation, such as `update_call` or `query_call`.
     pub operation: &'static str,
+    /// Target canister.
     pub canister_id: Principal,
+    /// Effective message caller.
     pub caller: Principal,
+    /// Canister method name.
     pub method: String,
 }
 
-///
-/// CanisterInstallError
-///
-
+/// Failed canister installation with the created canister id and diagnostics.
 #[derive(Debug, Eq, PartialEq)]
 pub struct CanisterInstallError {
     canister_id: Principal,
@@ -44,7 +53,7 @@ pub struct CanisterInstallError {
     message: String,
 }
 
-/// A failed standalone install that returns ownership of the caller's instance.
+/// Failed standalone install retaining the caller-created PocketIC instance.
 pub struct StandaloneCanisterInstallError {
     pocket_ic: Box<PocketIc>,
     install_error: CanisterInstallError,

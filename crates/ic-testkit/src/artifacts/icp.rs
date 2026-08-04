@@ -1,23 +1,20 @@
 use std::{fs, io, path::Path, time::SystemTime};
 
-///
-/// WatchedInputSnapshot
-///
-
+/// Newest modification time captured across a set of watched input trees.
 #[derive(Clone, Copy, Debug)]
 pub struct WatchedInputSnapshot {
     newest_input_mtime: SystemTime,
 }
 
 impl WatchedInputSnapshot {
-    /// Capture the newest modification time across all watched inputs once.
+    /// Recursively capture the newest modification time across all watched inputs.
     pub fn capture(workspace_root: &Path, watched_relative_paths: &[&str]) -> io::Result<Self> {
         Ok(Self {
             newest_input_mtime: newest_watched_input_mtime(workspace_root, watched_relative_paths)?,
         })
     }
 
-    /// Check whether one artifact is newer than the captured watched inputs.
+    /// Check whether one artifact is at least as new as the captured inputs.
     pub fn artifact_is_fresh(self, artifact_path: &Path) -> io::Result<bool> {
         let artifact_mtime = fs::metadata(artifact_path)?.modified()?;
         Ok(self.newest_input_mtime <= artifact_mtime)

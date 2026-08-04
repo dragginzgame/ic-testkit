@@ -6,16 +6,18 @@ use pocket_ic::{ErrorCode, PocketIc, RejectResponse};
 
 use super::{CanisterInstallError, PocketIcDiagnosticsExt, transport};
 
-///
-/// InstallSpec
-///
-
+/// Inputs and diagnostic context for one generic canister installation.
 #[non_exhaustive]
 pub struct InstallSpec {
+    /// Wasm module installed into the newly created canister.
     pub wasm: Vec<u8>,
+    /// Raw Candid or application-specific initialization bytes.
     pub init_bytes: Vec<u8>,
+    /// Extra cycles added after PocketIC creates the canister and before install.
     pub cycles: u128,
+    /// Optional sender for the management-canister install operation.
     pub install_sender: Option<Principal>,
+    /// Optional human-readable context included in install errors.
     pub label: Option<String>,
 }
 
@@ -103,7 +105,10 @@ impl RetryPolicy {
     }
 }
 
-/// Generic canister installation and install-code retry policies.
+/// Generic canister installation and structured install-code retry policy.
+///
+/// The extension creates canisters using PocketIC defaults. `InstallSpec::cycles`
+/// is an additional top-up, not the complete initial balance.
 pub trait CanisterInstallExt {
     /// Create and install one canister from raw wasm and init bytes.
     #[must_use]
@@ -146,7 +151,11 @@ pub trait CanisterInstallExt {
     /// Advance simulated time and rounds past an install-code cooldown.
     fn wait_out_install_code_rate_limit(&self, cooldown: Duration);
 
-    /// Retry an operation only while PocketIC reports install-code rate limiting.
+    /// Retry only while PocketIC reports install-code rate limiting.
+    ///
+    /// `RetryPolicy::max_attempts` includes the initial call. Before each
+    /// retry, this advances simulated time by the configured cooldown and
+    /// executes two PocketIC ticks. Other rejections are returned unchanged.
     fn retry_install_code<T, F>(&self, policy: RetryPolicy, op: F) -> Result<T, RejectResponse>
     where
         F: FnMut() -> Result<T, RejectResponse>;

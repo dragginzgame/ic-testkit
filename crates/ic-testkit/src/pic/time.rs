@@ -1,6 +1,8 @@
 use pocket_ic::PocketIc;
 
-/// Focused time conversions missing from PocketIC's native API.
+/// Focused time conversion missing from PocketIC's native API.
+///
+/// All mutation, certified-time, and round operations stay on [`PocketIc`].
 pub trait PocketIcTimeExt {
     /// Read PocketIC wall-clock time as nanoseconds since the Unix epoch.
     fn current_time_nanos(&self) -> u64;

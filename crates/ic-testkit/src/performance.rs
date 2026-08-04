@@ -1,16 +1,23 @@
-//! Canister-side benchmark marker emission.
+//! Canister-side benchmark marker emission using IC execution counters.
 
 use crate::benchmark::{BenchmarkCounters, DEFAULT_PREFIX, format_marker};
 
 const WASM_PAGE_BYTES: u128 = 65_536;
 
+/// Capture and emit compact benchmark counter markers.
 pub struct Performance;
 
 impl Performance {
+    /// Print one `ICTK` marker for `label` using the current counters.
+    ///
+    /// Pair labels ending in `:start` and `:end` for host-side span analysis.
     pub fn measure(label: &str) {
         ic_cdk::api::debug_print(format_marker(DEFAULT_PREFIX, label, Self::counters()));
     }
 
+    /// Read the instruction, Wasm heap, stable-memory, and allocation counters.
+    ///
+    /// `total_allocation` is currently reserved and emitted as zero.
     #[must_use]
     pub fn counters() -> BenchmarkCounters {
         BenchmarkCounters {

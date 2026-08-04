@@ -1,4 +1,7 @@
-//! Host-side artifact discovery and build helpers for PocketIC tests.
+//! Host-side artifact discovery, freshness, and Wasm build helpers.
+//!
+//! These functions keep integration-test artifacts in caller-selected target
+//! directories and contain no application-specific package or profile policy.
 
 mod icp;
 mod wasm;

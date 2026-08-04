@@ -6,10 +6,10 @@ use super::{
     CandidCallError, CandidCallExt, CanisterInstallExt, InstallSpec, StandaloneCanisterInstallError,
 };
 
+/// One caller-built PocketIC instance and one installed canister.
 ///
-/// StandaloneCanisterFixture
-///
-
+/// This fixture owns the instance directly. It does not impose process-wide
+/// synchronization or hide PocketIC methods behind a wrapper.
 pub struct StandaloneCanisterFixture {
     pocket_ic: PocketIc,
     canister_id: Principal,
@@ -17,6 +17,10 @@ pub struct StandaloneCanisterFixture {
 
 impl StandaloneCanisterFixture {
     /// Install one canister into a caller-configured PocketIC instance.
+    ///
+    /// # Panics
+    ///
+    /// Panics with the contextual install error when installation fails.
     #[must_use]
     pub fn install(pocket_ic: PocketIc, spec: InstallSpec) -> Self {
         Self::try_install(pocket_ic, spec)

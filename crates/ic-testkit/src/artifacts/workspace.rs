@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 
-/// Resolve the workspace root from a crate manifest directory.
+/// Resolve the conventional workspace root from a crate manifest directory.
+///
+/// A manifest directly below `<workspace>/crates` resolves to `<workspace>`;
+/// other paths are returned unchanged.
 #[must_use]
 pub fn workspace_root_for(crate_manifest_dir: &str) -> PathBuf {
     let manifest_dir = PathBuf::from(crate_manifest_dir);
@@ -15,7 +18,7 @@ pub fn workspace_root_for(crate_manifest_dir: &str) -> PathBuf {
     manifest_dir
 }
 
-/// Return a stable target directory for host-side wasm test artifacts.
+/// Return `<workspace>/target/<name>` for isolated host-side test artifacts.
 #[must_use]
 pub fn test_target_dir(workspace_root: &Path, name: &str) -> PathBuf {
     workspace_root.join("target").join(name)

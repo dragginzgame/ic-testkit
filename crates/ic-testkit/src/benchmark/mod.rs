@@ -1,4 +1,10 @@
-//! Log-marker benchmarking helpers for PocketIC-style test harnesses.
+//! Parse, pair, aggregate, compare, and report compact benchmark markers.
+//!
+//! The normal pipeline is [`parse_benchmark_events`],
+//! [`pair_benchmark_spans`], [`aggregate_benchmark_spans`], and optionally
+//! [`compare_benchmark_aggregates`] plus [`write_benchmark_report_dir`]. Marker
+//! producers can use [`format_marker`] on the host or
+//! [`crate::performance::Performance`] in canister code.
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -10,6 +16,7 @@ use std::{
 
 use serde_json::Value;
 
+/// Default prefix for benchmark marker lines.
 pub const DEFAULT_PREFIX: &str = "ICTK";
 const ALL_SUITES_LABEL: &str = "ALL";
 

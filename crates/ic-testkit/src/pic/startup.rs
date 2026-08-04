@@ -4,19 +4,25 @@ use pocket_ic::{PocketIc, PocketIcBuilder};
 
 use super::transport;
 
-/// A panic raised while PocketIC constructs an instance.
+/// A panic captured while PocketIC constructs an instance.
+///
+/// The message is preserved for diagnostics but deliberately remains
+/// unclassified because PocketIC does not yet expose structured startup errors.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PocketIcStartupError {
     message: String,
 }
 
 /// Fallible construction at PocketIC's currently panicking builder boundary.
+///
+/// This trait adds one operation rather than forwarding the builder API.
 pub trait PocketIcBuilderExt {
     /// Build one PocketIC instance while capturing an upstream startup panic.
     ///
     /// This method deliberately does not classify panic text. It exists so a
     /// test harness can apply its own bounded retry policy until PocketIC
-    /// provides a native fallible builder API.
+    /// provides a native fallible builder API. PocketIC's installed panic hook
+    /// may still print before unwinding reaches this boundary.
     fn try_build(self) -> Result<PocketIc, PocketIcStartupError>;
 }
 

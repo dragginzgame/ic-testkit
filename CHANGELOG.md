@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-04 - Documentation refresh
+
+### Changed
+
+- Rewrites the README around the current 0.3.1 API, including ownership,
+  startup, typed calls, installation, snapshots, scoped baselines,
+  diagnostics, artifacts, benchmarking, and release behavior.
+- Expands crate and public API rustdoc for the host/canister boundary, extension
+  prelude, structured errors, explicit snapshot funding, and cached-baseline
+  lifecycle.
+- Refreshes the maintained PocketIC upstream boundary and marks older design
+  documents as historical records rather than current API documentation.
+
 ## [0.3.1] - 2026-08-04 - Downstream harness ergonomics
 
 ### Added

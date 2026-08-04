@@ -1,12 +1,10 @@
-# PocketIC Upstream Wishlist
+# PocketIC Upstream Boundary
 
-> Warning: this document was LLM-generated. Treat it as a working draft and
-> take it with a pinch of salt until each item has been checked against current
-> upstream `pocket-ic` behavior.
+> Status: maintained against `pocket-ic` 15 and the current ic-testkit API.
+> Revalidate these claims whenever the client or server version changes.
 
-This document tracks what `ic-testkit` would like to see improve in the
-upstream `pocket-ic` crate and server. Keep it current as `ic-testkit` adds or
-removes wrapper behavior.
+This document tracks upstream limitations that currently justify ic-testkit
+harness code. It is not a roadmap for wrapping more of PocketIC.
 
 `ic-testkit` is not intended to replace `pocket-ic`. The goal is to keep this
 crate small, generic, and mostly focused on reusable test-harness ergonomics.
@@ -26,9 +24,8 @@ upstream.
 
 ### Server Binary Resolution
 
-PocketIC already owns server-binary discovery and downloading. `ic-testkit`
-0.2 removed its duplicate resolver, downloader, and cache rather than growing
-a second runtime manager.
+PocketIC owns server-binary discovery, downloading, validation, and caching.
+ic-testkit deliberately has no duplicate runtime manager.
 
 It would be useful if upstream provided a first-class, non-panicking server
 binary resolver with:
@@ -45,8 +42,8 @@ startup path without recreating binary management.
 
 ### Typed Startup Errors
 
-Some PocketIC startup failures currently surface as panics or stringly-typed
-messages. ic-testkit 0.3.1 provides a narrow `PocketIcBuilderExt::try_build`
+Some PocketIC startup failures currently surface as panics or stringly typed
+messages. ic-testkit provides a narrow `PocketIcBuilderExt::try_build`
 boundary for downstream bounded retry. It preserves the panic message in a
 typed error but deliberately does not classify that text. Callers still
 configure the upstream builder directly before passing the resulting
@@ -66,8 +63,8 @@ recognizes a small set of dead-instance transport message fragments so a stale
 cached baseline can be rebuilt and contextual call errors can preserve their
 transport classification.
 
-This is a temporary compatibility boundary, not an error model ic-testkit wants
-to own. Result-returning upstream lifecycle, call, snapshot, status, and log APIs
+This is a temporary upstream limitation, not an error model ic-testkit wants to
+own. Result-returning upstream lifecycle, call, snapshot, status, and log APIs
 should expose structured transport and dead-instance variants. Once those
 variants cover the operations ic-testkit uses, remove `pic/transport.rs`, the
 corresponding `catch_unwind` adapters, and all transport-message matching.
@@ -75,9 +72,8 @@ corresponding `catch_unwind` adapters, and all transport-message matching.
 ### Install-Code Rate Limiting
 
 PocketIC exposes `RejectResponse::error_code` and the structured
-`ErrorCode::CanisterInstallCodeRateLimited` variant. ic-testkit 0.2.2 uses that
-field directly when applying install retry policy and never classifies the
-display text.
+`ErrorCode::CanisterInstallCodeRateLimited` variant. ic-testkit uses that field
+directly when applying install retry policy and never classifies display text.
 
 Useful upstream behavior would include:
 
@@ -155,8 +151,8 @@ ic-testkit cannot truthfully forward those values.
 Until upstream exposes that provenance, reproducible benchmark suites should
 require a caller-provided `POCKET_IC_BIN` (or the equivalent explicit
 `with_server_binary` path), resolve and hash the file before construction, and
-record those values themselves. IcyDB correctly enforces this downstream;
-ic-testkit should not recreate PocketIC's binary resolver to infer it.
+record those values themselves. ic-testkit should not recreate PocketIC's
+binary resolver to infer it.
 
 Useful additional upstream APIs are:
 
@@ -175,10 +171,9 @@ guidance describes parallel execution as one fresh `PocketIc` instance per
 test. The Rust documentation also says sharing one instance among test cases is
 generally not recommended.
 
-`ic-testkit` 0.2 therefore removes its host-wide PocketIC serialization guard
-rather than request more upstream locking or runtime isolation. It re-exports
-`PocketIc` directly instead of retaining a forwarding `Pic` wrapper,
-while downstream suites tune heavy test capacity through
+ic-testkit has no host-wide PocketIC serialization guard. It re-exports
+`PocketIc` directly instead of retaining a forwarding simulator wrapper, while
+downstream suites tune heavy test capacity through
 `cargo test -- --test-threads=N` or their CI scheduler.
 
 The previous wasm chunk-store rationale was incorrect: the management-canister
@@ -190,7 +185,7 @@ as one benchmark output path or one explicitly shared cached baseline. The
 PocketIC server cache and any synchronization around it remain upstream-owned.
 
 See [`docs/design/0.2-concurrency/0.2-design.md`](docs/design/0.2-concurrency/0.2-design.md)
-for the accepted 0.2 direction.
+for the historical design record behind this decision.
 
 ## Current `ic-testkit` Helper Areas To Revisit
 
@@ -198,7 +193,9 @@ These modules should be checked against upstream capabilities when updating
 `pocket-ic`:
 
 - `crates/ic-testkit/src/pic/transport.rs`
+- `crates/ic-testkit/src/pic/startup.rs`
 - `crates/ic-testkit/src/pic/lifecycle.rs`
 - `crates/ic-testkit/src/pic/calls.rs`
+- `crates/ic-testkit/src/pic/snapshot.rs`
 - `crates/ic-testkit/src/pic/baseline.rs`
 - `crates/ic-testkit/src/pic/diagnostics.rs`

@@ -10,20 +10,20 @@ use super::{
     transport,
 };
 
+/// One owned PocketIC instance with captured snapshots and caller metadata.
 ///
-/// CachedPocketIcBaseline
-///
-
+/// The value contains no global synchronization. Callers choose the specific
+/// [`Mutex`] slot passed to [`restore_or_rebuild_cached_pocket_ic_baseline`].
 pub struct CachedPocketIcBaseline<T> {
     pocket_ic: PocketIc,
     snapshots: ControllerSnapshots,
     metadata: T,
 }
 
+/// Exclusive access to one caller-provided cached-baseline slot.
 ///
-/// CachedPocketIcBaselineGuard
-///
-
+/// The slot remains locked for this guard's lifetime. Other slots and fresh
+/// PocketIC instances remain independent.
 pub struct CachedPocketIcBaselineGuard<'a, T> {
     guard: MutexGuard<'a, Option<CachedPocketIcBaseline<T>>>,
 }
@@ -55,6 +55,14 @@ where
 
 /// Restore one cached PocketIC baseline, rebuilding it if the owned PocketIC
 /// instance has died between tests.
+///
+/// On the first call, `build` creates the baseline and `restore` is not run.
+/// On a cache hit, `restore` runs while the slot is locked. Only a recognized
+/// dead-instance transport panic causes eviction and rebuilding; unrelated
+/// panics resume unwinding.
+///
+/// The returned boolean is `true` only when the existing baseline was restored
+/// successfully.
 pub fn restore_or_rebuild_cached_pocket_ic_baseline<T, B, R>(
     slot: &'static Mutex<Option<CachedPocketIcBaseline<T>>>,
     build: B,
@@ -180,7 +188,10 @@ impl<T> CachedPocketIcBaselineGuard<'_, T> {
 }
 
 impl<T> CachedPocketIcBaseline<T> {
-    /// Capture one immutable cached baseline from the current PocketIC instance.
+    /// Capture one cached baseline from the current PocketIC instance.
+    ///
+    /// Snapshot capture is ordered and transactional as documented by
+    /// [`PocketIcSnapshotExt::capture_controller_snapshots`].
     pub fn capture<I>(
         pocket_ic: PocketIc,
         controller_id: Principal,
