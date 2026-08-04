@@ -56,13 +56,18 @@ printf 'make %s\n' "$*" >>"${TRACE_FILE}"
 case "${*: -1}" in
   ensure-clean) exit "${CLEAN_STATUS:-0}" ;;
   ci)
-    [[ "${CHANGELOG_VERSION:-}" == "0.8.1" ]] || exit 42
+    [[ "${CHANGELOG_VERSION:-}" == "${EXPECTED_CHANGELOG_VERSION:-0.8.1}" ]] || exit 42
     exit "${CI_STATUS:-0}"
     ;;
   *) exit 2 ;;
 esac
 EOF
-chmod +x "${bump_case}/bin/git" "${bump_case}/bin/bash" "${bump_case}/bin/make"
+cat >"${bump_case}/bin/cargo" <<'EOF'
+#!/bin/bash
+[[ "$*" == "generate-lockfile" ]] || exit 2
+EOF
+chmod +x "${bump_case}/bin/git" "${bump_case}/bin/bash" \
+  "${bump_case}/bin/make" "${bump_case}/bin/cargo"
 before_bump="$(<"${bump_case}/Cargo.toml")"
 
 set +e
@@ -100,6 +105,23 @@ mapfile -t ci_trace <"${bump_case}/trace"
   || fail "the bump script did not check cleanliness before CI"
 [[ "${ci_trace[2]:-}" == "make --no-print-directory ci" ]] \
   || fail "the bump script did not run CI before editing version metadata"
+
+: >"${bump_case}/trace"
+(
+  cd "${bump_case}"
+  PATH="${bump_case}/bin:${PATH}" TRACE_FILE="${bump_case}/trace" \
+    EXPECTED_CHANGELOG_VERSION=0.9.0 \
+    /bin/bash "${repo_root}/scripts/release/bump-version.sh" minor
+) >/dev/null 2>&1
+[[ "$(<"${bump_case}/Cargo.toml")" == 'version = "0.9.0"' ]] \
+  || fail "the minor bump script did not reset the patch component"
+mapfile -t minor_trace <"${bump_case}/trace"
+[[ "${minor_trace[0]:-}" == "changelog scripts/ci/check-changelog-version.sh 0.9.0" ]] \
+  || fail "the minor bump script did not check the target-version changelog first"
+[[ "${minor_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
+  || fail "the minor bump script did not check cleanliness before CI"
+[[ "${minor_trace[2]:-}" == "make --no-print-directory ci" ]] \
+  || fail "the minor bump script did not run CI before editing version metadata"
 
 commit_case="${work_dir}/commit"
 mkdir -p "${commit_case}/bin"
@@ -193,3 +215,12 @@ release_block="$(awk '
 expected_block="$(printf '\t+$(MAKE) --no-print-directory patch\n\t+$(MAKE) --no-print-directory release-stage\n\t+$(MAKE) --no-print-directory release-commit\n\t+$(MAKE) --no-print-directory release-push')"
 [[ "${release_block}" == "${expected_block}" ]] \
   || fail "release-patch is not a sequential fail-closed recipe"
+
+release_minor_block="$(awk '
+  $0 == "release-minor:" { found = 1; next }
+  found && /^[^[:space:]].*:/ { exit }
+  found { print }
+' "${repo_root}/Makefile")"
+expected_minor_block="$(printf '\t+$(MAKE) --no-print-directory minor\n\t+$(MAKE) --no-print-directory release-stage\n\t+$(MAKE) --no-print-directory release-commit\n\t+$(MAKE) --no-print-directory release-push')"
+[[ "${release_minor_block}" == "${expected_minor_block}" ]] \
+  || fail "release-minor is not a sequential fail-closed recipe"

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   The proof runs on every supported Linux and macOS PocketIC lane.
 - Adds a 0.1-to-0.2 migration table and records the concurrency and API
   boundary decisions in the 0.2 design document.
+- Adds guarded `make minor` and `make release-minor` commands for releases
+  such as the 0.1-to-0.2 transition; `make publish` remains the separate,
+  retry-safe publication step after tag CI succeeds.
 
 ### Changed
 

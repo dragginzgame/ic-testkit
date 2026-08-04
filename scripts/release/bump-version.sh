@@ -2,13 +2,17 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 patch" >&2
+  echo "Usage: $0 patch|minor" >&2
 }
 
-if [[ "${1:-}" != "patch" ]]; then
-  usage
-  exit 2
-fi
+bump="${1:-}"
+case "${bump}" in
+  patch | minor) ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
 
 previous_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
 if [[ -z "${previous_version}" ]]; then
@@ -23,7 +27,17 @@ if [[ ! "${major}" =~ ^[0-9]+$ || ! "${minor}" =~ ^[0-9]+$ || ! "${patch}" =~ ^[
   exit 1
 fi
 
-new_version="${major}.${minor}.$((patch + 1))"
+case "${bump}" in
+  patch)
+    patch=$((patch + 1))
+    ;;
+  minor)
+    minor=$((minor + 1))
+    patch=0
+    ;;
+esac
+
+new_version="${major}.${minor}.${patch}"
 
 if git rev-parse "v${new_version}" >/dev/null 2>&1; then
   echo "error: tag v${new_version} already exists; aborting" >&2

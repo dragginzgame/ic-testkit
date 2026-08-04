@@ -367,11 +367,13 @@ make release-check
 
 ## Releases
 
-Patch releases use the same guarded local flow as `ic-query`. Commit the
-changelog entry for the next patch and start from a clean worktree, then run:
+Patch and minor releases use the same guarded local flow as `ic-query`. Commit
+the changelog entry for the target version and start from a clean worktree,
+then run one of:
 
 ```bash
 make release-patch
+make release-minor
 ```
 
 This runs CI, bumps the workspace package version, stages the version files,

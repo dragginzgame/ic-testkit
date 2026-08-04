@@ -1,8 +1,8 @@
 .PHONY: \
 	actions-check build-test-canisters changelog-check check check-wasm ci clean \
 	clippy ensure-clean fmt fmt-check help msrv package patch publish \
-	publish-dry-run publish-guards-check release-check release-commit \
-	release-guards-check release-patch release-push release-stage \
+	minor publish-dry-run publish-guards-check release-check release-commit \
+	release-guards-check release-minor release-patch release-push release-stage \
 	release-tag-check tags test test-canisters version
 
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
@@ -33,7 +33,9 @@ help:
 	@echo "  version         Show the current workspace package version"
 	@echo "  tags            List recent version tags"
 	@echo "  patch           Run CI, then bump patch-version files"
+	@echo "  minor           Run CI, then bump minor-version files"
 	@echo "  release-patch   Bump, stage, commit, tag, verify, and push a patch release"
+	@echo "  release-minor   Bump, stage, commit, tag, verify, and push a minor release"
 	@echo "  publish         Publish the tagged release to crates.io"
 
 ensure-clean:
@@ -109,8 +111,17 @@ publish: ensure-clean release-tag-check
 patch:
 	bash scripts/release/bump-version.sh patch
 
+minor:
+	bash scripts/release/bump-version.sh minor
+
 release-patch:
 	+$(MAKE) --no-print-directory patch
+	+$(MAKE) --no-print-directory release-stage
+	+$(MAKE) --no-print-directory release-commit
+	+$(MAKE) --no-print-directory release-push
+
+release-minor:
+	+$(MAKE) --no-print-directory minor
 	+$(MAKE) --no-print-directory release-stage
 	+$(MAKE) --no-print-directory release-commit
 	+$(MAKE) --no-print-directory release-push
