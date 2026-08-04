@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-08-04 - PocketIC 15 compatibility
+
+### Changed
+
+- Updates the workspace `pocket-ic` dependency from 14.0 to 15.0.
+- Updates `ic-cdk` from 0.20.1 to 0.20.2 and refreshes the compatible
+  transitive Internet Computer dependency stack.
+
 ## [0.1.11] - 2026-05-29 - Rust 1.96 internal toolchain
 
 ### Changed
