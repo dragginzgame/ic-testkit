@@ -54,6 +54,21 @@ Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
 structured startup error.
 
+### Fallible Lifecycle and Transport APIs
+
+Some PocketIC lifecycle and observation operations still panic on failure.
+ic-testkit consequently catches panics around canister installation, calls,
+snapshots, cached-baseline restoration, and best-effort diagnostics. It also
+recognizes a small set of dead-instance transport message fragments so a stale
+cached baseline can be rebuilt and contextual call errors can preserve their
+transport classification.
+
+This is a temporary compatibility boundary, not an error model ic-testkit wants
+to own. Result-returning upstream lifecycle, call, snapshot, status, and log APIs
+should expose structured transport and dead-instance variants. Once those
+variants cover the operations ic-testkit uses, remove `pic/transport.rs`, the
+corresponding `catch_unwind` adapters, and all transport-message matching.
+
 ### Install-Code Rate Limiting
 
 PocketIC exposes `RejectResponse::error_code` and the structured
@@ -133,6 +148,12 @@ PocketIC 15 exposes the expected server version through
 `PocketIc::get_server_url()`. ic-testkit re-exports the version constant. A
 built instance does not expose the resolved binary path or its digest, so
 ic-testkit cannot truthfully forward those values.
+
+Until upstream exposes that provenance, reproducible benchmark suites should
+require a caller-provided `POCKET_IC_BIN` (or the equivalent explicit
+`with_server_binary` path), resolve and hash the file before construction, and
+record those values themselves. IcyDB correctly enforces this downstream;
+ic-testkit should not recreate PocketIC's binary resolver to infer it.
 
 Useful additional upstream APIs are:
 

@@ -23,7 +23,7 @@ pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
     StandaloneCanisterInstallError,
 };
-pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy};
+pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
 pub use snapshot::{
     ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotAttemptFailure,
     SnapshotCleanupFailure,

@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-04 - Fallible retries and upstream boundaries
+
+### Added
+
+- Adds `RetryPolicyError`, returned when an install retry policy is configured
+  with zero attempts.
+
+### Changed
+
+- Replaces the asserting `RetryPolicy::new` constructor with fallible
+  `RetryPolicy::try_new`.
+- Records PocketIC's remaining need for fallible lifecycle and transport APIs,
+  which would let ic-testkit remove panic catching and dead-instance message
+  classification.
+- Clarifies that reproducible benchmarks require a caller-owned explicit
+  `POCKET_IC_BIN` until PocketIC exposes the resolved binary path, version, and
+  digest.
+
 ## [0.2.2] - 2026-08-04 - Focused harness surface
 
 ### Changed

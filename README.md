@@ -83,10 +83,12 @@ let pocket_ic = PocketIcBuilder::new()
 For benchmark metadata, `ic_testkit::pic::LATEST_SERVER_VERSION` exposes the
 server version expected by the PocketIC client and `PocketIc::get_server_url()`
 exposes the active endpoint. PocketIC 15 does not expose the resolved server
-binary path or digest from a built instance. A benchmark requiring that
-provenance should select an explicit path with `with_server_binary`, record and
-hash that caller-owned file, and then build the instance. ic-testkit does not
-guess the path from environment or cache conventions.
+binary path or digest from a built instance. A benchmark requiring reproducible
+provenance should require an explicit `POCKET_IC_BIN` path (or pass the same
+explicit path to `with_server_binary`), resolve and hash that caller-owned file
+before building, and record those values with the report. ic-testkit treats the
+environment as caller-owned, read-only configuration and does not guess the
+path from cache conventions.
 
 There is no crate-level PocketIC ownership lock. If a heavy E2E target exceeds
 CI capacity, tune that target through the test runner, starting conservatively
@@ -179,7 +181,7 @@ use std::time::Duration;
 use ic_testkit::pic::{CanisterInstallExt, RejectResponse, RetryPolicy};
 
 let result: Result<(), RejectResponse> = pocket_ic.retry_install_code(
-    RetryPolicy::new(3, Duration::from_secs(60)),
+    RetryPolicy::try_new(3, Duration::from_secs(60)).expect("non-zero attempt count"),
     || install_again(),
 );
 ```
@@ -381,6 +383,12 @@ assert_eq!(alice, Fake::principal(1));
 | `StandaloneCanisterFixtureError` | `StandaloneCanisterInstallError`, which retains the caller's `PocketIc` and the `CanisterInstallError` |
 | `PocketIcStartError` | upstream `PocketIc::new()` / `PocketIcBuilder::build()` behavior |
 | string-returning `retry_install_code` operation | operation returning `Result<T, RejectResponse>` |
+
+### 0.3.0 hard cut
+
+| Removed API | Replacement |
+| --- | --- |
+| `RetryPolicy::new` | `RetryPolicy::try_new`, which rejects a zero attempt count without panicking |
 
 ## Boundaries
 

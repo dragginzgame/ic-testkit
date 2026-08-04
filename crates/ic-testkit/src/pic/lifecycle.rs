@@ -54,17 +54,39 @@ pub struct RetryPolicy {
     cooldown: Duration,
 }
 
+/// Invalid install-code retry policy configuration.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RetryPolicyError {
+    /// A retry policy must execute its operation at least once.
+    ZeroMaxAttempts,
+}
+
+impl std::fmt::Display for RetryPolicyError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ZeroMaxAttempts => {
+                formatter.write_str("retry policy requires at least one attempt")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RetryPolicyError {}
+
 impl RetryPolicy {
     /// Create a policy with an exact, non-zero maximum attempt count.
-    #[must_use]
-    pub const fn new(max_attempts: usize, cooldown: Duration) -> Self {
-        assert!(
-            max_attempts > 0,
-            "retry policy requires at least one attempt"
-        );
-        Self {
-            max_attempts,
-            cooldown,
+    pub const fn try_new(
+        max_attempts: usize,
+        cooldown: Duration,
+    ) -> Result<Self, RetryPolicyError> {
+        if max_attempts == 0 {
+            Err(RetryPolicyError::ZeroMaxAttempts)
+        } else {
+            Ok(Self {
+                max_attempts,
+                cooldown,
+            })
         }
     }
 
@@ -284,7 +306,7 @@ mod tests {
 
     use pocket_ic::{ErrorCode, RejectCode, RejectResponse};
 
-    use super::{RetryPolicy, retry_install_code_with};
+    use super::{RetryPolicy, RetryPolicyError, retry_install_code_with};
 
     fn rejection(error_code: ErrorCode, message: &str) -> RejectResponse {
         RejectResponse {
@@ -304,7 +326,7 @@ mod tests {
             "install-code rate limit",
         );
         let result = retry_install_code_with(
-            RetryPolicy::new(3, Duration::from_secs(1)),
+            RetryPolicy::try_new(3, Duration::from_secs(1)).expect("valid retry policy"),
             || {
                 attempts.set(attempts.get() + 1);
                 Err::<(), _>(rate_limited.clone())
@@ -322,7 +344,7 @@ mod tests {
         let attempts = Cell::new(0);
         let not_retryable = rejection(ErrorCode::CanisterRejectedMessage, "not retryable");
         let result = retry_install_code_with(
-            RetryPolicy::new(3, Duration::from_secs(1)),
+            RetryPolicy::try_new(3, Duration::from_secs(1)).expect("valid retry policy"),
             || {
                 attempts.set(attempts.get() + 1);
                 Err::<(), _>(not_retryable.clone())
@@ -332,5 +354,13 @@ mod tests {
 
         assert_eq!(result, Err(not_retryable));
         assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    fn retry_policy_rejects_zero_attempts() {
+        assert_eq!(
+            RetryPolicy::try_new(0, Duration::from_secs(1)),
+            Err(RetryPolicyError::ZeroMaxAttempts)
+        );
     }
 }
