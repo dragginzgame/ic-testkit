@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-08-05 - Consolidated cache and pooling designs
+
+### Added
+
+- Adds a consumer-validated follow-up design that combines Canic's external
+  multi-output build caching and IcyDB's post-link transform caching into one
+  proposed transactional artifact-set core, with shared locking, exact input
+  verification, batch manifests, atomic publication, typed outcomes, failure
+  cleanup, timings, and retention.
+- Defines an opt-in shared Cargo incremental strategy that keeps the exact
+  artifact store authoritative.
+- Adds a proposed `0.4` bounded multi-canister baseline-pool design with runtime
+  capacity, structural recipe ownership, typed reset requirements and receipts,
+  uniform post-build/post-restore validation, explicit rebuild semantics, and
+  one internal scheduler shared with the standalone pool.
+
+### Changed
+
+- Records a correctness-first delivery order for complete Cargo configuration
+  discovery and per-path input change reporting before safely narrowing
+  invalidation.
+- Documents intentional pooled-fixture lease scope for Clippy and the `0.3.5`
+  requirement to declare Cargo configuration inherited from workspace
+  ancestors or the effective Cargo home.
+
 ## [0.3.5] - 2026-08-05 - Wasm cache lifecycle hardening
 
 ### Added

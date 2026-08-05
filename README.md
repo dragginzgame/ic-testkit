@@ -288,12 +288,30 @@ init arguments, topology, and seeded state on every acquisition; use a separate
 pool for a different recipe. Setup performed by the builder is included in the
 captured baseline.
 
+The lease's `Drop` implementation releases a capacity slot, so Clippy can
+suggest tightening its scope. Drop the lease explicitly when the test no longer
+needs it. When a suite intentionally retains the lease for the complete test,
+use the narrowest practical allowance and record the reason, for example at the
+test or dedicated test-file boundary:
+
+```rust
+#![allow(
+    clippy::significant_drop_tightening,
+    reason = "each test intentionally retains its pooled fixture lease for its full scope"
+)]
+```
+
 The caller still chooses capacity and which tests may reuse the baseline. A
 snapshot restores the installed canister, not the complete PocketIC instance:
 instance time, other canisters, and cycle changes outside the selected restore
 funding policy may persist. Keep installation, upgrade, topology, teardown,
 time-sensitive, cycle-accounting, and snapshot tests on fresh directly owned
 fixtures.
+
+A proposed runtime-capacity multi-canister pool uses structurally owned recipes,
+typed reset receipts, invariant validation, and rebuild-on-invalid semantics
+without claiming full PocketIC reset. See the
+[`0.4` bounded baseline-pool design](docs/design/0.4-baseline-pooling/0.4-design.md).
 
 ## Diagnostics and time
 
@@ -373,6 +391,14 @@ environment, selected inherited environment, and caller-declared additional
 inputs. Build scripts that read application-specific environment variables or
 files outside Cargo's package graph must declare them on the spec.
 
+In `0.3.5`, automatic Cargo configuration discovery is limited to the workspace
+configuration paths. Configuration inherited from ancestor directories or the
+effective Cargo home can also affect compilation. Until that discovery is part
+of the cache resolver, declare those files with `with_additional_inputs` and
+include `CARGO_HOME` with `with_inherited_env` when it is set. Package inputs
+are content-hashed exactly but conservatively; exact hashing does not promise
+that every file in the package closure is semantically relevant to a build.
+
 Calls sharing a target directory coordinate through one process lock. A cache
 hit requires every expected nonempty Wasm artifact to carry the exact atomic
 stamp for both the current fingerprint and artifact content. Exact builds are
@@ -395,6 +421,11 @@ target contents remain caller-owned.
 modification times. Generated artifacts become reusable only after
 `mark_artifact_fresh` atomically records the snapshot beside the successfully
 built artifact; an unstamped artifact is conservatively stale.
+
+The proposed follow-up unifies external multi-output builds and post-link
+transforms behind one transactional cache rather than adding tool-specific
+APIs. See the
+[consolidated artifact and fixture cache design](docs/design/0.3-artifact-cache/follow-up-design.md).
 
 ## Benchmark markers and reports
 
