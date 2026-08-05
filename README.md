@@ -351,9 +351,20 @@ recipe's reset contract. `BaselinePoolOutcome` and `BaselinePoolTimings` expose
 whether the lease was built, restored, or rebuilt and where acquisition time
 was spent.
 
+Recipes that wrap PocketIC's currently unstructured transport failures can use
+`is_dead_pocket_ic_transport_error` in `classify_failure`, returning
+`RebuildReason::DeadPocketIcTransport` when it matches and
+`stage.default_rebuild_reason()` otherwise. The classifier searches the error
+source chain; it remains a conservative message boundary until PocketIC
+provides a structured transport error.
+
 This is still baseline reuse, not complete simulator rollback. Recipes must
 honestly account for time, extra canisters, pending messages, subnet state,
 cycles, and external resources, or keep affected tests on fresh instances.
+These domains can interact: advancing simulator time may also affect cycle
+accounting, for example. Add and validate one reset guarantee at a time rather
+than treating independent receipt entries as proof that the underlying state
+is independent.
 Capacity greater than one permits overlapping leases but does not make a
 serial test runner parallel. See the
 [`0.4` bounded baseline-pool design](docs/design/0.4-baseline-pooling/0.4-design.md)

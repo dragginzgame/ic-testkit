@@ -56,6 +56,7 @@ pub use standalone_pool::{
 };
 pub use startup::{PocketIcBuilderExt, PocketIcStartupError};
 pub use time::PocketIcTimeExt;
+pub use transport::is_dead_pocket_ic_transport_error;
 
 /// All PocketIC extension traits, and no data types.
 ///

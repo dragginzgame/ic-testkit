@@ -23,7 +23,7 @@ pub(super) fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
 pub(super) fn classify_pocket_ic_panic(payload: Box<dyn Any + Send>) -> PocketIcPanicKind {
     let message = panic_payload_to_string(payload.as_ref());
 
-    if is_dead_instance_transport_error(&message) {
+    if message_is_dead_instance_transport_error(&message) {
         return PocketIcPanicKind::DeadInstanceTransport { message };
     }
 
@@ -42,6 +42,28 @@ pub(super) fn panic_is_dead_instance_transport(payload: &(dyn Any + Send)) -> bo
 // Detect the PocketIC transport failure class that means the owned instance
 // has already died and cached snapshot restore should rebuild from scratch.
 pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
+    message_is_dead_instance_transport_error(message)
+}
+
+/// Detect PocketIC's currently unstructured dead-transport failure class.
+///
+/// The complete error source chain is inspected so a recipe can classify its
+/// own wrapper error as [`super::RebuildReason::DeadPocketIcTransport`]. This
+/// remains a conservative message-based boundary until PocketIC exposes a
+/// structured transport error.
+#[must_use]
+pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(candidate) = current {
+        if message_is_dead_instance_transport_error(&candidate.to_string()) {
+            return true;
+        }
+        current = candidate.source();
+    }
+    false
+}
+
+fn message_is_dead_instance_transport_error(message: &str) -> bool {
     message.contains("ConnectionRefused")
         || message.contains("tcp connect error")
         || message.contains("IncompleteMessage")
@@ -51,7 +73,25 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{PocketIcPanicKind, classify_pocket_ic_panic, is_dead_instance_transport_error};
+    use super::{
+        PocketIcPanicKind, classify_pocket_ic_panic, is_dead_instance_transport_error,
+        is_dead_pocket_ic_transport_error,
+    };
+
+    #[derive(Debug)]
+    struct WrapperError(std::io::Error);
+
+    impl std::fmt::Display for WrapperError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("wrapped PocketIC request failed")
+        }
+    }
+
+    impl std::error::Error for WrapperError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
 
     #[test]
     fn dead_instance_transport_error_detects_connection_refused() {
@@ -77,5 +117,17 @@ mod tests {
             classified,
             PocketIcPanicKind::DeadInstanceTransport { .. }
         ));
+    }
+
+    #[test]
+    fn public_classifier_inspects_the_error_source_chain() {
+        let dead = WrapperError(std::io::Error::new(
+            std::io::ErrorKind::ConnectionRefused,
+            "tcp connect error: ConnectionRefused",
+        ));
+        assert!(is_dead_pocket_ic_transport_error(&dead));
+
+        let unrelated = WrapperError(std::io::Error::other("request rejected"));
+        assert!(!is_dead_pocket_ic_transport_error(&unrelated));
     }
 }

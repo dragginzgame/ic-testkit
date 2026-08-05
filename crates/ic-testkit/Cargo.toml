@@ -23,5 +23,8 @@ fs2 = { workspace = true }
 pocket-ic = { workspace = true }
 sha2 = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+tokio = { workspace = true }
+
 [lints]
 workspace = true

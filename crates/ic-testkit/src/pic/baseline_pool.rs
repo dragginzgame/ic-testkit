@@ -668,7 +668,12 @@ impl ValidationReceipt {
 }
 
 impl BaselinePreparationStage {
-    fn default_rebuild_reason(self) -> RebuildReason {
+    /// Default rebuild reason used by [`PocketIcBaselineRecipe::classify_failure`].
+    ///
+    /// Recipes that override classification can use this for their fallback
+    /// after handling a more specific error such as dead PocketIC transport.
+    #[must_use]
+    pub fn default_rebuild_reason(self) -> RebuildReason {
         match self {
             Self::RestoreCanisters => RebuildReason::SnapshotRestoreFailure,
             Self::ResetNonSnapshotState => RebuildReason::ResetFailure,

@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Adds live coverage for multi-canister restoration, runtime capacity, reset
   contract enforcement, one-shot recovery, fatal recipe mismatches, and panic
   invalidation.
+- Adds `is_dead_pocket_ic_transport_error`, which searches a recipe error's
+  source chain for PocketIC's currently unstructured dead-transport failure
+  class, plus a public default stage-to-rebuild-reason mapping for custom
+  recipe classifiers.
+- Expands baseline-pool integration coverage across time advancement, cycle
+  mutation, extra-canister creation, reset/readiness/validation recovery,
+  built/restored validation equivalence, capacity-one queue timing, and
+  an isolated manual recovery test that kills a test-owned non-reused PocketIC
+  server.
 
 ### Changed
 
