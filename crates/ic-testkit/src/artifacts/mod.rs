@@ -15,7 +15,8 @@ pub use icp::{
 };
 pub use wasm::{build_wasm_canisters, read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_cache::{
-    WasmBuildError, WasmBuildOutcome, WasmBuildPhase, WasmBuildRecord, WasmBuildSpec,
-    WasmBuildTimings, build_wasm_canisters_cached,
+    WasmBuildCachePrunePolicy, WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome,
+    WasmBuildPhase, WasmBuildRecord, WasmBuildSpec, WasmBuildTimings, build_wasm_canisters_cached,
+    prune_wasm_build_cache,
 };
 pub use workspace::{test_target_dir, workspace_root_for};

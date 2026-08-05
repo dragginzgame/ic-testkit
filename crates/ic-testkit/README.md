@@ -10,7 +10,7 @@ provides:
 - canister install and retry helpers
 - cached PocketIC baseline helpers
 - deterministic fake principals and account-like values
-- wasm artifact helpers for test harnesses
+- content-addressed wasm artifact helpers with bounded cache retention
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
 

@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-08-05 - Wasm cache lifecycle hardening
+
+### Added
+
+- Adds `WasmBuildCachePrunePolicy`, `prune_wasm_build_cache`, and structured
+  `WasmBuildCachePruneReport` results for caller-controlled maximum-age and
+  maximum-logical-size retention of fingerprint-specific Cargo targets.
+- Adds persistent last-use markers so size pruning removes least-recently-used
+  exact builds instead of relying on filesystem directory timestamps.
+
+### Changed
+
+- Removes a fingerprint-specific Cargo target whenever its build fails,
+  including command failures, missing outputs, post-build fingerprint errors,
+  and `InputsChangedDuringBuild`; cleanup failures retain both the original
+  structured build error and the cleanup error.
+- Writes a standards-compliant `CACHEDIR.TAG` at every caller-selected target
+  root used for cached builds or pruning.
+- Coordinates pruning through the same output-scoped process lock as builds
+  and limits recursive removal to direct 64-hex fingerprint directories.
+
 ## [0.3.4] - 2026-08-05 - Content-addressed Wasm builds
 
 ### Added

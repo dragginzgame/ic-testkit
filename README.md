@@ -50,7 +50,7 @@ The crate supports Rust 1.88 and uses PocketIC 15.
 | Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline`, `CachedStandaloneCanisterFixturePool` | Ordered transactional capture, explicit restore funding, scoped caching |
 | Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
-| Artifacts | `WasmBuildSpec`, `WasmBuildOutcome`, `WatchedInputSnapshot` | Content-addressed Wasm builds, exact freshness stamps, and dedicated target directories |
+| Artifacts | `WasmBuildSpec`, `WasmBuildOutcome`, `WasmBuildCachePrunePolicy`, `WatchedInputSnapshot` | Content-addressed Wasm builds, bounded cache retention, exact freshness stamps, and dedicated target directories |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
 
@@ -321,9 +321,11 @@ and exact generated-artifact freshness checks:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
-    WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached, read_wasm,
-    test_target_dir, workspace_root_for,
+    WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
+    build_wasm_canisters_cached, prune_wasm_build_cache, read_wasm, test_target_dir,
+    workspace_root_for,
 };
+use std::time::Duration;
 
 let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
 let target = test_target_dir(&workspace, "pic-wasm");
@@ -348,6 +350,18 @@ match outcome {
 }
 
 let wasm = read_wasm(&target, "counter_canister", "release");
+
+let pruned = prune_wasm_build_cache(
+    &target,
+    WasmBuildCachePrunePolicy::new()
+        .with_max_age(Duration::from_secs(14 * 24 * 60 * 60))
+        .with_max_size_bytes(10 * 1024 * 1024 * 1024),
+)?;
+eprintln!(
+    "removed {} builds ({} bytes)",
+    pruned.entries_removed(),
+    pruned.bytes_removed(),
+);
 # let _ = wasm;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -366,6 +380,16 @@ retained under fingerprint-specific Cargo target directories, so a prior spec
 can be materialized again after another spec used the caller-facing output.
 `build_wasm_canisters` remains as the panicking convenience API and uses the
 same cache automatically.
+
+Failed builds remove their incomplete fingerprint directory before returning;
+if cleanup also fails, `WasmBuildError::FailedBuildCleanup` preserves both
+failures. Every used target root receives a standards-compliant
+`CACHEDIR.TAG`. Successful builds and cache hits atomically update a per-entry
+last-use marker. `prune_wasm_build_cache` takes the build lock, removes entries
+over the optional age limit, then removes least-recently-used entries until the
+optional logical-byte limit is met. It only prunes direct fingerprint-named
+children below `.ic-testkit/wasm-targets`; public artifacts and unrelated Cargo
+target contents remain caller-owned.
 
 `WatchedInputSnapshot` likewise hashes file paths and contents instead of
 modification times. Generated artifacts become reusable only after
