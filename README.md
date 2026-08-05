@@ -273,16 +273,31 @@ instance and baseline snapshot; a lease restores only that slot and dereferences
 to the ordinary `StandaloneCanisterFixture` API:
 
 ```rust,no_run
-use ic_testkit::pic::CachedStandaloneCanisterFixturePool;
+use ic_testkit::pic::{
+    CachedStandaloneCanisterFixturePool, StandaloneFixturePoolOutcome,
+};
 
 static POOL: CachedStandaloneCanisterFixturePool<8> =
     CachedStandaloneCanisterFixturePool::new();
 
-let (fixture, cache_hit) = POOL.acquire(build_fixture)?;
+let (fixture, outcome) = POOL.acquire_with_outcome(build_fixture)?;
 let value: u64 = fixture.query_candid("get", ())?;
-# let _ = (value, cache_hit);
+assert!(matches!(
+    outcome,
+    StandaloneFixturePoolOutcome::Built { .. }
+        | StandaloneFixturePoolOutcome::Restored { .. }
+        | StandaloneFixturePoolOutcome::Rebuilt { .. }
+));
+# let _ = value;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+`acquire_with_outcome` reports queue wait, fixture build and snapshot capture,
+restore, stale teardown, and total time. Snapshot failures retain their partial
+timings, while dead-transport recovery preserves both the restore and rebuild
+failure when replacement capture also fails. Existing callers can continue to
+use `acquire`; its boolean remains `true` only for a successfully restored slot
+and `false` for both builds and rebuilds.
 
 One pool must represent one fixture recipe. Pass a builder with the same Wasm,
 init arguments, topology, and seeded state on every acquisition; use a separate

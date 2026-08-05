@@ -53,6 +53,8 @@ pub use snapshot::{
 pub use standalone::StandaloneCanisterFixture;
 pub use standalone_pool::{
     CachedStandaloneCanisterFixtureGuard, CachedStandaloneCanisterFixturePool,
+    StandaloneFixturePoolError, StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason,
+    StandaloneFixturePoolStage, StandaloneFixturePoolTimings,
 };
 pub use startup::{PocketIcBuilderExt, PocketIcStartupError};
 pub use time::PocketIcTimeExt;

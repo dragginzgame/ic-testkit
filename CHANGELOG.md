@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-05 - Structured standalone fixture outcomes
+
+### Added
+
+- Adds `CachedStandaloneCanisterFixturePool::acquire_with_outcome` with
+  structured `Built`, `Restored`, and `Rebuilt` results, rebuild reasons, phase
+  timings, and timed snapshot errors. The existing `(guard, bool)` acquisition
+  remains compatible and delegates to the same lifecycle implementation.
+
 ## [0.4.0] - 2026-08-05 - Bounded multi-canister baseline pools
 
 ### Added
