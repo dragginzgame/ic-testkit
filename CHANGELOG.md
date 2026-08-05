@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-05 - Bounded multi-canister baseline pools
+
 ### Added
 
 - Adds `CachedPocketIcBaselinePool`, a caller-owned runtime-capacity pool for
@@ -17,11 +19,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   classification for the pool's lifetime.
 - Adds caller-owned `FixtureRecipeId`, typed reset requirements and receipts,
   exact restored-canister-set verification, structured `Built`, `Restored`,
-  and `Rebuilt` outcomes, phase timings, explicit lease invalidation, and
-  combined original/rebuild failures.
-- Adds live coverage for multi-canister restoration, runtime capacity, reset
-  contract enforcement, one-shot recovery, fatal recipe mismatches, and panic
-  invalidation.
+  and `Rebuilt` outcomes, explicit lease invalidation, one-shot recovery, and
+  combined original/rebuild failures. Successful outcomes and failed
+  acquisitions both retain phase timings.
 - Adds `is_dead_pocket_ic_transport_error`, which searches a recipe error's
   source chain for PocketIC's currently unstructured dead-transport failure
   class, plus a public default stage-to-rebuild-reason mapping for custom
@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   built/restored validation equivalence, capacity-one queue timing, and
   an isolated manual recovery test that kills a test-owned non-reused PocketIC
   server.
+- Adds `CanisterRestoreReceipt::try_from_baseline` so recipes can derive exact
+  restore evidence from the captured snapshot set, plus a complete
+  compile-checked two-canister recipe example covering build, restore,
+  readiness, validation, failure classification, and reuse.
 
 ### Changed
 

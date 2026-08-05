@@ -335,13 +335,20 @@ run_test(baseline.pocket_ic(), baseline.metadata());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+A complete, compile-checked
+[`PocketIcBaselineRecipe`](crates/ic-testkit/examples/multi_canister_baseline_pool.rs)
+shows a two-canister build, exact restore receipt, readiness boundary, invariant
+validation, dead-transport classification, and cold/warm acquisition.
+
 The recipe declares typed reset requirements and implements the exact reuse
 sequence: restore every captured canister, reset non-snapshot state, drive the
 topology to readiness, then validate final invariants. Snapshot and cycle
 domains are mandatory. The pool checks that the restore receipt names the
 complete captured set and that every required reset policy has an exact
 matching achievement before returning a warm lease. Built and restored slots
-run the same validation hook.
+run the same validation hook. After a successful baseline restore, prefer
+`CanisterRestoreReceipt::try_from_baseline` so receipt membership is derived
+from the captured set rather than duplicated in recipe metadata.
 
 A recoverable preparation failure discards the slot and rebuilds once; if that
 also fails, `BaselinePoolError::RecoveryFailed` retains both errors. Recipe or
@@ -349,7 +356,9 @@ test panics keep unwinding and mark the slot invalid for a later rebuild.
 Callers can explicitly invalidate a lease after an operation outside the
 recipe's reset contract. `BaselinePoolOutcome` and `BaselinePoolTimings` expose
 whether the lease was built, restored, or rebuilt and where acquisition time
-was spent.
+was spent. Failed acquisitions retain the partial or combined phase timings on
+`BaselinePoolError::timings`, including queue wait, failed preparation, stale
+teardown, and a failed rebuild attempt when applicable.
 
 Recipes that wrap PocketIC's currently unstructured transport failures can use
 `is_dead_pocket_ic_transport_error` in `classify_failure`, returning

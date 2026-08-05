@@ -325,13 +325,20 @@ pub enum BaselinePoolPreparationError<E> {
 #[derive(Debug)]
 pub enum BaselinePoolError<E> {
     /// Initial construction or a non-rebuilt preparation failed.
-    Preparation(BaselinePoolPreparationError<E>),
+    Preparation {
+        /// Recipe or contract failure that stopped acquisition.
+        error: BaselinePoolPreparationError<E>,
+        /// Phase timings recorded before acquisition failed.
+        timings: Box<BaselinePoolTimings>,
+    },
     /// Reused-slot preparation failed and its one rebuild attempt also failed.
     RecoveryFailed {
         /// Original restore/reset/readiness/validation failure.
         original: Box<BaselinePoolPreparationError<E>>,
         /// Failure while rebuilding or validating the replacement.
         rebuild: Box<BaselinePoolPreparationError<E>>,
+        /// Combined timings for preparation, stale teardown, and rebuilding.
+        timings: Box<BaselinePoolTimings>,
     },
 }
 
@@ -614,6 +621,20 @@ impl CanisterRestoreReceipt {
         })
     }
 
+    /// Construct a restore receipt for the exact canister set captured by a baseline.
+    ///
+    /// This is the preferred constructor after successfully calling
+    /// [`CachedPocketIcBaseline::restore`] or
+    /// [`CachedPocketIcBaseline::restore_with_funding`]. Deriving the set from
+    /// the baseline avoids duplicating canister ids in recipe metadata solely
+    /// to satisfy the pool contract.
+    pub fn try_from_baseline<M>(
+        baseline: &CachedPocketIcBaseline<M>,
+        cycle_policy: CycleResetPolicy,
+    ) -> Result<Self, BaselinePoolContractError> {
+        Self::try_new(baseline.snapshot_canister_ids(), cycle_policy)
+    }
+
     /// Restored canister ids in deterministic order.
     #[must_use]
     pub fn canister_ids(&self) -> &[Principal] {
@@ -760,6 +781,16 @@ impl BaselinePoolOutcome {
     }
 }
 
+impl<E> BaselinePoolError<E> {
+    /// Timings recorded before this acquisition failed.
+    #[must_use]
+    pub const fn timings(&self) -> BaselinePoolTimings {
+        match self {
+            Self::Preparation { timings, .. } | Self::RecoveryFailed { timings, .. } => **timings,
+        }
+    }
+}
+
 impl<R> CachedPocketIcBaselinePool<R>
 where
     R: PocketIcBaselineRecipe,
@@ -830,14 +861,20 @@ where
                             // instance. Discard it, but do not reinterpret a
                             // caller-declared fatal error as a rebuild reason.
                             Self::discard_stale_slot(&mut slot, &mut timings);
-                            return Err(BaselinePoolError::Preparation(original));
+                            timings.total = total_started.elapsed();
+                            return Err(BaselinePoolError::Preparation {
+                                error: original,
+                                timings: Box::new(timings),
+                            });
                         }
                         FailureDisposition::Rebuild(reason) => {
                             Self::discard_stale_slot(&mut slot, &mut timings);
                             if let Err(rebuild) = self.build_slot(&mut slot, &mut timings) {
+                                timings.total = total_started.elapsed();
                                 return Err(BaselinePoolError::RecoveryFailed {
                                     original: Box::new(original),
                                     rebuild: Box::new(rebuild),
+                                    timings: Box::new(timings),
                                 });
                             }
                             timings.total = total_started.elapsed();
@@ -868,8 +905,13 @@ where
         if slot.is_populated() {
             Self::discard_stale_slot(&mut slot, &mut timings);
         }
-        self.build_slot(&mut slot, &mut timings)
-            .map_err(BaselinePoolError::Preparation)?;
+        if let Err(error) = self.build_slot(&mut slot, &mut timings) {
+            timings.total = total_started.elapsed();
+            return Err(BaselinePoolError::Preparation {
+                error,
+                timings: Box::new(timings),
+            });
+        }
         timings.total = total_started.elapsed();
 
         let outcome = rebuild_reason.map_or_else(
@@ -1200,8 +1242,10 @@ where
 {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Preparation(error) => error.fmt(formatter),
-            Self::RecoveryFailed { original, rebuild } => write!(
+            Self::Preparation { error, .. } => error.fmt(formatter),
+            Self::RecoveryFailed {
+                original, rebuild, ..
+            } => write!(
                 formatter,
                 "baseline preparation failed ({original}); rebuilding the slot also failed: {rebuild}",
             ),
@@ -1215,7 +1259,7 @@ where
 {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Preparation(error) => Some(error),
+            Self::Preparation { error, .. } => Some(error),
             Self::RecoveryFailed { original, .. } => Some(original.as_ref()),
         }
     }

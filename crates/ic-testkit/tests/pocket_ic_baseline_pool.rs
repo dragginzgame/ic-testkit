@@ -214,21 +214,23 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
         }
 
         baseline.restore(Principal::anonymous())?;
-        let canister_ids = if self
+        if self
             .controls
             .report_incomplete_restore
             .swap(false, Ordering::SeqCst)
         {
-            baseline.metadata().canister_ids[..1].to_vec()
-        } else {
-            baseline.metadata().canister_ids.to_vec()
-        };
+            return CanisterRestoreReceipt::try_new(
+                baseline.metadata().canister_ids[..1].iter().copied(),
+                CycleResetPolicy::PreserveCurrent,
+            )
+            .map_err(Into::into);
+        }
         let cycle_policy = if self.guarded_domain == Some(GuardedDomain::Cycles) {
             CycleResetPolicy::RebuildOnMutation
         } else {
             CycleResetPolicy::PreserveCurrent
         };
-        CanisterRestoreReceipt::try_new(canister_ids, cycle_policy).map_err(Into::into)
+        CanisterRestoreReceipt::try_from_baseline(baseline, cycle_policy).map_err(Into::into)
     }
 
     fn reset_non_snapshot_state(
@@ -474,18 +476,53 @@ fn reused_slot_failure_rebuilds_once_and_preserves_a_failed_recovery() {
     let Err(error) = pool.acquire() else {
         panic!("a failed restore plus failed rebuild must be returned");
     };
+    let timings = error.timings();
+    assert!(timings.restore().is_some());
+    assert!(timings.stale_teardown().is_some());
+    assert!(timings.build().is_some());
+    assert!(timings.total() >= timings.restore().unwrap());
     assert!(matches!(
-        error,
+        &error,
         BaselinePoolError::RecoveryFailed {
             original,
             rebuild,
+            ..
         } if matches!(
-            *original,
+            **original,
             BaselinePoolPreparationError::Recipe { .. }
         ) && matches!(
-            *rebuild,
+            **rebuild,
             BaselinePoolPreparationError::Recipe { .. }
         )
+    ));
+}
+
+#[test]
+fn failed_initial_build_reports_partial_timings() {
+    let controls = RecipeControls::default();
+    controls.fail_next_build.store(true, Ordering::SeqCst);
+    let pool = CachedPocketIcBaselinePool::new(
+        NonZeroUsize::new(1).unwrap(),
+        TwoCanisterRecipe::new(controls),
+    );
+
+    let Err(error) = pool.acquire() else {
+        panic!("the requested initial build failure must be returned");
+    };
+    let timings = error.timings();
+    assert!(timings.build().is_some());
+    assert!(timings.restore().is_none());
+    assert!(timings.validation().is_none());
+    assert!(timings.total() >= timings.build().unwrap());
+    assert!(matches!(
+        error,
+        BaselinePoolError::Preparation {
+            error: BaselinePoolPreparationError::Recipe {
+                stage: BaselinePreparationStage::Build,
+                ..
+            },
+            ..
+        }
     ));
 }
 
@@ -670,11 +707,18 @@ fn validation_recipe_mismatch_is_fatal_and_not_retried_as_a_rebuild() {
         panic!("a mismatched validation recipe must be rejected");
     };
     assert!(matches!(
-        error,
-        BaselinePoolError::Preparation(BaselinePoolPreparationError::Contract(
-            BaselinePoolContractError::RecipeIdentityMismatch { .. }
-        ))
+        &error,
+        BaselinePoolError::Preparation {
+            error: BaselinePoolPreparationError::Contract(
+                BaselinePoolContractError::RecipeIdentityMismatch { .. }
+            ),
+            ..
+        }
     ));
+    let timings = error.timings();
+    assert!(timings.validation().is_some());
+    assert!(timings.stale_teardown().is_some());
+    assert!(timings.total() >= timings.validation().unwrap());
     assert_eq!(
         controls.builds.load(Ordering::SeqCst),
         1,
