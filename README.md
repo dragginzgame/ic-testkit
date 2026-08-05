@@ -50,7 +50,7 @@ The crate supports Rust 1.88 and uses PocketIC 15.
 | Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline`, `CachedStandaloneCanisterFixturePool` | Ordered transactional capture, explicit restore funding, scoped caching |
 | Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
-| Artifacts | `artifacts` | Wasm build paths, freshness checks, and dedicated target directories |
+| Artifacts | `WasmBuildSpec`, `WasmBuildOutcome`, `WatchedInputSnapshot` | Content-addressed Wasm builds, exact freshness stamps, and dedicated target directories |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
 
@@ -316,28 +316,61 @@ Use PocketIC's inherent `get_time`, `set_time`, `set_certified_time`,
 ## Wasm artifact helpers
 
 The host-only `artifacts` module provides workspace-relative paths, dedicated
-test target directories, build orchestration, Wasm loading, and generated
-`.icp` freshness checks:
+test target directories, content-addressed build coordination, Wasm loading,
+and exact generated-artifact freshness checks:
 
 ```rust,no_run
-use ic_testkit::artifacts;
+use ic_testkit::artifacts::{
+    WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached, read_wasm,
+    test_target_dir, workspace_root_for,
+};
 
-let workspace = artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"));
-let target = artifacts::test_target_dir(&workspace, "pic-wasm");
-
-artifacts::build_wasm_canisters(
+let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+let target = test_target_dir(&workspace, "pic-wasm");
+let spec = WasmBuildSpec::new(
     &workspace,
     &target,
     &["counter_canister"],
-    &["--release"],
-    &[],
-);
+    "release",
+)
+.with_cargo_profile_args(&["--release", "--locked"])
+.with_inherited_env(&["COUNTER_SCHEMA_MODE"])
+.with_additional_inputs(&["config/counter-schema.json"]);
 
-let wasm = artifacts::read_wasm(&target, "counter_canister", "release");
+let outcome = build_wasm_canisters_cached(&spec)?;
+match outcome {
+    WasmBuildOutcome::Built(record) => {
+        eprintln!("built {} in {:?}", record.fingerprint(), record.timings().total());
+    }
+    WasmBuildOutcome::Reused(record) => {
+        eprintln!("reused {}", record.fingerprint());
+    }
+}
+
+let wasm = read_wasm(&target, "counter_canister", "release");
+# let _ = wasm;
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Builds use the caller-selected target directory so fixture Wasm does not
-collide with the repository's normal target output.
+The fingerprint covers the selected package set and local dependency sources,
+workspace manifest, lockfile, Cargo configuration, Rust toolchain files,
+target and profile arguments, Cargo and rustc identities, explicit child
+environment, selected inherited environment, and caller-declared additional
+inputs. Build scripts that read application-specific environment variables or
+files outside Cargo's package graph must declare them on the spec.
+
+Calls sharing a target directory coordinate through one process lock. A cache
+hit requires every expected nonempty Wasm artifact to carry the exact atomic
+stamp for both the current fingerprint and artifact content. Exact builds are
+retained under fingerprint-specific Cargo target directories, so a prior spec
+can be materialized again after another spec used the caller-facing output.
+`build_wasm_canisters` remains as the panicking convenience API and uses the
+same cache automatically.
+
+`WatchedInputSnapshot` likewise hashes file paths and contents instead of
+modification times. Generated artifacts become reusable only after
+`mark_artifact_fresh` atomically records the snapshot beside the successfully
+built artifact; an unstamped artifact is conservatively stale.
 
 ## Benchmark markers and reports
 

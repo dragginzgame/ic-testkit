@@ -1,8 +1,9 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::Command,
 };
+
+use super::wasm_cache::{WasmBuildSpec, build_wasm_canisters_cached};
 
 /// Resolve one crate's Wasm artifact under a caller-selected Cargo target directory.
 #[must_use]
@@ -52,35 +53,44 @@ pub fn build_wasm_canisters(
     cargo_profile_args: &[&str],
     extra_env: &[(&str, &str)],
 ) {
-    let mut cmd = cargo_command();
-    cmd.current_dir(workspace_root);
-    cmd.env("CARGO_TARGET_DIR", target_dir);
-    cmd.args(["build", "--target", "wasm32-unknown-unknown"]);
-    cmd.args(cargo_profile_args);
-
-    for (key, value) in extra_env {
-        cmd.env(key, value);
-    }
-
-    for name in packages {
-        cmd.args(["-p", name]);
-    }
-
-    let output = cmd.output().expect("failed to run cargo build");
-    assert!(
-        output.status.success(),
-        "cargo build failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let profile_target_dir = profile_target_dir(cargo_profile_args);
+    let spec = WasmBuildSpec::new(workspace_root, target_dir, packages, &profile_target_dir)
+        .with_cargo_profile_args(cargo_profile_args)
+        .with_extra_env(extra_env);
+    build_wasm_canisters_cached(&spec)
+        .unwrap_or_else(|error| panic!("cargo Wasm build failed: {error}"));
 }
 
-fn cargo_command() -> Command {
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let mut command = Command::new(cargo);
-
-    if let Some(toolchain) = std::env::var_os("RUSTUP_TOOLCHAIN") {
-        command.env("RUSTUP_TOOLCHAIN", toolchain);
+fn profile_target_dir(cargo_profile_args: &[&str]) -> String {
+    let mut profile = "debug";
+    let mut args = cargo_profile_args.iter().copied();
+    while let Some(argument) = args.next() {
+        match argument {
+            "--release" => profile = "release",
+            "--profile" => {
+                if let Some(value) = args.next() {
+                    profile = value;
+                }
+            }
+            _ => {
+                if let Some(value) = argument.strip_prefix("--profile=") {
+                    profile = value;
+                }
+            }
+        }
     }
+    profile.to_owned()
+}
 
-    command
+#[cfg(test)]
+mod tests {
+    use super::profile_target_dir;
+
+    #[test]
+    fn profile_target_directory_follows_cargo_arguments() {
+        assert_eq!(profile_target_dir(&[]), "debug");
+        assert_eq!(profile_target_dir(&["--release"]), "release");
+        assert_eq!(profile_target_dir(&["--profile", "fast"]), "fast");
+        assert_eq!(profile_target_dir(&["--profile=small"]), "small");
+    }
 }

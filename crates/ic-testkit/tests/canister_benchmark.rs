@@ -1,13 +1,21 @@
 use candid::Principal;
 use ic_testkit::{
-    artifacts::{build_wasm_canisters, read_wasm, wasm_path, workspace_root_for},
+    artifacts::{
+        WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached, read_wasm, wasm_path,
+        workspace_root_for,
+    },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
     pic::{InstallSpec, PocketIc, StandaloneCanisterFixture},
 };
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{Arc, Barrier},
+    thread,
+};
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
@@ -23,8 +31,43 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     }
     let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");
 
-    build_wasm_canisters(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], &[], &[]);
-    assert!(wasm_path(&target_dir, PERF_PROBE_PACKAGE, "debug").is_file());
+    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug");
+    let first = build_wasm_canisters_cached(&spec).expect("first exact Wasm build");
+    assert!(matches!(first, WasmBuildOutcome::Built(_)));
+    assert!(first.record().timings().cargo_build().is_some());
+
+    let reused = build_wasm_canisters_cached(&spec).expect("reuse exact Wasm build");
+    assert!(matches!(reused, WasmBuildOutcome::Reused(_)));
+    assert_eq!(first.record().fingerprint(), reused.record().fingerprint());
+    assert!(reused.record().timings().cargo_build().is_none());
+
+    let wasm_path = wasm_path(&target_dir, PERF_PROBE_PACKAGE, "debug");
+    fs::write(&wasm_path, b"tampered").expect("overwrite cached Wasm artifact");
+    let repaired = build_wasm_canisters_cached(&spec)
+        .expect("artifact content mismatch should invalidate Wasm build");
+    assert!(matches!(repaired, WasmBuildOutcome::Reused(_)));
+    assert_ne!(
+        fs::read(&wasm_path).expect("read repaired Wasm artifact"),
+        b"tampered",
+    );
+
+    let changed_environment = spec
+        .clone()
+        .with_extra_env(&[("IC_TESTKIT_CACHE_PROBE", "changed")]);
+    let rebuilt = build_wasm_canisters_cached(&changed_environment)
+        .expect("declared environment should invalidate Wasm build");
+    assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
+    assert_ne!(first.record().fingerprint(), rebuilt.record().fingerprint());
+    assert_eq!(
+        first.record().input_digest(),
+        rebuilt.record().input_digest(),
+        "declared environment changes the build fingerprint, not source content",
+    );
+
+    let restored = build_wasm_canisters_cached(&spec)
+        .expect("original content-addressed artifact should remain reusable");
+    assert!(matches!(restored, WasmBuildOutcome::Reused(_)));
+    assert!(wasm_path.is_file());
 
     let wasm = read_wasm(&target_dir, PERF_PROBE_PACKAGE, "debug");
     let fixture =
@@ -76,6 +119,57 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     );
 
     fs::remove_dir_all(target_dir).expect("clean temp target dir");
+}
+
+#[test]
+fn exact_wasm_cache_coordinates_overlapping_builds() {
+    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    if !workspace
+        .join("canisters/test/perf_probe/Cargo.toml")
+        .is_file()
+    {
+        eprintln!("skipping exact Wasm cache test: fixture canister is not packaged");
+        return;
+    }
+    let target_dir = unique_temp_dir("ic-testkit-overlapping-wasm-cache-target");
+    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug");
+    let start = Arc::new(Barrier::new(3));
+
+    let workers = std::array::from_fn::<_, 2, _>(|_| {
+        let worker_spec = spec.clone();
+        let worker_start = Arc::clone(&start);
+        thread::spawn(move || {
+            worker_start.wait();
+            build_wasm_canisters_cached(&worker_spec)
+                .expect("coordinated exact Wasm build should succeed")
+        })
+    });
+    start.wait();
+
+    let outcomes = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("Wasm build worker should not panic"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, WasmBuildOutcome::Built(_)))
+            .count(),
+        1,
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, WasmBuildOutcome::Reused(_)))
+            .count(),
+        1,
+    );
+    assert_eq!(
+        outcomes[0].record().fingerprint(),
+        outcomes[1].record().fingerprint(),
+    );
+
+    fs::remove_dir_all(target_dir).expect("clean overlapping cache target dir");
 }
 
 fn unique_temp_dir(name: &str) -> PathBuf {

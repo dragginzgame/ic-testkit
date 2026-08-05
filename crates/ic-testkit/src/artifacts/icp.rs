@@ -1,23 +1,75 @@
-use std::{fs, io, path::Path, time::SystemTime};
+use std::{ffi::OsString, fs, io, path::Path};
 
-/// Newest modification time captured across a set of watched input trees.
-#[derive(Clone, Copy, Debug)]
+use super::digest::{InputDigest, digest_labeled_paths, write_atomic};
+
+const WATCHED_INPUT_STAMP_VERSION: &str = "ic-testkit-watched-input-v1";
+
+/// Exact content digest captured across a set of watched input trees.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WatchedInputSnapshot {
-    newest_input_mtime: SystemTime,
+    digest: InputDigest,
 }
 
 impl WatchedInputSnapshot {
-    /// Recursively capture the newest modification time across all watched inputs.
+    /// Recursively hash the paths and contents of all watched inputs.
+    ///
+    /// File timestamps are deliberately excluded, so the same content produces
+    /// the same digest after a Git checkout or CI cache restore.
     pub fn capture(workspace_root: &Path, watched_relative_paths: &[&str]) -> io::Result<Self> {
+        let paths = watched_relative_paths
+            .iter()
+            .map(|relative| ((*relative).into(), workspace_root.join(relative)))
+            .collect::<Vec<_>>();
         Ok(Self {
-            newest_input_mtime: newest_watched_input_mtime(workspace_root, watched_relative_paths)?,
+            digest: digest_labeled_paths("watched-inputs-v1", &paths, &[])?,
         })
     }
 
-    /// Check whether one artifact is at least as new as the captured inputs.
+    /// Return the exact content digest of the watched inputs.
+    #[must_use]
+    pub const fn digest(self) -> InputDigest {
+        self.digest
+    }
+
+    /// Check whether one artifact carries a matching exact-input stamp.
+    ///
+    /// An existing artifact without a stamp is not considered fresh. Call
+    /// [`mark_artifact_fresh`](Self::mark_artifact_fresh) only after the
+    /// artifact has been produced successfully from this snapshot.
     pub fn artifact_is_fresh(self, artifact_path: &Path) -> io::Result<bool> {
-        let artifact_mtime = fs::metadata(artifact_path)?.modified()?;
-        Ok(self.newest_input_mtime <= artifact_mtime)
+        let metadata = fs::metadata(artifact_path)?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Ok(false);
+        }
+
+        match fs::read_to_string(watched_input_stamp_path(artifact_path)) {
+            Ok(stamp) => Ok(stamp == self.stamp_contents()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Atomically record that an existing artifact was built from this input snapshot.
+    pub fn mark_artifact_fresh(self, artifact_path: &Path) -> io::Result<()> {
+        let metadata = fs::metadata(artifact_path)?;
+        if !metadata.is_file() || metadata.len() == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "cannot stamp missing or empty artifact: {}",
+                    artifact_path.display()
+                ),
+            ));
+        }
+
+        write_atomic(
+            &watched_input_stamp_path(artifact_path),
+            self.stamp_contents().as_bytes(),
+        )
+    }
+
+    fn stamp_contents(self) -> String {
+        format!("{WATCHED_INPUT_STAMP_VERSION}\nsha256:{}\n", self.digest)
     }
 }
 
@@ -53,74 +105,65 @@ pub fn icp_artifact_ready_with_snapshot(
     }
 }
 
-// Walk watched files and directories and return the newest modification time.
-fn newest_watched_input_mtime(
-    workspace_root: &Path,
-    watched_relative_paths: &[&str],
-) -> io::Result<SystemTime> {
-    let mut newest = SystemTime::UNIX_EPOCH;
-
-    for relative in watched_relative_paths {
-        let path = workspace_root.join(relative);
-        newest = newest.max(newest_path_mtime(&path)?);
-    }
-
-    Ok(newest)
-}
-
-// Recursively compute the newest modification time under one watched path.
-fn newest_path_mtime(path: &Path) -> io::Result<SystemTime> {
-    let metadata = fs::metadata(path)?;
-    let mut newest = metadata.modified()?;
-
-    if metadata.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            newest = newest.max(newest_path_mtime(&entry.path())?);
-        }
-    }
-
-    Ok(newest)
+fn watched_input_stamp_path(artifact_path: &Path) -> std::path::PathBuf {
+    let mut stamp_name = artifact_path
+        .file_name()
+        .map_or_else(|| OsString::from("artifact"), OsString::from);
+    stamp_name.push(".ic-testkit-input");
+    artifact_path.with_file_name(stamp_name)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::WatchedInputSnapshot;
     use super::icp_artifact_ready_for_build;
     use std::{
         fs,
         path::PathBuf,
-        thread::sleep,
-        time::Duration,
+        sync::atomic::{AtomicU64, Ordering},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn temp_workspace() -> PathBuf {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("system time before epoch")
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("ic-testkit-icp-artifact-test-{unique}"));
+        let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("ic-testkit-icp-artifact-test-{unique}-{sequence}"));
         fs::create_dir_all(path.join(".icp/local/canisters/counter"))
             .expect("create temp workspace");
         path
     }
 
     #[test]
-    fn icp_artifact_ready_requires_fresh_nonempty_artifact() {
+    fn icp_artifact_ready_requires_matching_content_stamp() {
         let workspace_root = temp_workspace();
         let artifact_relative_path = ".icp/local/canisters/counter/counter.wasm.gz";
         let artifact_path = workspace_root.join(artifact_relative_path);
         fs::write(workspace_root.join("Cargo.toml"), "workspace").expect("write watched input");
-        sleep(Duration::from_millis(20));
         fs::write(&artifact_path, b"wasm").expect("write artifact");
 
+        assert!(!icp_artifact_ready_for_build(
+            &workspace_root,
+            artifact_relative_path,
+            &["Cargo.toml"],
+        ));
+
+        let snapshot = WatchedInputSnapshot::capture(&workspace_root, &["Cargo.toml"])
+            .expect("capture exact watched inputs");
+        snapshot
+            .mark_artifact_fresh(&artifact_path)
+            .expect("stamp artifact inputs");
         assert!(icp_artifact_ready_for_build(
             &workspace_root,
             artifact_relative_path,
             &["Cargo.toml"],
         ));
 
-        sleep(Duration::from_millis(20));
         fs::write(workspace_root.join("Cargo.toml"), "changed").expect("update watched input");
         assert!(!icp_artifact_ready_for_build(
             &workspace_root,
@@ -128,6 +171,31 @@ mod tests {
             &["Cargo.toml"],
         ));
 
+        let changed = WatchedInputSnapshot::capture(&workspace_root, &["Cargo.toml"])
+            .expect("capture changed watched inputs");
+        assert_ne!(snapshot.digest(), changed.digest());
+
         let _ = fs::remove_dir_all(workspace_root);
+    }
+
+    #[test]
+    fn watched_input_digest_ignores_checkout_root_and_input_order() {
+        let first_root = temp_workspace();
+        let second_root = temp_workspace();
+        for root in [&first_root, &second_root] {
+            fs::create_dir_all(root.join("src")).expect("create watched source directory");
+            fs::write(root.join("Cargo.toml"), "[workspace]").expect("write manifest input");
+            fs::write(root.join("src/lib.rs"), "pub fn value() -> u8 { 7 }")
+                .expect("write source input");
+        }
+
+        let first = WatchedInputSnapshot::capture(&first_root, &["Cargo.toml", "src"])
+            .expect("capture first checkout");
+        let second = WatchedInputSnapshot::capture(&second_root, &["src", "Cargo.toml"])
+            .expect("capture second checkout");
+        assert_eq!(first.digest(), second.digest());
+
+        let _ = fs::remove_dir_all(first_root);
+        let _ = fs::remove_dir_all(second_root);
     }
 }

@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-08-05 - Content-addressed Wasm builds
+
+### Added
+
+- Adds `WasmBuildSpec` and `build_wasm_canisters_cached`, which fingerprint a
+  package's local dependency closure, Cargo configuration and lockfile,
+  toolchain identity, target/profile, declared environment, and additional
+  inputs; coordinate builds with an output-scoped process lock; publish atomic
+  per-artifact stamps; and return typed `Built` or `Reused` outcomes.
+- Adds structured Wasm build errors and timings for lock wait, exact input
+  resolution, Cargo execution, and the complete operation.
+- Adds public `InputDigest` values and exact `WatchedInputSnapshot` artifact
+  stamps for deterministic freshness across Git checkouts, CI cache restores,
+  and filesystem timestamp differences.
+
+### Changed
+
+- Makes the existing `build_wasm_canisters` convenience function use the exact
+  cache while preserving its caller-selected package, profile, environment,
+  target-directory, and panic-on-failure interface.
+- Replaces mtime-only `WatchedInputSnapshot::artifact_is_fresh` behavior with
+  explicit content-stamp matching; callers mark an artifact only after a
+  successful build with `mark_artifact_fresh`.
+
 ## [0.3.3] - 2026-08-05 - Bounded standalone fixture reuse
 
 ### Added
