@@ -9,8 +9,9 @@ use std::{
 
 use candid::Principal;
 use ic_testkit::pic::{
-    CachedPocketIcBaseline, InstallSpec, PocketIc, PocketIcBuilder, StandaloneCanisterFixture,
-    prelude::*, restore_or_rebuild_cached_pocket_ic_baseline,
+    CachedPocketIcBaseline, CachedStandaloneCanisterFixturePool, InstallSpec, PocketIc,
+    PocketIcBuilder, StandaloneCanisterFixture, prelude::*,
+    restore_or_rebuild_cached_pocket_ic_baseline,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -19,6 +20,12 @@ const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
 
 static BASELINE_A: Mutex<Option<CachedPocketIcBaseline<()>>> = Mutex::new(None);
 static BASELINE_B: Mutex<Option<CachedPocketIcBaseline<()>>> = Mutex::new(None);
+static STANDALONE_RESTORE_POOL: CachedStandaloneCanisterFixturePool<1> =
+    CachedStandaloneCanisterFixturePool::new();
+static STANDALONE_OVERLAP_POOL: CachedStandaloneCanisterFixturePool<2> =
+    CachedStandaloneCanisterFixturePool::new();
+static STANDALONE_CAPACITY_POOL: CachedStandaloneCanisterFixturePool<1> =
+    CachedStandaloneCanisterFixturePool::new();
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -152,6 +159,121 @@ fn cached_baseline_guards_are_scoped_to_their_own_slots() {
     join_result.expect("cached-baseline concurrency worker should exit cleanly");
 }
 
+#[test]
+fn bounded_standalone_pool_restores_and_reuses_one_slot() {
+    let (fixture, cache_hit) = STANDALONE_RESTORE_POOL
+        .acquire(build_empty_standalone_fixture)
+        .expect("first standalone pool fixture should capture");
+    assert!(!cache_hit, "first lease should build a pool slot");
+    let first_instance = fixture.pocket_ic().instance_id();
+    let canister_id = fixture.canister_id();
+    fixture
+        .pocket_ic()
+        .uninstall_canister(canister_id, None)
+        .expect("test should mutate the leased canister");
+    assert!(
+        fixture
+            .pocket_ic()
+            .canister_status(canister_id, None)
+            .expect("mutated canister status should remain readable")
+            .module_hash
+            .is_none(),
+        "test mutation should remove the installed module",
+    );
+    drop(fixture);
+
+    let (fixture, cache_hit) = STANDALONE_RESTORE_POOL
+        .acquire(build_empty_standalone_fixture)
+        .expect("cached standalone pool fixture should restore");
+    assert!(cache_hit, "second lease should restore a populated slot");
+    assert_eq!(fixture.pocket_ic().instance_id(), first_instance);
+    assert!(
+        fixture
+            .pocket_ic()
+            .canister_status(canister_id, None)
+            .expect("restored canister status should remain readable")
+            .module_hash
+            .is_some(),
+        "snapshot restore should recover the installed module",
+    );
+    drop(fixture);
+
+    let (fixture, cache_hit) = STANDALONE_RESTORE_POOL
+        .acquire(build_empty_standalone_fixture)
+        .expect("standalone pool snapshot should remain reusable");
+    assert!(cache_hit, "third lease should reuse the same pool slot");
+    assert_eq!(fixture.pocket_ic().instance_id(), first_instance);
+}
+
+#[test]
+fn bounded_standalone_pool_allows_capacity_scoped_overlap() {
+    let (first, first_cache_hit) = STANDALONE_OVERLAP_POOL
+        .acquire(build_empty_standalone_fixture)
+        .expect("first overlapping fixture should capture");
+    assert!(!first_cache_hit, "first pool slot should be new");
+
+    let (ready_tx, ready_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        let (second, second_cache_hit) = STANDALONE_OVERLAP_POOL
+            .acquire(build_empty_standalone_fixture)
+            .expect("second overlapping fixture should capture");
+        ready_tx
+            .send((second.pocket_ic().instance_id(), second_cache_hit))
+            .expect("overlap result receiver should remain live");
+    });
+
+    let (second_instance, second_cache_hit) = ready_rx
+        .recv_timeout(OPERATION_TIMEOUT)
+        .expect("second pool slot should not wait for the first lease");
+    assert!(!second_cache_hit, "second pool slot should be new");
+    assert_ne!(first.pocket_ic().instance_id(), second_instance);
+
+    drop(first);
+    worker.join().expect("overlap worker should exit cleanly");
+}
+
+#[test]
+fn bounded_standalone_pool_waits_when_capacity_is_exhausted() {
+    let (first, first_cache_hit) = STANDALONE_CAPACITY_POOL
+        .acquire(build_empty_standalone_fixture)
+        .expect("first capacity-limited fixture should capture");
+    assert!(!first_cache_hit, "first pool slot should be new");
+    let first_instance = first.pocket_ic().instance_id();
+
+    let (attempting_tx, attempting_rx) = mpsc::channel();
+    let (acquired_tx, acquired_rx) = mpsc::channel();
+    let worker = thread::spawn(move || {
+        attempting_tx
+            .send(())
+            .expect("capacity test coordinator should remain live");
+        let (second, second_cache_hit) = STANDALONE_CAPACITY_POOL
+            .acquire(build_empty_standalone_fixture)
+            .expect("waiting fixture should restore after release");
+        acquired_tx
+            .send((second.pocket_ic().instance_id(), second_cache_hit))
+            .expect("capacity result receiver should remain live");
+    });
+
+    attempting_rx
+        .recv_timeout(OPERATION_TIMEOUT)
+        .expect("worker should begin the capacity-limited acquisition");
+    match acquired_rx.recv_timeout(Duration::from_millis(100)) {
+        Err(RecvTimeoutError::Timeout) => {}
+        Ok(_) => panic!("a second lease must not exceed pool capacity"),
+        Err(RecvTimeoutError::Disconnected) => {
+            panic!("capacity worker exited before the first lease was released")
+        }
+    }
+
+    drop(first);
+    let (second_instance, second_cache_hit) = acquired_rx
+        .recv_timeout(OPERATION_TIMEOUT)
+        .expect("waiting acquisition should proceed after release");
+    assert!(second_cache_hit, "released pool slot should be restored");
+    assert_eq!(second_instance, first_instance);
+    worker.join().expect("capacity worker should exit cleanly");
+}
+
 fn build_empty_cached_baseline() -> CachedPocketIcBaseline<()> {
     CachedPocketIcBaseline::capture(
         PocketIc::new(),
@@ -160,6 +282,13 @@ fn build_empty_cached_baseline() -> CachedPocketIcBaseline<()> {
         (),
     )
     .expect("empty cached baseline should capture")
+}
+
+fn build_empty_standalone_fixture() -> StandaloneCanisterFixture {
+    StandaloneCanisterFixture::install(
+        PocketIc::new(),
+        InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
+    )
 }
 
 fn assert_two_instances_overlap<F>(build: F)

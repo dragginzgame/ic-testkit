@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-05 - Bounded standalone fixture reuse
+
+### Added
+
+- Adds `CachedStandaloneCanisterFixturePool`, a caller-owned fixed-capacity
+  pool that restores an independent canister snapshot per slot. Heavy suites
+  can reuse one fixture recipe with bounded parallelism while keeping tests
+  that depend on fresh PocketIC-wide state on directly owned fixtures.
+
 ## [0.3.2] - 2026-08-04 - Documentation refresh
 
 ### Changed

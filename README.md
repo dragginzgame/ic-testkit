@@ -47,7 +47,7 @@ The crate supports Rust 1.88 and uses PocketIC 15.
 | Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
 | Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
 | Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
-| Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline` | Ordered transactional capture, explicit restore funding, scoped caching |
+| Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline`, `CachedStandaloneCanisterFixturePool` | Ordered transactional capture, explicit restore funding, scoped caching |
 | Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
 | Artifacts | `artifacts` | Wasm build paths, freshness checks, and dedicated target directories |
@@ -265,6 +265,35 @@ if cache_hit {
 
 The returned guard retains exclusive access to that slot until dropped. It
 does not block fresh PocketIC instances or baselines stored in other slots.
+
+Heavy suites that need bounded parallelism can own a fixed-capacity pool of
+independent standalone fixtures. Every populated slot has its own PocketIC
+instance and baseline snapshot; a lease restores only that slot and dereferences
+to the ordinary `StandaloneCanisterFixture` API:
+
+```rust,no_run
+use ic_testkit::pic::CachedStandaloneCanisterFixturePool;
+
+static POOL: CachedStandaloneCanisterFixturePool<8> =
+    CachedStandaloneCanisterFixturePool::new();
+
+let (fixture, cache_hit) = POOL.acquire(build_fixture)?;
+let value: u64 = fixture.query_candid("get", ())?;
+# let _ = (value, cache_hit);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+One pool must represent one fixture recipe. Pass a builder with the same Wasm,
+init arguments, topology, and seeded state on every acquisition; use a separate
+pool for a different recipe. Setup performed by the builder is included in the
+captured baseline.
+
+The caller still chooses capacity and which tests may reuse the baseline. A
+snapshot restores the installed canister, not the complete PocketIC instance:
+instance time, other canisters, and cycle changes outside the selected restore
+funding policy may persist. Keep installation, upgrade, topology, teardown,
+time-sensitive, cycle-accounting, and snapshot tests on fresh directly owned
+fixtures.
 
 ## Diagnostics and time
 

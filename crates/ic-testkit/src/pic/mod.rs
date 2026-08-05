@@ -19,6 +19,7 @@ mod errors;
 mod lifecycle;
 mod snapshot;
 mod standalone;
+mod standalone_pool;
 mod startup;
 mod time;
 mod transport;
@@ -39,6 +40,9 @@ pub use snapshot::{
     SnapshotCleanupFailure, SnapshotRestoreFunding,
 };
 pub use standalone::StandaloneCanisterFixture;
+pub use standalone_pool::{
+    CachedStandaloneCanisterFixtureGuard, CachedStandaloneCanisterFixturePool,
+};
 pub use startup::{PocketIcBuilderExt, PocketIcStartupError};
 pub use time::PocketIcTimeExt;
 
