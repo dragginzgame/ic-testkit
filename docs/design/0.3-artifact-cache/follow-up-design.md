@@ -2,9 +2,11 @@
 
 ## Status
 
-Proposed after the released `0.3.5` cache-lifecycle work. This document
-consolidates concrete Canic and IcyDB feedback; it does not retroactively
-expand the `0.3.5` contract.
+Proposed after the released `0.3.5` cache-lifecycle work and updated through
+`0.4.2`. This document consolidates concrete Canic and IcyDB feedback. Complete
+Cargo configuration discovery, in-lock retention, and detailed input timings
+are now delivered; the broader transactional artifact-set work remains
+proposed.
 
 ## Consumer evidence
 
@@ -31,9 +33,9 @@ These are generic coordination problems. `ic-testkit` should not add separate
 | --- | --- | --- |
 | Canic external artifact-set cache | Transactional artifact-set cache | One generic core |
 | IcyDB post-link transform cache | Transactional artifact-set cache | One generic core |
-| Canic and IcyDB retention | Cache lifecycle | Delivered for Wasm targets in `0.3.5`; reuse in the generic core |
+| Canic and IcyDB retention | Cache lifecycle | Delivered for Wasm targets in `0.3.5`, with optional in-lock build maintenance in `0.4.2`; reuse in the generic core |
 | Canic narrower invalidation | Exact Cargo input resolution and change reporting | Correctness-first follow-up |
-| IcyDB Cargo-home configuration | Exact Cargo input resolution | Correctness fix before further narrowing |
+| IcyDB Cargo-home configuration | Exact Cargo input resolution | Delivered generically in `0.4.2`, including ancestor discovery and recursive includes |
 | IcyDB shared Cargo incrementals | Build workspace strategy | Separate opt-in layer, never cache truth |
 | Canic fixture recipe validation | Typed pooled-fixture acquisition | Combine with fallible construction |
 | IcyDB fallible fixture construction | Typed pooled-fixture acquisition | Combine with recipe validation |
@@ -52,7 +54,8 @@ The current Cargo cache hashes the contents of a conservative local package
 closure. It therefore detects content changes deterministically, but a changed
 README or test-only file can still invalidate a Wasm build.
 
-Future input resolution should retain a labeled per-file manifest and expose
+Configuration resolution now covers Cargo's complete hierarchical and include
+boundary. Future input resolution should retain a labeled per-file manifest and expose
 added, removed, and content-changed paths. That makes invalidation explainable
 without weakening it. A file may be excluded only when Cargo semantics or an
 explicit build recipe prove that it cannot affect the output.
@@ -198,7 +201,8 @@ presenting named snapshots as complete simulator isolation.
 
 ## Delivery order
 
-1. Correct Cargo configuration discovery and add exact per-path change reports.
+1. ~~Correct Cargo configuration discovery~~ (delivered in `0.4.2`), then add
+   exact per-path change reports.
 2. Extract one internal input/manifest/lock/staging/retention implementation
    under the existing Wasm and watched-input APIs.
 3. Expose the transactional artifact-set API and validate it with both a

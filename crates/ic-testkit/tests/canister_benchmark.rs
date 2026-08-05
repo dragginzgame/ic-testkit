@@ -1,8 +1,8 @@
 use candid::Principal;
 use ic_testkit::{
     artifacts::{
-        WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached, read_wasm, wasm_path,
-        workspace_root_for,
+        WasmBuildCacheMaintenance, WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
+        build_wasm_canisters_cached, read_wasm, wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -31,10 +31,12 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     }
     let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");
 
-    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug");
+    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
+        .with_prune_policy(WasmBuildCachePrunePolicy::new());
     let first = build_wasm_canisters_cached(&spec).expect("first exact Wasm build");
     assert!(matches!(first, WasmBuildOutcome::Built(_)));
     assert!(first.record().timings().cargo_build().is_some());
+    assert_cache_observability(&first);
 
     let reused = build_wasm_canisters_cached(&spec).expect("reuse exact Wasm build");
     assert!(matches!(reused, WasmBuildOutcome::Reused(_)));
@@ -179,4 +181,19 @@ fn unique_temp_dir(name: &str) -> PathBuf {
     }
     fs::create_dir_all(&root).expect("create temp dir");
     root
+}
+
+fn assert_cache_observability(outcome: &WasmBuildOutcome) {
+    assert!(matches!(
+        outcome.record().maintenance(),
+        Some(WasmBuildCacheMaintenance::Pruned(_))
+    ));
+    let timings = outcome.record().timings();
+    let input = timings.input_resolution_detail();
+    assert_eq!(timings.input_resolution(), input.total());
+    assert!(input.total() >= input.tool_identity());
+    assert!(input.total() >= input.cargo_metadata());
+    assert!(input.total() >= input.input_discovery());
+    assert!(input.total() >= input.content_hashing());
+    assert!(timings.cache_maintenance().is_some());
 }

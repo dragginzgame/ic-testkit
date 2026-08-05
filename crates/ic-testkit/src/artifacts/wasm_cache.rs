@@ -9,6 +9,7 @@ use std::{
     process::{Command, ExitStatus, Output},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use toml::Value as TomlValue;
 
 use super::{
     digest::{
@@ -53,6 +54,7 @@ pub struct WasmBuildSpec {
     target: String,
     cargo_program: OsString,
     rustc_program: OsString,
+    prune_policy: Option<WasmBuildCachePrunePolicy>,
 }
 
 /// Whether a cacheable Wasm build ran Cargo or reused exact matching artifacts.
@@ -71,15 +73,40 @@ pub struct WasmBuildRecord {
     input_digest: InputDigest,
     artifacts: Vec<PathBuf>,
     timings: WasmBuildTimings,
+    maintenance: Option<WasmBuildCacheMaintenance>,
 }
 
 /// Timings for cache coordination, input resolution, and Cargo execution.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WasmBuildTimings {
     lock_wait: Duration,
-    input_resolution: Duration,
+    input_resolution: WasmInputResolutionTimings,
     cargo_build: Option<Duration>,
+    cache_maintenance: Option<Duration>,
     total: Duration,
+}
+
+/// Detailed timings for exact Wasm build-input resolution.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WasmInputResolutionTimings {
+    tool_identity: Duration,
+    cargo_metadata: Duration,
+    input_discovery: Duration,
+    content_hashing: Duration,
+    total: Duration,
+}
+
+/// Nonfatal cache maintenance attempted as part of a Wasm build acquisition.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WasmBuildCacheMaintenance {
+    /// Configured retention completed under the existing build lock.
+    Pruned(WasmBuildCachePruneReport),
+    /// Configured retention failed after the requested artifacts were ready.
+    PruneFailed {
+        /// Cache error rendered without invalidating the successful build.
+        message: String,
+    },
 }
 
 /// Caller-selected retention limits for content-addressed Cargo target directories.
@@ -142,6 +169,8 @@ pub enum WasmBuildError {
     },
     /// Cargo metadata did not contain the expected package graph.
     InvalidMetadata { message: String },
+    /// A discovered Cargo configuration could not be interpreted exactly.
+    InvalidCargoConfiguration { path: PathBuf, message: String },
     /// Cargo succeeded without producing every declared Wasm artifact.
     MissingArtifacts { paths: Vec<PathBuf> },
     /// Declared inputs changed while Cargo was building.
@@ -184,6 +213,7 @@ impl WasmBuildSpec {
             target: DEFAULT_TARGET.to_owned(),
             cargo_program: std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()),
             rustc_program: std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()),
+            prune_policy: None,
         }
     }
 
@@ -246,6 +276,17 @@ impl WasmBuildSpec {
         self
     }
 
+    /// Apply cache retention under the build operation's existing process lock.
+    ///
+    /// Maintenance is best-effort: its structured result is attached to the
+    /// successful build record and cannot turn ready artifacts into a build
+    /// failure. The active fingerprint is protected from this pruning pass.
+    #[must_use]
+    pub const fn with_prune_policy(mut self, policy: WasmBuildCachePrunePolicy) -> Self {
+        self.prune_policy = Some(policy);
+        self
+    }
+
     /// Workspace containing the selected Cargo packages.
     #[must_use]
     pub fn workspace_root(&self) -> &Path {
@@ -305,6 +346,32 @@ impl WasmBuildRecord {
     pub const fn timings(&self) -> WasmBuildTimings {
         self.timings
     }
+
+    /// Cache maintenance attempted under the build lock, when configured.
+    #[must_use]
+    pub const fn maintenance(&self) -> Option<&WasmBuildCacheMaintenance> {
+        self.maintenance.as_ref()
+    }
+}
+
+impl WasmBuildCacheMaintenance {
+    /// Successful pruning report, or `None` when maintenance failed.
+    #[must_use]
+    pub const fn prune_report(&self) -> Option<WasmBuildCachePruneReport> {
+        match self {
+            Self::Pruned(report) => Some(*report),
+            Self::PruneFailed { .. } => None,
+        }
+    }
+
+    /// Rendered maintenance failure, or `None` when pruning succeeded.
+    #[must_use]
+    pub fn failure_message(&self) -> Option<&str> {
+        match self {
+            Self::Pruned(_) => None,
+            Self::PruneFailed { message } => Some(message),
+        }
+    }
 }
 
 impl WasmBuildTimings {
@@ -317,6 +384,12 @@ impl WasmBuildTimings {
     /// Time spent resolving toolchain identity, Cargo metadata, and exact inputs.
     #[must_use]
     pub const fn input_resolution(self) -> Duration {
+        self.input_resolution.total
+    }
+
+    /// Detailed tool, metadata, discovery, and hashing timings.
+    #[must_use]
+    pub const fn input_resolution_detail(self) -> WasmInputResolutionTimings {
         self.input_resolution
     }
 
@@ -326,10 +399,56 @@ impl WasmBuildTimings {
         self.cargo_build
     }
 
+    /// Time spent on configured best-effort cache maintenance.
+    #[must_use]
+    pub const fn cache_maintenance(self) -> Option<Duration> {
+        self.cache_maintenance
+    }
+
     /// Total operation duration, including lock coordination.
     #[must_use]
     pub const fn total(self) -> Duration {
         self.total
+    }
+}
+
+impl WasmInputResolutionTimings {
+    /// Time spent reading Cargo and rustc identities.
+    #[must_use]
+    pub const fn tool_identity(self) -> Duration {
+        self.tool_identity
+    }
+
+    /// Time spent running and decoding `cargo metadata`.
+    #[must_use]
+    pub const fn cargo_metadata(self) -> Duration {
+        self.cargo_metadata
+    }
+
+    /// Time spent resolving packages, configuration, and watched paths.
+    #[must_use]
+    pub const fn input_discovery(self) -> Duration {
+        self.input_discovery
+    }
+
+    /// Time spent reading and hashing exact input contents.
+    #[must_use]
+    pub const fn content_hashing(self) -> Duration {
+        self.content_hashing
+    }
+
+    /// Complete input-resolution duration.
+    #[must_use]
+    pub const fn total(self) -> Duration {
+        self.total
+    }
+
+    const fn include(&mut self, other: Self) {
+        self.tool_identity = self.tool_identity.saturating_add(other.tool_identity);
+        self.cargo_metadata = self.cargo_metadata.saturating_add(other.cargo_metadata);
+        self.input_discovery = self.input_discovery.saturating_add(other.input_discovery);
+        self.content_hashing = self.content_hashing.saturating_add(other.content_hashing);
+        self.total = self.total.saturating_add(other.total);
     }
 }
 
@@ -422,9 +541,8 @@ pub fn build_wasm_canisters_cached(
     let (_lock_file, lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
 
-    let input_started = Instant::now();
     let resolved = build_fingerprint(spec)?;
-    let mut input_resolution = input_started.elapsed();
+    let mut input_resolution = resolved.timings;
     let fingerprint = resolved.fingerprint;
     let artifacts = expected_artifacts(spec, &spec.target_dir);
     let build_target_dir = spec
@@ -434,34 +552,38 @@ pub fn build_wasm_canisters_cached(
 
     if artifact_set_matches(&artifacts, fingerprint) {
         record_cache_entry_use_if_present(&build_target_dir)?;
-        return Ok(WasmBuildOutcome::Reused(WasmBuildRecord {
-            fingerprint,
-            input_digest: resolved.input_digest,
-            artifacts,
-            timings: WasmBuildTimings {
+        return Ok(WasmBuildOutcome::Reused(complete_build_record(
+            spec,
+            BuildRecordInput {
+                fingerprint,
+                input_digest: resolved.input_digest,
+                artifacts,
                 lock_wait,
                 input_resolution,
                 cargo_build: None,
-                total: total_started.elapsed(),
+                active_entry: &build_target_dir,
             },
-        }));
+            total_started,
+        )));
     }
 
     let cached_artifacts = expected_artifacts(spec, &build_target_dir);
     if artifact_set_matches(&cached_artifacts, fingerprint) {
         materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
         record_cache_entry_use(&build_target_dir)?;
-        return Ok(WasmBuildOutcome::Reused(WasmBuildRecord {
-            fingerprint,
-            input_digest: resolved.input_digest,
-            artifacts,
-            timings: WasmBuildTimings {
+        return Ok(WasmBuildOutcome::Reused(complete_build_record(
+            spec,
+            BuildRecordInput {
+                fingerprint,
+                input_digest: resolved.input_digest,
+                artifacts,
                 lock_wait,
                 input_resolution,
                 cargo_build: None,
-                total: total_started.elapsed(),
+                active_entry: &build_target_dir,
             },
-        }));
+            total_started,
+        )));
     }
 
     remove_directory_if_present(&build_target_dir)?;
@@ -479,9 +601,8 @@ pub fn build_wasm_canisters_cached(
             return Err(WasmBuildError::MissingArtifacts { paths: missing });
         }
 
-        let verification_started = Instant::now();
         let verified = build_fingerprint(spec)?;
-        input_resolution += verification_started.elapsed();
+        input_resolution.include(verified.timings);
         if fingerprint != verified.fingerprint {
             return Err(WasmBuildError::InputsChangedDuringBuild {
                 before: fingerprint,
@@ -493,17 +614,19 @@ pub fn build_wasm_canisters_cached(
         materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
         record_cache_entry_use(&build_target_dir)?;
 
-        Ok(WasmBuildOutcome::Built(WasmBuildRecord {
-            fingerprint,
-            input_digest: resolved.input_digest,
-            artifacts,
-            timings: WasmBuildTimings {
+        Ok(WasmBuildOutcome::Built(complete_build_record(
+            spec,
+            BuildRecordInput {
+                fingerprint,
+                input_digest: resolved.input_digest,
+                artifacts,
                 lock_wait,
                 input_resolution,
                 cargo_build: Some(cargo_build),
-                total: total_started.elapsed(),
+                active_entry: &build_target_dir,
             },
-        }))
+            total_started,
+        )))
     })();
     finish_fingerprint_build(build_result, incomplete_directory)
 }
@@ -522,6 +645,57 @@ pub fn prune_wasm_build_cache(
     let (_lock_file, _) = lock_wasm_build_cache(target_dir)?;
     ensure_cache_directory_tag(target_dir)?;
 
+    prune_wasm_build_cache_locked(target_dir, policy, None)
+}
+
+struct BuildRecordInput<'a> {
+    fingerprint: InputDigest,
+    input_digest: InputDigest,
+    artifacts: Vec<PathBuf>,
+    lock_wait: Duration,
+    input_resolution: WasmInputResolutionTimings,
+    cargo_build: Option<Duration>,
+    active_entry: &'a Path,
+}
+
+fn complete_build_record(
+    spec: &WasmBuildSpec,
+    input: BuildRecordInput<'_>,
+    total_started: Instant,
+) -> WasmBuildRecord {
+    let (maintenance, cache_maintenance) = spec.prune_policy.map_or((None, None), |policy| {
+        let started = Instant::now();
+        let result =
+            prune_wasm_build_cache_locked(&spec.target_dir, policy, Some(input.active_entry));
+        let elapsed = started.elapsed();
+        let maintenance = match result {
+            Ok(report) => WasmBuildCacheMaintenance::Pruned(report),
+            Err(error) => WasmBuildCacheMaintenance::PruneFailed {
+                message: error.to_string(),
+            },
+        };
+        (Some(maintenance), Some(elapsed))
+    });
+    WasmBuildRecord {
+        fingerprint: input.fingerprint,
+        input_digest: input.input_digest,
+        artifacts: input.artifacts,
+        timings: WasmBuildTimings {
+            lock_wait: input.lock_wait,
+            input_resolution: input.input_resolution,
+            cargo_build: input.cargo_build,
+            cache_maintenance,
+            total: total_started.elapsed(),
+        },
+        maintenance,
+    }
+}
+
+fn prune_wasm_build_cache_locked(
+    target_dir: &Path,
+    policy: WasmBuildCachePrunePolicy,
+    protected_entry: Option<&Path>,
+) -> Result<WasmBuildCachePruneReport, WasmBuildError> {
     let cache_root = target_dir.join(".ic-testkit/wasm-targets");
     let mut entries = cache_entries(&cache_root)?;
     let bytes_before = entries
@@ -539,7 +713,7 @@ pub fn prune_wasm_build_cache(
     if let Some(max_age) = policy.max_age {
         for entry in &mut entries {
             let age = now.duration_since(entry.last_used).unwrap_or_default();
-            if age > max_age {
+            if protected_entry != Some(entry.path.as_path()) && age > max_age {
                 remove_cache_entry(entry, &mut report)?;
             }
         }
@@ -554,6 +728,9 @@ pub fn prune_wasm_build_cache(
         for entry in &mut entries {
             if report.bytes_retained() <= max_size_bytes {
                 break;
+            }
+            if protected_entry == Some(entry.path.as_path()) {
+                continue;
             }
             remove_cache_entry(entry, &mut report)?;
         }
@@ -809,9 +986,12 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
 struct ResolvedFingerprint {
     fingerprint: InputDigest,
     input_digest: InputDigest,
+    timings: WasmInputResolutionTimings,
 }
 
 fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedFingerprint, WasmBuildError> {
+    let total_started = Instant::now();
+    let tool_started = Instant::now();
     let cargo_identity = command_identity(
         spec,
         WasmBuildPhase::CargoIdentity,
@@ -824,15 +1004,25 @@ fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedFingerprint, WasmBu
         .unwrap_or(&spec.rustc_program);
     let rustc_identity =
         command_identity(spec, WasmBuildPhase::RustcIdentity, rustc_program, &["-vV"])?;
+    let tool_identity = tool_started.elapsed();
+
+    let metadata_started = Instant::now();
     let metadata = cargo_metadata(spec)?;
+    let cargo_metadata = metadata_started.elapsed();
+
+    let discovery_started = Instant::now();
     let inputs = resolve_local_inputs(spec, &metadata)?;
     let exclusions = source_exclusions(spec, &inputs);
+    let input_discovery = discovery_started.elapsed();
+
+    let hashing_started = Instant::now();
     let input_digest = digest_labeled_paths("wasm-source-inputs-v1", &inputs, &exclusions)
         .map_err(|source| WasmBuildError::Io {
             operation: "hash Wasm build inputs",
             path: spec.workspace_root.clone(),
             source,
         })?;
+    let content_hashing = hashing_started.elapsed();
 
     let mut hasher = InputHasher::new(CACHE_FORMAT_VERSION);
     let mut packages = spec.packages.clone();
@@ -860,6 +1050,13 @@ fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedFingerprint, WasmBu
     Ok(ResolvedFingerprint {
         fingerprint: hasher.finish(),
         input_digest,
+        timings: WasmInputResolutionTimings {
+            tool_identity,
+            cargo_metadata,
+            input_discovery,
+            content_hashing,
+            total: total_started.elapsed(),
+        },
     })
 }
 
@@ -964,7 +1161,7 @@ fn resolve_local_inputs(
         .get("workspace_root")
         .and_then(Value::as_str)
         .map_or_else(|| spec.workspace_root.clone(), PathBuf::from);
-    let mut inputs = workspace_configuration_inputs(&workspace_root);
+    let mut inputs = workspace_configuration_inputs(spec, &workspace_root)?;
     append_package_inputs(&mut inputs, &packages, closure, &workspace_root)?;
     append_additional_inputs(&mut inputs, spec, &workspace_root);
     Ok(inputs)
@@ -1047,7 +1244,10 @@ fn metadata_dependencies(metadata: &Value) -> Result<HashMap<String, Vec<String>
     Ok(dependencies)
 }
 
-fn workspace_configuration_inputs(workspace_root: &Path) -> Vec<(PathBuf, PathBuf)> {
+fn workspace_configuration_inputs(
+    spec: &WasmBuildSpec,
+    workspace_root: &Path,
+) -> Result<Vec<(PathBuf, PathBuf)>, WasmBuildError> {
     let mut inputs = Vec::new();
     add_if_present(
         &mut inputs,
@@ -1061,16 +1261,6 @@ fn workspace_configuration_inputs(workspace_root: &Path) -> Vec<(PathBuf, PathBu
     );
     add_if_present(
         &mut inputs,
-        "workspace/.cargo/config.toml",
-        workspace_root.join(".cargo/config.toml"),
-    );
-    add_if_present(
-        &mut inputs,
-        "workspace/.cargo/config",
-        workspace_root.join(".cargo/config"),
-    );
-    add_if_present(
-        &mut inputs,
         "workspace/rust-toolchain.toml",
         workspace_root.join("rust-toolchain.toml"),
     );
@@ -1079,7 +1269,218 @@ fn workspace_configuration_inputs(workspace_root: &Path) -> Vec<(PathBuf, PathBu
         "workspace/rust-toolchain",
         workspace_root.join("rust-toolchain"),
     );
-    inputs
+    append_cargo_configuration_inputs(&mut inputs, spec, workspace_root)?;
+    Ok(inputs)
+}
+
+fn append_cargo_configuration_inputs(
+    inputs: &mut Vec<(PathBuf, PathBuf)>,
+    spec: &WasmBuildSpec,
+    workspace_root: &Path,
+) -> Result<(), WasmBuildError> {
+    let invocation_root =
+        spec.workspace_root
+            .canonicalize()
+            .map_err(|source| WasmBuildError::Io {
+                operation: "resolve Cargo invocation directory",
+                path: spec.workspace_root.clone(),
+                source,
+            })?;
+    let canonical_workspace =
+        workspace_root
+            .canonicalize()
+            .map_err(|source| WasmBuildError::Io {
+                operation: "resolve Cargo workspace directory",
+                path: workspace_root.to_owned(),
+                source,
+            })?;
+
+    let mut roots = invocation_root
+        .ancestors()
+        .filter_map(|directory| effective_cargo_config(&directory.join(".cargo")))
+        .collect::<Vec<_>>();
+    if let Some(cargo_home) = effective_cargo_home(spec, &invocation_root)
+        && let Some(config) = effective_cargo_config(&cargo_home)
+    {
+        roots.push(config);
+    }
+
+    let mut visited = BTreeSet::new();
+    for config in roots {
+        append_cargo_configuration_tree(
+            inputs,
+            &config,
+            &canonical_workspace,
+            &mut visited,
+            false,
+        )?;
+    }
+    Ok(())
+}
+
+fn effective_cargo_config(directory: &Path) -> Option<PathBuf> {
+    let extensionless = directory.join("config");
+    if extensionless.exists() {
+        return Some(extensionless);
+    }
+    let toml = directory.join("config.toml");
+    toml.exists().then_some(toml)
+}
+
+fn effective_cargo_home(spec: &WasmBuildSpec, invocation_root: &Path) -> Option<PathBuf> {
+    if let Some(cargo_home) = command_environment_value(spec, "CARGO_HOME") {
+        let cargo_home = PathBuf::from(cargo_home);
+        return Some(if cargo_home.is_absolute() {
+            cargo_home
+        } else {
+            invocation_root.join(cargo_home)
+        });
+    }
+
+    default_home_directory(spec).map(|home| {
+        let home = if home.is_absolute() {
+            home
+        } else {
+            invocation_root.join(home)
+        };
+        home.join(".cargo")
+    })
+}
+
+#[cfg(windows)]
+fn default_home_directory(spec: &WasmBuildSpec) -> Option<PathBuf> {
+    command_environment_value(spec, "USERPROFILE")
+        .or_else(|| command_environment_value(spec, "HOME"))
+        .map(PathBuf::from)
+}
+
+#[cfg(not(windows))]
+fn default_home_directory(spec: &WasmBuildSpec) -> Option<PathBuf> {
+    command_environment_value(spec, "HOME").map(PathBuf::from)
+}
+
+fn command_environment_value(spec: &WasmBuildSpec, name: &str) -> Option<OsString> {
+    spec.extra_env
+        .get(OsStr::new(name))
+        .cloned()
+        .or_else(|| std::env::var_os(name))
+}
+
+fn append_cargo_configuration_tree(
+    inputs: &mut Vec<(PathBuf, PathBuf)>,
+    config: &Path,
+    workspace_root: &Path,
+    visited: &mut BTreeSet<PathBuf>,
+    optional: bool,
+) -> Result<(), WasmBuildError> {
+    let canonical = match config.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(error) if optional && error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(WasmBuildError::Io {
+                operation: "resolve Cargo configuration",
+                path: config.to_owned(),
+                source,
+            });
+        }
+    };
+    if !visited.insert(canonical.clone()) {
+        return Ok(());
+    }
+
+    let contents = fs::read_to_string(&canonical).map_err(|source| WasmBuildError::Io {
+        operation: "read Cargo configuration",
+        path: canonical.clone(),
+        source,
+    })?;
+    let configuration = toml::from_str::<TomlValue>(&contents).map_err(|error| {
+        WasmBuildError::InvalidCargoConfiguration {
+            path: canonical.clone(),
+            message: error.to_string(),
+        }
+    })?;
+    inputs.push((
+        cargo_configuration_label(&canonical, workspace_root),
+        canonical.clone(),
+    ));
+
+    let Some(include) = configuration.get("include") else {
+        return Ok(());
+    };
+    let parent = canonical
+        .parent()
+        .ok_or_else(|| WasmBuildError::InvalidCargoConfiguration {
+            path: canonical.clone(),
+            message: "configuration path has no parent directory".to_owned(),
+        })?;
+    for (included, optional) in cargo_configuration_includes(include, &canonical)? {
+        let included = if included.is_absolute() {
+            included
+        } else {
+            parent.join(included)
+        };
+        append_cargo_configuration_tree(inputs, &included, workspace_root, visited, optional)?;
+    }
+    Ok(())
+}
+
+fn cargo_configuration_includes(
+    include: &TomlValue,
+    config: &Path,
+) -> Result<Vec<(PathBuf, bool)>, WasmBuildError> {
+    let values = match include {
+        TomlValue::Array(values) => values.as_slice(),
+        value => std::slice::from_ref(value),
+    };
+    values
+        .iter()
+        .map(|value| match value {
+            TomlValue::String(path) => Ok((PathBuf::from(path), false)),
+            TomlValue::Table(table) => {
+                let path = table
+                    .get("path")
+                    .and_then(TomlValue::as_str)
+                    .ok_or_else(|| {
+                        invalid_cargo_configuration(
+                            config,
+                            "Cargo configuration include table requires a string `path`",
+                        )
+                    })?;
+                let optional = table
+                    .get("optional")
+                    .map(|value| {
+                        value.as_bool().ok_or_else(|| {
+                            invalid_cargo_configuration(
+                                config,
+                                "Cargo configuration include `optional` must be a boolean",
+                            )
+                        })
+                    })
+                    .transpose()?
+                    .unwrap_or(false);
+                Ok((PathBuf::from(path), optional))
+            }
+            _ => Err(invalid_cargo_configuration(
+                config,
+                "Cargo configuration `include` must contain paths or include tables",
+            )),
+        })
+        .collect()
+}
+
+fn cargo_configuration_label(config: &Path, workspace_root: &Path) -> PathBuf {
+    if let Ok(relative) = config.strip_prefix(workspace_root) {
+        return PathBuf::from("cargo-config/workspace").join(relative);
+    }
+    let location = digest_bytes("cargo-config-location-v1", &os_bytes(config.as_os_str()));
+    PathBuf::from("cargo-config/external").join(location.to_hex())
+}
+
+fn invalid_cargo_configuration(path: &Path, message: &str) -> WasmBuildError {
+    WasmBuildError::InvalidCargoConfiguration {
+        path: path.to_owned(),
+        message: message.to_owned(),
+    }
 }
 
 fn append_package_inputs(
@@ -1409,6 +1810,11 @@ impl std::fmt::Display for WasmBuildError {
             Self::InvalidMetadata { message } => {
                 write!(formatter, "invalid Cargo metadata: {message}")
             }
+            Self::InvalidCargoConfiguration { path, message } => write!(
+                formatter,
+                "invalid Cargo configuration at {}: {message}",
+                path.display(),
+            ),
             Self::MissingArtifacts { paths } => write!(
                 formatter,
                 "cargo build succeeded without producing: {}",
@@ -1450,11 +1856,13 @@ impl std::error::Error for WasmBuildError {
 mod tests {
     use super::{
         CACHE_DIRECTORY_TAG_SIGNATURE, IncompleteBuildDirectory, WasmBuildCachePrunePolicy,
-        WasmBuildError, WasmBuildOutcome, WasmBuildSpec, directory_logical_size,
-        ensure_cache_directory_tag, finish_fingerprint_build, metadata_arguments,
-        prune_wasm_build_cache, validate_spec, write_last_used,
+        WasmBuildError, WasmBuildOutcome, WasmBuildSpec, append_cargo_configuration_inputs,
+        directory_logical_size, ensure_cache_directory_tag, finish_fingerprint_build,
+        metadata_arguments, prune_wasm_build_cache, prune_wasm_build_cache_locked, validate_spec,
+        write_last_used,
     };
     use std::{
+        collections::BTreeSet,
         ffi::OsString,
         fs,
         path::{Path, PathBuf},
@@ -1573,6 +1981,120 @@ mod tests {
         assert!(!middle.exists());
         assert!(newest.exists());
         fs::remove_dir_all(target_dir).expect("remove size-pruning test directory");
+    }
+
+    #[test]
+    fn in_build_pruning_protects_the_active_fingerprint() {
+        let target_dir = unique_temp_directory("protected-pruning");
+        let cache_root = target_dir.join(".ic-testkit/wasm-targets");
+        let stale = create_cache_entry(&cache_root, 'a', 10, UNIX_EPOCH + Duration::from_secs(1));
+        let active = create_cache_entry(&cache_root, 'b', 10, UNIX_EPOCH + Duration::from_secs(2));
+
+        let report = prune_wasm_build_cache_locked(
+            &target_dir,
+            WasmBuildCachePrunePolicy::new()
+                .with_max_age(Duration::ZERO)
+                .with_max_size_bytes(0),
+            Some(&active),
+        )
+        .expect("prune while protecting active cache entry");
+
+        assert_eq!(report.entries_scanned(), 2);
+        assert_eq!(report.entries_removed(), 1);
+        assert!(!stale.exists());
+        assert!(active.exists());
+        assert!(report.bytes_retained() > 0);
+        fs::remove_dir_all(target_dir).expect("remove protected-pruning test directory");
+    }
+
+    #[test]
+    fn cargo_configuration_discovery_matches_cargo_search_and_include_rules() {
+        let root = unique_temp_directory("cargo-configuration-discovery");
+        let workspace = root.join("workspace");
+        let workspace_cargo = workspace.join(".cargo");
+        let ancestor_cargo = root.join(".cargo");
+        let cargo_home = root.join("cargo-home");
+        fs::create_dir_all(&workspace_cargo).expect("create workspace Cargo directory");
+        fs::create_dir_all(&ancestor_cargo).expect("create ancestor Cargo directory");
+        fs::create_dir_all(&cargo_home).expect("create Cargo home");
+
+        fs::write(
+            workspace_cargo.join("config"),
+            "include = [\"included.toml\", { path = \"missing.toml\", optional = true }]\n",
+        )
+        .expect("write effective workspace Cargo config");
+        fs::write(
+            workspace_cargo.join("config.toml"),
+            "[build]\ntarget-dir = \"ignored-by-cargo\"\n",
+        )
+        .expect("write shadowed workspace Cargo config");
+        fs::write(
+            workspace_cargo.join("included.toml"),
+            "include = \"nested.toml\"\n",
+        )
+        .expect("write included Cargo config");
+        fs::write(
+            workspace_cargo.join("nested.toml"),
+            "[build]\nincremental = false\n",
+        )
+        .expect("write nested Cargo config");
+        fs::write(
+            ancestor_cargo.join("config.toml"),
+            "[net]\noffline = true\n",
+        )
+        .expect("write ancestor Cargo config");
+        fs::write(cargo_home.join("config"), "[term]\nquiet = true\n")
+            .expect("write Cargo-home config");
+
+        let cargo_home_text = cargo_home.to_str().expect("temporary path is UTF-8");
+        let spec = WasmBuildSpec::new(&workspace, &root.join("target"), &["fixture"], "debug")
+            .with_extra_env(&[("CARGO_HOME", cargo_home_text)]);
+        let mut inputs = Vec::new();
+        append_cargo_configuration_inputs(&mut inputs, &spec, &workspace)
+            .expect("discover effective Cargo configuration");
+        let paths = inputs
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect::<BTreeSet<_>>();
+
+        assert!(paths.contains(&workspace_cargo.join("config").canonicalize().unwrap()));
+        assert!(
+            paths.contains(
+                &workspace_cargo
+                    .join("included.toml")
+                    .canonicalize()
+                    .unwrap()
+            )
+        );
+        assert!(paths.contains(&workspace_cargo.join("nested.toml").canonicalize().unwrap()));
+        assert!(paths.contains(&ancestor_cargo.join("config.toml").canonicalize().unwrap()));
+        assert!(paths.contains(&cargo_home.join("config").canonicalize().unwrap()));
+        assert!(!paths.contains(&workspace_cargo.join("config.toml").canonicalize().unwrap()));
+        assert_eq!(paths.len(), 5);
+        fs::remove_dir_all(root).expect("remove Cargo-configuration test directory");
+    }
+
+    #[test]
+    fn required_cargo_configuration_include_is_an_exact_input() {
+        let root = unique_temp_directory("required-cargo-configuration-include");
+        let workspace = root.join("workspace");
+        let cargo_dir = workspace.join(".cargo");
+        fs::create_dir_all(&cargo_dir).expect("create workspace Cargo directory");
+        fs::write(
+            cargo_dir.join("config.toml"),
+            "include = \"missing.toml\"\n",
+        )
+        .expect("write Cargo config");
+        let isolated_home = root.join("isolated-cargo-home");
+        let isolated_home_text = isolated_home.to_str().expect("temporary path is UTF-8");
+        let spec = WasmBuildSpec::new(&workspace, &root.join("target"), &["fixture"], "debug")
+            .with_extra_env(&[("CARGO_HOME", isolated_home_text)]);
+
+        let error = append_cargo_configuration_inputs(&mut Vec::new(), &spec, &workspace)
+            .expect_err("required missing include must fail input discovery");
+
+        assert!(matches!(error, WasmBuildError::Io { .. }));
+        fs::remove_dir_all(root).expect("remove required-include test directory");
     }
 
     fn create_cache_entry(

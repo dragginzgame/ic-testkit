@@ -421,8 +421,7 @@ and exact generated-artifact freshness checks:
 ```rust,no_run
 use ic_testkit::artifacts::{
     WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
-    build_wasm_canisters_cached, prune_wasm_build_cache, read_wasm, test_target_dir,
-    workspace_root_for,
+    build_wasm_canisters_cached, read_wasm, test_target_dir, workspace_root_for,
 };
 use std::time::Duration;
 
@@ -436,10 +435,15 @@ let spec = WasmBuildSpec::new(
 )
 .with_cargo_profile_args(&["--release", "--locked"])
 .with_inherited_env(&["COUNTER_SCHEMA_MODE"])
-.with_additional_inputs(&["config/counter-schema.json"]);
+.with_additional_inputs(&["config/counter-schema.json"])
+.with_prune_policy(
+    WasmBuildCachePrunePolicy::new()
+        .with_max_age(Duration::from_secs(14 * 24 * 60 * 60))
+        .with_max_size_bytes(10 * 1024 * 1024 * 1024),
+);
 
 let outcome = build_wasm_canisters_cached(&spec)?;
-match outcome {
+match &outcome {
     WasmBuildOutcome::Built(record) => {
         eprintln!("built {} in {:?}", record.fingerprint(), record.timings().total());
     }
@@ -450,17 +454,17 @@ match outcome {
 
 let wasm = read_wasm(&target, "counter_canister", "release");
 
-let pruned = prune_wasm_build_cache(
-    &target,
-    WasmBuildCachePrunePolicy::new()
-        .with_max_age(Duration::from_secs(14 * 24 * 60 * 60))
-        .with_max_size_bytes(10 * 1024 * 1024 * 1024),
-)?;
-eprintln!(
-    "removed {} builds ({} bytes)",
-    pruned.entries_removed(),
-    pruned.bytes_removed(),
-);
+if let Some(pruned) = outcome
+    .record()
+    .maintenance()
+    .and_then(|maintenance| maintenance.prune_report())
+{
+    eprintln!(
+        "removed {} builds ({} bytes)",
+        pruned.entries_removed(),
+        pruned.bytes_removed(),
+    );
+}
 # let _ = wasm;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -469,16 +473,15 @@ The fingerprint covers the selected package set and local dependency sources,
 workspace manifest, lockfile, Cargo configuration, Rust toolchain files,
 target and profile arguments, Cargo and rustc identities, explicit child
 environment, selected inherited environment, and caller-declared additional
-inputs. Build scripts that read application-specific environment variables or
-files outside Cargo's package graph must declare them on the spec.
-
-In `0.3.5`, automatic Cargo configuration discovery is limited to the workspace
-configuration paths. Configuration inherited from ancestor directories or the
-effective Cargo home can also affect compilation. Until that discovery is part
-of the cache resolver, declare those files with `with_additional_inputs` and
-include `CARGO_HOME` with `with_inherited_env` when it is set. Package inputs
-are content-hashed exactly but conservatively; exact hashing does not promise
-that every file in the package closure is semantically relevant to a build.
+inputs. Cargo configuration discovery follows the configuration files Cargo can
+read from the invocation directory and its ancestors plus the effective Cargo
+home. The extensionless `.cargo/config` takes precedence when both supported
+names exist, and recursive required or optional `include` entries are part of
+the fingerprint. Build scripts that read application-specific environment
+variables or files outside Cargo's package graph must still declare them on the
+spec. Package inputs are content-hashed exactly but conservatively; exact
+hashing does not promise that every file in the package closure is semantically
+relevant to a build.
 
 Calls sharing a target directory coordinate through one process lock. A cache
 hit requires every expected nonempty Wasm artifact to carry the exact atomic
@@ -496,7 +499,16 @@ last-use marker. `prune_wasm_build_cache` takes the build lock, removes entries
 over the optional age limit, then removes least-recently-used entries until the
 optional logical-byte limit is met. It only prunes direct fingerprint-named
 children below `.ic-testkit/wasm-targets`; public artifacts and unrelated Cargo
-target contents remain caller-owned.
+target contents remain caller-owned. `WasmBuildSpec::with_prune_policy` performs
+the same maintenance without reacquiring the lock, protects the active
+fingerprint even when it exceeds the configured bound, and reports a nonfatal
+`WasmBuildCacheMaintenance` result plus its duration on the successful build
+record. The standalone pruning function remains available when maintenance
+failure should be returned directly.
+
+`WasmBuildTimings::input_resolution_detail` separates Cargo/rustc identity,
+Cargo metadata, input discovery, and content hashing. The existing
+`input_resolution` accessor remains the aggregate for compatibility.
 
 `WatchedInputSnapshot` likewise hashes file paths and contents instead of
 modification times. Generated artifacts become reusable only after

@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-05 - Exact Cargo inputs and in-lock maintenance
+
+### Added
+
+- Adds optional `WasmBuildSpec::with_prune_policy` retention under the build
+  operation's existing process lock. The active fingerprint is protected, and
+  successful build records expose a nonfatal structured maintenance outcome
+  plus its phase duration.
+- Adds `WasmInputResolutionTimings` and
+  `WasmBuildTimings::input_resolution_detail`, separating tool identity, Cargo
+  metadata, input discovery, and content hashing while retaining the existing
+  aggregate timing accessor.
+
+### Changed
+
+- Expands exact Cargo configuration fingerprinting to the invocation directory
+  and every ancestor plus the effective Cargo home, follows recursive required
+  and optional includes, and matches Cargo's extensionless `config` precedence
+  when both supported configuration names exist.
+
 ## [0.4.1] - 2026-08-05 - Structured standalone fixture outcomes
 
 ### Added
