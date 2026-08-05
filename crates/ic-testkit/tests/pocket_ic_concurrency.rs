@@ -1,6 +1,8 @@
 use std::{
+    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
     thread,
@@ -26,6 +28,9 @@ static STANDALONE_OVERLAP_POOL: CachedStandaloneCanisterFixturePool<2> =
     CachedStandaloneCanisterFixturePool::new();
 static STANDALONE_CAPACITY_POOL: CachedStandaloneCanisterFixturePool<1> =
     CachedStandaloneCanisterFixturePool::new();
+static STANDALONE_PANIC_POOL: CachedStandaloneCanisterFixturePool<1> =
+    CachedStandaloneCanisterFixturePool::new();
+static STANDALONE_PANIC_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
 enum Command {
@@ -274,6 +279,31 @@ fn bounded_standalone_pool_waits_when_capacity_is_exhausted() {
     worker.join().expect("capacity worker should exit cleanly");
 }
 
+#[test]
+fn bounded_standalone_pool_rebuilds_after_a_leased_test_panics() {
+    let (fixture, cache_hit) = STANDALONE_PANIC_POOL
+        .acquire(build_counted_empty_standalone_fixture)
+        .expect("first panic-test fixture should capture");
+    assert!(!cache_hit);
+    drop(fixture);
+
+    let panic = catch_unwind(AssertUnwindSafe(|| {
+        let (_fixture, cache_hit) = STANDALONE_PANIC_POOL
+            .acquire(build_counted_empty_standalone_fixture)
+            .expect("panic-test fixture should restore");
+        assert!(cache_hit);
+        panic!("synthetic pooled-test panic");
+    }));
+    assert!(panic.is_err(), "the test panic must keep unwinding");
+
+    let (fixture, cache_hit) = STANDALONE_PANIC_POOL
+        .acquire(build_counted_empty_standalone_fixture)
+        .expect("the invalidated standalone slot should rebuild");
+    assert!(!cache_hit, "an unwound lease must not be reused");
+    assert_eq!(STANDALONE_PANIC_BUILDS.load(Ordering::SeqCst), 2);
+    drop(fixture);
+}
+
 fn build_empty_cached_baseline() -> CachedPocketIcBaseline<()> {
     CachedPocketIcBaseline::capture(
         PocketIc::new(),
@@ -289,6 +319,11 @@ fn build_empty_standalone_fixture() -> StandaloneCanisterFixture {
         PocketIc::new(),
         InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
     )
+}
+
+fn build_counted_empty_standalone_fixture() -> StandaloneCanisterFixture {
+    STANDALONE_PANIC_BUILDS.fetch_add(1, Ordering::SeqCst);
+    build_empty_standalone_fixture()
 }
 
 fn assert_two_instances_overlap<F>(build: F)

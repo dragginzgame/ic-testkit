@@ -1,15 +1,15 @@
 use std::{
+    num::NonZeroUsize,
     ops::Deref,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::{
-        Condvar, Mutex, MutexGuard, TryLockError,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::OnceLock,
 };
 
 use super::{
     ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotRestoreFunding,
-    StandaloneCanisterFixture, transport,
+    StandaloneCanisterFixture,
+    bounded_pool::{BoundedSlotLease, BoundedSlotPool},
+    transport,
 };
 
 struct StandaloneFixtureBaseline {
@@ -59,10 +59,7 @@ impl StandaloneFixtureBaseline {
 /// [`StandaloneCanisterFixture`] values when snapshot restoration is not the
 /// intended isolation boundary.
 pub struct CachedStandaloneCanisterFixturePool<const CAPACITY: usize> {
-    slots: [Mutex<Option<StandaloneFixtureBaseline>>; CAPACITY],
-    next_slot: AtomicUsize,
-    wait_lock: Mutex<()>,
-    slot_released: Condvar,
+    slots: OnceLock<BoundedSlotPool<StandaloneFixtureBaseline>>,
     restore_funding: SnapshotRestoreFunding,
 }
 
@@ -71,9 +68,7 @@ pub struct CachedStandaloneCanisterFixturePool<const CAPACITY: usize> {
 /// The lease dereferences to [`StandaloneCanisterFixture`], so existing call
 /// helpers can borrow it without adding a second fixture API.
 pub struct CachedStandaloneCanisterFixtureGuard<'a> {
-    slot: Option<MutexGuard<'a, Option<StandaloneFixtureBaseline>>>,
-    wait_lock: &'a Mutex<()>,
-    slot_released: &'a Condvar,
+    slot: BoundedSlotLease<'a, StandaloneFixtureBaseline>,
 }
 
 impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
@@ -88,10 +83,7 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
         assert!(CAPACITY > 0, "fixture pool capacity must be non-zero");
 
         Self {
-            slots: [const { Mutex::new(None) }; CAPACITY],
-            next_slot: AtomicUsize::new(0),
-            wait_lock: Mutex::new(()),
-            slot_released: Condvar::new(),
+            slots: OnceLock::new(),
             restore_funding: SnapshotRestoreFunding::Preserve,
         }
     }
@@ -112,7 +104,8 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
     /// PocketIC instance must be replaced.
     ///
     /// A recognized dead-instance transport failure evicts and rebuilds only
-    /// the affected slot. Other snapshot failures are returned unchanged.
+    /// the affected slot. Other snapshot failures are returned unchanged and
+    /// invalidate the possibly partially restored slot for the next lease.
     ///
     /// # Errors
     ///
@@ -125,96 +118,55 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
     where
         B: Fn() -> StandaloneCanisterFixture,
     {
-        let mut start = self.next_slot.fetch_add(1, Ordering::Relaxed) % CAPACITY;
-
-        loop {
-            if let Some(slot) = self.try_acquire_slot(start) {
-                return self.prepare_slot(slot, &build);
-            }
-
-            let wait_guard = self
-                .wait_lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(slot) = self.try_acquire_slot(start) {
-                drop(wait_guard);
-                return self.prepare_slot(slot, &build);
-            }
-
-            drop(
-                self.slot_released
-                    .wait(wait_guard)
-                    .unwrap_or_else(std::sync::PoisonError::into_inner),
-            );
-            start = self.next_slot.fetch_add(1, Ordering::Relaxed) % CAPACITY;
-        }
-    }
-
-    fn try_acquire_slot(
-        &self,
-        start: usize,
-    ) -> Option<MutexGuard<'_, Option<StandaloneFixtureBaseline>>> {
-        for offset in 0..CAPACITY {
-            let slot_index = (start + offset) % CAPACITY;
-            match self.slots[slot_index].try_lock() {
-                Ok(slot) => return Some(slot),
-                Err(TryLockError::Poisoned(error)) => return Some(error.into_inner()),
-                Err(TryLockError::WouldBlock) => {}
-            }
-        }
-
-        None
+        self.prepare_slot(self.slots().acquire(), &build)
     }
 
     fn prepare_slot<'a, B>(
         &'a self,
-        slot: MutexGuard<'a, Option<StandaloneFixtureBaseline>>,
+        mut slot: BoundedSlotLease<'a, StandaloneFixtureBaseline>,
         build: &B,
     ) -> Result<(CachedStandaloneCanisterFixtureGuard<'a>, bool), ControllerSnapshotError>
     where
         B: Fn() -> StandaloneCanisterFixture,
     {
-        // Wrap the reservation before calling caller code. Its Drop path
-        // releases the slot and wakes another waiter on success, error, or
-        // unwind.
-        let mut guard = self.guard(slot);
-        let slot = guard
-            .slot
-            .as_mut()
-            .expect("fixture pool reservation must retain its slot");
-        let cache_hit = slot.is_some();
-        if !cache_hit {
-            **slot = Some(StandaloneFixtureBaseline::capture(build())?);
-            return Ok((guard, false));
+        if !slot.is_reusable() {
+            if let Some(stale) = slot.take() {
+                let _ = catch_unwind(AssertUnwindSafe(|| drop(stale)));
+            }
+            slot.replace(StandaloneFixtureBaseline::capture(build())?);
+            return Ok((CachedStandaloneCanisterFixtureGuard { slot }, false));
         }
 
         let restore = slot
-            .as_ref()
+            .get()
             .expect("populated fixture pool slot must remain present")
             .restore(self.restore_funding);
         match restore {
-            Ok(()) => Ok((guard, true)),
+            Ok(()) => Ok((CachedStandaloneCanisterFixtureGuard { slot }, true)),
             Err(error) if snapshot_error_is_dead_instance_transport(&error) => {
                 let stale = slot.take();
                 if let Some(stale) = stale {
                     let _ = catch_unwind(AssertUnwindSafe(|| drop(stale)));
                 }
-                **slot = Some(StandaloneFixtureBaseline::capture(build())?);
-                Ok((guard, false))
+                slot.replace(StandaloneFixtureBaseline::capture(build())?);
+                Ok((CachedStandaloneCanisterFixtureGuard { slot }, false))
             }
-            Err(error) => Err(error),
+            Err(error) => {
+                // Restoration may have changed an earlier canister before a
+                // later snapshot failed. Preserve the current error while
+                // preventing a partially restored slot from being reused.
+                slot.invalidate();
+                Err(error)
+            }
         }
     }
 
-    const fn guard<'a>(
-        &'a self,
-        slot: MutexGuard<'a, Option<StandaloneFixtureBaseline>>,
-    ) -> CachedStandaloneCanisterFixtureGuard<'a> {
-        CachedStandaloneCanisterFixtureGuard {
-            slot: Some(slot),
-            wait_lock: &self.wait_lock,
-            slot_released: &self.slot_released,
-        }
+    fn slots(&self) -> &BoundedSlotPool<StandaloneFixtureBaseline> {
+        self.slots.get_or_init(|| {
+            BoundedSlotPool::new(
+                NonZeroUsize::new(CAPACITY).expect("fixture pool capacity must be non-zero"),
+            )
+        })
     }
 }
 
@@ -230,27 +182,9 @@ impl Deref for CachedStandaloneCanisterFixtureGuard<'_> {
     fn deref(&self) -> &Self::Target {
         &self
             .slot
-            .as_ref()
-            .expect("fixture pool guard must retain its slot")
-            .as_ref()
+            .get()
             .expect("leased fixture pool slot must remain populated")
             .fixture
-    }
-}
-
-impl Drop for CachedStandaloneCanisterFixtureGuard<'_> {
-    fn drop(&mut self) {
-        drop(self.slot.take());
-
-        // Pair the notification with the same lock used by acquire's second
-        // availability check so a release cannot be lost between that check
-        // and the condvar wait.
-        let wait_guard = self
-            .wait_lock
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.slot_released.notify_one();
-        drop(wait_guard);
     }
 }
 

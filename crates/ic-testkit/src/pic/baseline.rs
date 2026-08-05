@@ -235,6 +235,17 @@ impl<T> CachedPocketIcBaseline<T> {
         &self.pocket_ic
     }
 
+    /// Return the number of canisters captured by this baseline.
+    #[must_use]
+    pub fn snapshot_count(&self) -> usize {
+        self.snapshots.len()
+    }
+
+    /// Iterate over captured canister ids in deterministic principal order.
+    pub fn snapshot_canister_ids(&self) -> impl Iterator<Item = Principal> + '_ {
+        self.snapshots.canister_ids()
+    }
+
     /// Borrow the captured metadata associated with this cached baseline.
     #[must_use]
     pub const fn metadata(&self) -> &T {

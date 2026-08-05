@@ -47,7 +47,8 @@ The crate supports Rust 1.88 and uses PocketIC 15.
 | Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
 | Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
 | Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
-| Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline`, `CachedStandaloneCanisterFixturePool` | Ordered transactional capture, explicit restore funding, scoped caching |
+| Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline` | Ordered transactional capture, explicit restore funding, scoped caching |
+| Fixture pools | `CachedStandaloneCanisterFixturePool`, `CachedPocketIcBaselinePool` | Bounded standalone or recipe-driven multi-canister baseline reuse |
 | Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
 | Artifacts | `WasmBuildSpec`, `WasmBuildOutcome`, `WasmBuildCachePrunePolicy`, `WatchedInputSnapshot` | Content-addressed Wasm builds, bounded cache retention, exact freshness stamps, and dedicated target directories |
@@ -308,10 +309,55 @@ funding policy may persist. Keep installation, upgrade, topology, teardown,
 time-sensitive, cycle-accounting, and snapshot tests on fresh directly owned
 fixtures.
 
-A proposed runtime-capacity multi-canister pool uses structurally owned recipes,
-typed reset receipts, invariant validation, and rebuild-on-invalid semantics
-without claiming full PocketIC reset. See the
-[`0.4` bounded baseline-pool design](docs/design/0.4-baseline-pooling/0.4-design.md).
+For a topology with multiple captured canisters, use
+`CachedPocketIcBaselinePool<R>`. Its runtime capacity can be tuned per host and
+one pool structurally owns one `PocketIcBaselineRecipe` for its entire
+lifetime:
+
+```rust,ignore
+use std::num::NonZeroUsize;
+use ic_testkit::pic::{BaselinePoolOutcome, CachedPocketIcBaselinePool};
+
+let pool = CachedPocketIcBaselinePool::new(
+    NonZeroUsize::new(1).unwrap(),
+    root_topology_recipe(),
+);
+
+let (baseline, outcome) = pool.acquire()?;
+assert!(matches!(
+    outcome,
+    BaselinePoolOutcome::Built { .. }
+        | BaselinePoolOutcome::Restored { .. }
+        | BaselinePoolOutcome::Rebuilt { .. }
+));
+
+run_test(baseline.pocket_ic(), baseline.metadata());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The recipe declares typed reset requirements and implements the exact reuse
+sequence: restore every captured canister, reset non-snapshot state, drive the
+topology to readiness, then validate final invariants. Snapshot and cycle
+domains are mandatory. The pool checks that the restore receipt names the
+complete captured set and that every required reset policy has an exact
+matching achievement before returning a warm lease. Built and restored slots
+run the same validation hook.
+
+A recoverable preparation failure discards the slot and rebuilds once; if that
+also fails, `BaselinePoolError::RecoveryFailed` retains both errors. Recipe or
+test panics keep unwinding and mark the slot invalid for a later rebuild.
+Callers can explicitly invalidate a lease after an operation outside the
+recipe's reset contract. `BaselinePoolOutcome` and `BaselinePoolTimings` expose
+whether the lease was built, restored, or rebuilt and where acquisition time
+was spent.
+
+This is still baseline reuse, not complete simulator rollback. Recipes must
+honestly account for time, extra canisters, pending messages, subnet state,
+cycles, and external resources, or keep affected tests on fresh instances.
+Capacity greater than one permits overlapping leases but does not make a
+serial test runner parallel. See the
+[`0.4` bounded baseline-pool design](docs/design/0.4-baseline-pooling/0.4-design.md)
+for the contract, consumer eligibility, and benchmark plan.
 
 ## Diagnostics and time
 

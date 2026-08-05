@@ -13,6 +13,8 @@ pub use pocket_ic::{
 };
 
 mod baseline;
+mod baseline_pool;
+mod bounded_pool;
 mod calls;
 mod diagnostics;
 mod errors;
@@ -27,6 +29,15 @@ mod transport;
 pub use baseline::{
     CachedPocketIcBaseline, CachedPocketIcBaselineGuard,
     restore_or_rebuild_cached_pocket_ic_baseline,
+};
+pub use baseline_pool::{
+    BaselinePoolContractError, BaselinePoolError, BaselinePoolOutcome,
+    BaselinePoolPreparationError, BaselinePoolTimings, BaselinePreparationStage,
+    CachedPocketIcBaselinePool, CachedPocketIcBaselinePoolGuard, CanisterRestoreReceipt,
+    CycleResetPolicy, ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId,
+    PocketIcBaselineRecipe, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetAchievement,
+    ResetDomainKind, ResetReceipt, ResetRequirement, ResetRequirements, StateResetPolicy,
+    TimeResetPolicy, ValidationReceipt,
 };
 pub use calls::CandidCallExt;
 pub use diagnostics::PocketIcDiagnosticsExt;

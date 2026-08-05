@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Adds `CachedPocketIcBaselinePool`, a caller-owned runtime-capacity pool for
+  multi-canister PocketIC baselines. One structurally owned
+  `PocketIcBaselineRecipe` defines build, complete snapshot restore,
+  non-snapshot reset, readiness, invariant validation, and failure
+  classification for the pool's lifetime.
+- Adds caller-owned `FixtureRecipeId`, typed reset requirements and receipts,
+  exact restored-canister-set verification, structured `Built`, `Restored`,
+  and `Rebuilt` outcomes, phase timings, explicit lease invalidation, and
+  combined original/rebuild failures.
+- Adds live coverage for multi-canister restoration, runtime capacity, reset
+  contract enforcement, one-shot recovery, fatal recipe mismatches, and panic
+  invalidation.
+
+### Changed
+
+- Moves `CachedStandaloneCanisterFixturePool` onto the same internal FIFO
+  bounded-slot scheduler used by the multi-canister pool, preserving its public
+  API while making panicked leases and partially failed restores non-reusable.
+
 ## [0.3.6] - 2026-08-05 - Consolidated cache and pooling designs
 
 ### Added
