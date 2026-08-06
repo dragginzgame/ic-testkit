@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-06 - Shared-incremental Wasm caching
+
 ### Added
 
 - Adds an opt-in shared-incremental mode to `WasmBuildSpec`. Cargo misses build
