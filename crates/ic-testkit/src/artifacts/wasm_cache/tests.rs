@@ -1,12 +1,15 @@
 use super::{
-    IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetMaintenanceOutcome,
+    IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetMaintenanceConfig,
+    SharedIncrementalTargetMaintenanceFailureMode, SharedIncrementalTargetMaintenanceOutcome,
     SharedIncrementalTargetPrunePolicy, WasmBuildCachePrunePolicy, WasmBuildError,
     WasmBuildOutcome, WasmBuildOutputStream, WasmBuildProgressConfig, WasmBuildProgressEvent,
     WasmBuildProgressPhase, WasmBuildSpec, append_cargo_configuration_inputs,
     build_wasm_canisters_cached_with_progress, ensure_cache_directory_tag,
-    finish_fingerprint_build, inspect_shared_incremental_target, lock_wasm_build_cache,
+    finish_fingerprint_build, inspect_shared_incremental_target,
+    integrated_shared_maintenance_result, lock_wasm_build_cache,
     lock_wasm_build_cache_with_progress, maintain_shared_incremental_target,
-    maintain_shared_incremental_target_at_most_every, metadata_arguments, prune_wasm_build_cache,
+    maintain_shared_incremental_target_at_most_every, metadata_arguments,
+    perform_configured_shared_incremental_target_maintenance, prune_wasm_build_cache,
     prune_wasm_build_cache_locked, resolve_cargo_build_inputs, run_cargo_build, validate_spec,
 };
 use crate::artifacts::cache_fs::{
@@ -343,6 +346,92 @@ fn zero_progress_heartbeat_is_rejected_before_build_validation() {
     assert!(
         matches!(result, Err(WasmBuildError::InvalidSpec { message }) if message.contains("heartbeat"))
     );
+}
+
+#[test]
+fn maintenance_configuration_is_readable_and_strict_by_default() {
+    let shared_policy = SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(1024 * 1024);
+    let shared_interval = Duration::from_secs(60 * 60);
+    let shared_config =
+        SharedIncrementalTargetMaintenanceConfig::new(shared_policy, shared_interval);
+    let exact_policy = WasmBuildCachePrunePolicy::new().with_max_size_bytes(2 * 1024 * 1024);
+    let exact_interval = Duration::from_secs(30 * 60);
+    let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
+        .with_shared_incremental_target("target/shared")
+        .with_shared_incremental_target_maintenance(shared_config)
+        .with_prune_policy_at_most_every(exact_policy, exact_interval);
+
+    assert_eq!(shared_config.policy(), shared_policy);
+    assert_eq!(shared_config.minimum_interval(), shared_interval);
+    assert_eq!(
+        shared_config.failure_mode(),
+        SharedIncrementalTargetMaintenanceFailureMode::Strict
+    );
+    assert_eq!(
+        spec.shared_incremental_target_maintenance(),
+        Some(shared_config)
+    );
+    assert_eq!(spec.prune_policy(), Some(exact_policy));
+    assert_eq!(spec.prune_interval(), Some(exact_interval));
+}
+
+#[test]
+fn best_effort_integrated_maintenance_retains_a_typed_failure() {
+    let root = unique_temp_directory("best-effort-shared-maintenance-failure");
+    let target = root.join("shared");
+    let schedule_root = target.join(".ic-testkit");
+    fs::create_dir_all(&schedule_root).expect("create corrupt schedule fixture");
+    fs::write(schedule_root.join(".ic-testkit-last-maintenance"), [0xff])
+        .expect("write invalid UTF-8 schedule marker");
+    let config = SharedIncrementalTargetMaintenanceConfig::new(
+        SharedIncrementalTargetPrunePolicy::new(),
+        Duration::from_secs(60),
+    )
+    .with_failure_mode(SharedIncrementalTargetMaintenanceFailureMode::BestEffort);
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_shared_incremental_target(&target)
+        .with_shared_incremental_target_maintenance(config);
+    let lock_wait = Duration::from_millis(7);
+    let outcome = perform_configured_shared_incremental_target_maintenance(
+        &spec,
+        &target,
+        lock_wait,
+        &mut ProgressReporter::silent(),
+    )
+    .expect("best-effort maintenance must preserve acquisition");
+
+    assert_eq!(outcome.target_dir(), target);
+    assert_eq!(outcome.lock_wait(), Some(lock_wait));
+    assert!(!outcome.was_performed());
+    assert!(outcome.schedule_check().is_none());
+    assert!(
+        outcome
+            .failure_message()
+            .is_some_and(|message| message.contains("read cache maintenance time"))
+    );
+    assert!(outcome.to_string().contains("action=failed"));
+    fs::remove_dir_all(root).expect("remove best-effort maintenance fixture");
+}
+
+#[test]
+fn strict_integrated_maintenance_propagates_failure() {
+    let config = SharedIncrementalTargetMaintenanceConfig::new(
+        SharedIncrementalTargetPrunePolicy::new(),
+        Duration::from_secs(60),
+    );
+    let result = integrated_shared_maintenance_result(
+        config,
+        Path::new("target/shared"),
+        Duration::ZERO,
+        Err(WasmBuildError::InvalidSpec {
+            message: "synthetic strict failure".to_owned(),
+        }),
+    );
+
+    assert!(matches!(
+        result,
+        Err(WasmBuildError::InvalidSpec { message }) if message == "synthetic strict failure"
+    ));
 }
 
 #[test]

@@ -17,10 +17,14 @@ cleanup() {
   local cleanup_status=0
   trap - EXIT
 
-  echo "Cleaning release CI artifacts..."
-  if ! cargo clean; then
-    echo "error: failed to clean Cargo artifacts" >&2
-    cleanup_status=1
+  if [[ "${ci_status}" -eq 0 ]]; then
+    echo "Release CI succeeded; cleaning Cargo artifacts..."
+    if ! cargo clean; then
+      echo "error: failed to clean Cargo artifacts" >&2
+      cleanup_status=1
+    fi
+  else
+    echo "Release CI failed; preserving Cargo artifacts for diagnosis." >&2
   fi
   if ! rm -rf -- "${ci_tmp_dir}"; then
     echo "error: failed to remove release CI temporary directory ${ci_tmp_dir}" >&2

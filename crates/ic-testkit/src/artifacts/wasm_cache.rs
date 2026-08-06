@@ -65,10 +65,22 @@ pub struct WasmBuildSpec {
     shared_incremental_maintenance_config: Option<SharedIncrementalTargetMaintenanceConfig>,
 }
 
+/// Failure handling for integrated shared incremental-target maintenance.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SharedIncrementalTargetMaintenanceFailureMode {
+    /// Fail the Wasm acquisition when scheduled maintenance fails.
+    #[default]
+    Strict,
+    /// Preserve the acquisition and attach a structured failed-maintenance outcome.
+    BestEffort,
+}
+
+/// Scheduled shared incremental-target maintenance attached to a Wasm acquisition.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct SharedIncrementalTargetMaintenanceConfig {
+pub struct SharedIncrementalTargetMaintenanceConfig {
     policy: SharedIncrementalTargetPrunePolicy,
     minimum_interval: Duration,
+    failure_mode: SharedIncrementalTargetMaintenanceFailureMode,
 }
 
 /// Cargo-target ownership mode for one exact cached Wasm build.
@@ -203,6 +215,15 @@ pub enum SharedIncrementalTargetMaintenanceOutcome {
         maintenance: SharedIncrementalTargetMaintenance,
         /// Time spent checking the small cross-process schedule marker.
         schedule_check: Duration,
+    },
+    /// Integrated best-effort maintenance failed without invalidating the Wasm acquisition.
+    Failed {
+        /// Canonical shared Cargo target directory.
+        target_dir: PathBuf,
+        /// Time spent waiting for another process using the shared target.
+        lock_wait: Duration,
+        /// Rendered maintenance failure retained for diagnostics.
+        message: String,
     },
 }
 
@@ -739,11 +760,23 @@ impl WasmBuildSpec {
         policy: SharedIncrementalTargetPrunePolicy,
         minimum_interval: Duration,
     ) -> Self {
-        self.shared_incremental_maintenance_config =
-            Some(SharedIncrementalTargetMaintenanceConfig {
-                policy,
-                minimum_interval,
-            });
+        self.shared_incremental_maintenance_config = Some(
+            SharedIncrementalTargetMaintenanceConfig::new(policy, minimum_interval),
+        );
+        self
+    }
+
+    /// Attach an explicit shared-target maintenance configuration.
+    ///
+    /// This is the configurable counterpart to
+    /// [`Self::with_shared_incremental_target_maintenance_at_most_every`] and
+    /// supports strict or best-effort failure handling.
+    #[must_use]
+    pub const fn with_shared_incremental_target_maintenance(
+        mut self,
+        config: SharedIncrementalTargetMaintenanceConfig,
+    ) -> Self {
+        self.shared_incremental_maintenance_config = Some(config);
         self
     }
 
@@ -798,6 +831,26 @@ impl WasmBuildSpec {
     #[must_use]
     pub const fn cache_mode(&self) -> &WasmBuildCacheMode {
         &self.cache_mode
+    }
+
+    /// Exact-entry retention policy attached to this specification, when configured.
+    #[must_use]
+    pub const fn prune_policy(&self) -> Option<WasmBuildCachePrunePolicy> {
+        self.prune_policy
+    }
+
+    /// Minimum interval between exact-entry retention attempts, when scheduled.
+    #[must_use]
+    pub const fn prune_interval(&self) -> Option<Duration> {
+        self.prune_interval
+    }
+
+    /// Shared incremental-target maintenance attached to this specification.
+    #[must_use]
+    pub const fn shared_incremental_target_maintenance(
+        &self,
+    ) -> Option<SharedIncrementalTargetMaintenanceConfig> {
+        self.shared_incremental_maintenance_config
     }
 }
 
@@ -1095,6 +1148,49 @@ impl SharedIncrementalTargetPrunePolicy {
     }
 }
 
+impl SharedIncrementalTargetMaintenanceConfig {
+    /// Schedule one strict retention pass at most once per interval.
+    #[must_use]
+    pub const fn new(
+        policy: SharedIncrementalTargetPrunePolicy,
+        minimum_interval: Duration,
+    ) -> Self {
+        Self {
+            policy,
+            minimum_interval,
+            failure_mode: SharedIncrementalTargetMaintenanceFailureMode::Strict,
+        }
+    }
+
+    /// Select whether an integrated maintenance failure fails the acquisition.
+    #[must_use]
+    pub const fn with_failure_mode(
+        mut self,
+        failure_mode: SharedIncrementalTargetMaintenanceFailureMode,
+    ) -> Self {
+        self.failure_mode = failure_mode;
+        self
+    }
+
+    /// Configured whole-target retention policy.
+    #[must_use]
+    pub const fn policy(self) -> SharedIncrementalTargetPrunePolicy {
+        self.policy
+    }
+
+    /// Minimum interval between successful matching maintenance passes.
+    #[must_use]
+    pub const fn minimum_interval(self) -> Duration {
+        self.minimum_interval
+    }
+
+    /// Configured maintenance failure handling.
+    #[must_use]
+    pub const fn failure_mode(self) -> SharedIncrementalTargetMaintenanceFailureMode {
+        self.failure_mode
+    }
+}
+
 impl SharedIncrementalTargetMaintenance {
     /// Canonical shared Cargo target directory maintained under lock.
     #[must_use]
@@ -1159,7 +1255,9 @@ impl SharedIncrementalTargetMaintenanceOutcome {
     #[must_use]
     pub fn target_dir(&self) -> &Path {
         match self {
-            Self::Missing { target_dir } | Self::Skipped { target_dir, .. } => target_dir,
+            Self::Missing { target_dir }
+            | Self::Skipped { target_dir, .. }
+            | Self::Failed { target_dir, .. } => target_dir,
             Self::Performed { maintenance, .. } => maintenance.target_dir(),
         }
     }
@@ -1169,7 +1267,7 @@ impl SharedIncrementalTargetMaintenanceOutcome {
     pub const fn maintenance(&self) -> Option<&SharedIncrementalTargetMaintenance> {
         match self {
             Self::Performed { maintenance, .. } => Some(maintenance),
-            Self::Missing { .. } | Self::Skipped { .. } => None,
+            Self::Missing { .. } | Self::Skipped { .. } | Self::Failed { .. } => None,
         }
     }
 
@@ -1184,7 +1282,7 @@ impl SharedIncrementalTargetMaintenanceOutcome {
     pub const fn lock_wait(&self) -> Option<Duration> {
         match self {
             Self::Missing { .. } => None,
-            Self::Skipped { lock_wait, .. } => Some(*lock_wait),
+            Self::Skipped { lock_wait, .. } | Self::Failed { lock_wait, .. } => Some(*lock_wait),
             Self::Performed { maintenance, .. } => Some(maintenance.lock_wait()),
         }
     }
@@ -1193,10 +1291,19 @@ impl SharedIncrementalTargetMaintenanceOutcome {
     #[must_use]
     pub const fn schedule_check(&self) -> Option<Duration> {
         match self {
-            Self::Missing { .. } => None,
+            Self::Missing { .. } | Self::Failed { .. } => None,
             Self::Skipped { schedule_check, .. } | Self::Performed { schedule_check, .. } => {
                 Some(*schedule_check)
             }
+        }
+    }
+
+    /// Rendered integrated maintenance failure, when best-effort handling preserved acquisition.
+    #[must_use]
+    pub fn failure_message(&self) -> Option<&str> {
+        match self {
+            Self::Failed { message, .. } => Some(message),
+            Self::Missing { .. } | Self::Skipped { .. } | Self::Performed { .. } => None,
         }
     }
 }
@@ -1220,6 +1327,15 @@ impl std::fmt::Display for SharedIncrementalTargetMaintenanceOutcome {
                 maintenance,
                 schedule_check,
             } => write!(formatter, "{maintenance} schedule={schedule_check:?}"),
+            Self::Failed {
+                target_dir,
+                lock_wait,
+                message,
+            } => write!(
+                formatter,
+                "target={} action=failed lock={lock_wait:?} error={message}",
+                target_dir.display(),
+            ),
         }
     }
 }
@@ -1729,31 +1845,51 @@ fn perform_configured_shared_incremental_target_maintenance(
     progress.emit(WasmBuildProgressEvent::SharedTargetMaintenanceStarted {
         target_dir: shared_target.to_owned(),
     });
-    let schedule = schedule_shared_incremental_target_maintenance(
-        shared_target,
-        config.policy,
-        config.minimum_interval,
-        lock_wait,
-    )?;
-    let outcome =
-        progress.run_phase(
-            WasmBuildProgressPhase::SharedTargetMaintenance,
-            || match schedule {
-                SharedIncrementalTargetMaintenanceSchedule::Skipped(outcome) => Ok(outcome),
-                SharedIncrementalTargetMaintenanceSchedule::Due(due) => {
-                    perform_due_shared_incremental_target_maintenance(
-                        shared_target,
-                        config.policy,
-                        lock_wait,
-                        due,
-                    )
-                }
-            },
+    let result = progress.run_phase(WasmBuildProgressPhase::SharedTargetMaintenance, || {
+        let schedule = schedule_shared_incremental_target_maintenance(
+            shared_target,
+            config.policy,
+            config.minimum_interval,
+            lock_wait,
         )?;
+        match schedule {
+            SharedIncrementalTargetMaintenanceSchedule::Skipped(outcome) => Ok(outcome),
+            SharedIncrementalTargetMaintenanceSchedule::Due(due) => {
+                perform_due_shared_incremental_target_maintenance(
+                    shared_target,
+                    config.policy,
+                    lock_wait,
+                    due,
+                )
+            }
+        }
+    });
+    let outcome = integrated_shared_maintenance_result(config, shared_target, lock_wait, result)?;
     progress.emit(WasmBuildProgressEvent::SharedTargetMaintenanceFinished {
         outcome: outcome.clone(),
     });
     Ok(outcome)
+}
+
+fn integrated_shared_maintenance_result(
+    config: SharedIncrementalTargetMaintenanceConfig,
+    shared_target: &Path,
+    lock_wait: Duration,
+    result: Result<SharedIncrementalTargetMaintenanceOutcome, WasmBuildError>,
+) -> Result<SharedIncrementalTargetMaintenanceOutcome, WasmBuildError> {
+    match result {
+        Ok(outcome) => Ok(outcome),
+        Err(error)
+            if config.failure_mode == SharedIncrementalTargetMaintenanceFailureMode::BestEffort =>
+        {
+            Ok(SharedIncrementalTargetMaintenanceOutcome::Failed {
+                target_dir: shared_target.to_owned(),
+                lock_wait,
+                message: error.to_string(),
+            })
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn resolve_inputs_with_progress(

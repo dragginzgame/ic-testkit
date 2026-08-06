@@ -660,7 +660,41 @@ retention always accompanies a Wasm acquisition, configure
 `with_shared_incremental_target_maintenance_at_most_every` instead. It creates
 and coordinates the target even on exact hits, reuses the acquisition's input
 resolution for due maintenance, and reports the result through the build
-record and structured progress events.
+record and structured progress events. Integrated maintenance is strict by
+default. Consumers that prefer a usable Wasm acquisition over successful
+retention can supply an explicit best-effort configuration:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    SharedIncrementalTargetMaintenanceConfig,
+    SharedIncrementalTargetMaintenanceFailureMode,
+    SharedIncrementalTargetPrunePolicy, WasmBuildSpec,
+};
+use std::time::Duration;
+
+# let workspace = std::path::PathBuf::from(".");
+# let target = workspace.join("target/pic-wasm");
+let maintenance = SharedIncrementalTargetMaintenanceConfig::new(
+    SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(4 * 1024 * 1024 * 1024),
+    Duration::from_secs(24 * 60 * 60),
+)
+.with_failure_mode(SharedIncrementalTargetMaintenanceFailureMode::BestEffort);
+let spec = WasmBuildSpec::new(
+    &workspace,
+    &target,
+    &["counter_canister"],
+    "debug",
+)
+.with_shared_incremental_target(target.join("shared"))
+.with_shared_incremental_target_maintenance(maintenance);
+# let _ = spec;
+```
+
+A best-effort failure is retained as
+`SharedIncrementalTargetMaintenanceOutcome::Failed` and does not record a
+successful schedule marker. Spec validation, Cargo input resolution, builds,
+source-race detection, and artifact publication remain strict. Configuration
+getters support policy assertions without performing work.
 
 Long input resolution, lock waits, maintenance, Cargo builds, and artifact
 publication can expose synchronous structured progress without changing the
@@ -727,6 +761,39 @@ prefix, whose artifacts remain valid. When several packages are intentionally
 built together with Cargo's normal shared feature resolution, keep them in one
 multi-package `WasmBuildSpec`; splitting that build into per-package batch
 entries would repeat Cargo work and may change feature resolution.
+
+When independent specs share incremental targets, batch-owned maintenance
+removes the caller convention of modifying the first spec:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    SharedIncrementalTargetMaintenanceConfig,
+    SharedIncrementalTargetMaintenanceFailureMode,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchConfig,
+    build_wasm_canisters_cached_batch_with_config,
+};
+use std::time::Duration;
+
+# let specs: Vec<ic_testkit::artifacts::WasmBuildSpec> = Vec::new();
+let maintenance = SharedIncrementalTargetMaintenanceConfig::new(
+    SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(4 * 1024 * 1024 * 1024),
+    Duration::from_secs(24 * 60 * 60),
+)
+.with_failure_mode(SharedIncrementalTargetMaintenanceFailureMode::BestEffort);
+let batch = build_wasm_canisters_cached_batch_with_config(
+    &specs,
+    WasmBuildBatchConfig::new().with_shared_incremental_target_maintenance(maintenance),
+)?;
+for (index, outcome) in batch.shared_incremental_maintenance_outcomes() {
+    eprintln!("build {index}: {outcome}");
+}
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Maintenance is attached to the first specification for each distinct
+configured shared-target path. Isolated specs are unaffected, and mixing
+batch-owned with per-spec integrated maintenance is rejected as ambiguous
+before any batch entry runs.
 
 `ResolvedCargoBuildInputs::is_current` provides the same before/after identity
 check for external Cargo-derived workflows. OS-native iterator builders ending

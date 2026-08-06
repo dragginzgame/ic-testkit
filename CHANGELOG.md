@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-08-06 - Maintenance ownership and resilience
+
+### Added
+
+- Adds explicit strict and best-effort failure handling for integrated shared
+  incremental-target maintenance. Best-effort failures remain visible through
+  a typed `Failed` outcome without invalidating an otherwise successful Wasm
+  acquisition.
+- Adds `WasmBuildBatchConfig` orchestration that schedules maintenance once for
+  each distinct shared target instead of requiring callers to modify the first
+  build specification.
+- Adds read-only accessors for exact and shared-target maintenance settings and
+  indexed batch maintenance outcomes.
+
+### Changed
+
+- Keeps strict integrated maintenance as the compatibility default and rejects
+  ambiguous mixtures of batch-owned and per-spec maintenance configuration.
+- Preserves Cargo build artifacts when release CI fails so diagnostics and
+  incremental state remain available; `cargo clean` now runs only after the
+  complete CI gate succeeds, while isolated temporary files are always removed.
+
+### Testing
+
+- Adds focused coverage for configuration inspection, strict and best-effort
+  failure behavior, per-target batch deduplication, and ownership conflicts.
+- Covers successful and failed release-CI cleanup paths to prevent destructive
+  cleanup from obscuring a failed gate.
+
 ## [0.7.5] - 2026-08-06 - Acquisition-wide build progress
 
 ### Added

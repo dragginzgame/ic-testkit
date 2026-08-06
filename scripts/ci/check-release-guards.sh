@@ -153,13 +153,31 @@ set -e
 mapfile -t cleanup_trace <"${cleanup_case}/trace"
 [[ "${cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
   || fail "the release CI wrapper did not run the CI gate"
-[[ "${cleanup_trace[1]:-}" == "cargo clean" ]] \
-  || fail "the release CI wrapper did not clean Cargo artifacts after a CI failure"
+[[ "${#cleanup_trace[@]}" -eq 1 ]] \
+  || fail "the release CI wrapper cleaned Cargo artifacts after a CI failure"
 ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
 [[ "${ci_tmp_dir}" == "${cleanup_case}/tmp/ic-testkit-release-ci."* ]] \
   || fail "the release CI wrapper did not isolate temporary artifacts"
 [[ ! -e "${ci_tmp_dir}" ]] \
   || fail "the release CI wrapper left its temporary directory behind"
+
+: >"${cleanup_case}/trace"
+(
+  cd "${repo_root}"
+  PATH="${cleanup_case}/bin:${PATH}" TRACE_FILE="${cleanup_case}/trace" \
+    TMPDIR_TRACE="${cleanup_case}/tmpdir" TMPDIR="${cleanup_case}/tmp" CI_STATUS=0 \
+    /bin/bash scripts/release/run-ci.sh
+) >/dev/null
+mapfile -t successful_cleanup_trace <"${cleanup_case}/trace"
+[[ "${successful_cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
+  || fail "the successful release CI wrapper did not run the CI gate"
+[[ "${successful_cleanup_trace[1]:-}" == "cargo clean" ]] \
+  || fail "the release CI wrapper did not clean Cargo artifacts after success"
+[[ "${#successful_cleanup_trace[@]}" -eq 2 ]] \
+  || fail "the successful release CI wrapper ran unexpected cleanup commands"
+successful_ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
+[[ ! -e "${successful_ci_tmp_dir}" ]] \
+  || fail "the successful release CI wrapper left its temporary directory behind"
 
 commit_case="${work_dir}/commit"
 mkdir -p "${commit_case}/bin"
