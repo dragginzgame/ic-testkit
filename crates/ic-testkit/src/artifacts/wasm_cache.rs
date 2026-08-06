@@ -5,7 +5,9 @@ use std::{
     fs::{self, File},
     io,
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Output},
+    process::{Child, Command, ExitStatus, Output, Stdio},
+    sync::mpsc::{self, RecvTimeoutError},
+    thread,
     time::{Duration, Instant, SystemTime},
 };
 use toml::Value as TomlValue;
@@ -141,6 +143,211 @@ pub struct SharedIncrementalTargetInspection {
     logical_size_bytes: u64,
     last_used: SystemTime,
     lock_wait: Duration,
+}
+
+/// Whole-target retention limits for caller-owned shared Cargo state.
+///
+/// Unlike immutable fingerprint entries, a shared Cargo target has no safe
+/// per-entry LRU boundary. When either configured limit is exceeded,
+/// maintenance clears every other target child while preserving
+/// `ic-testkit`'s coordination metadata and the target root. Callers must not
+/// colocate unrelated data that needs to survive a clear.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct SharedIncrementalTargetPrunePolicy {
+    max_age: Option<Duration>,
+    max_size_bytes: Option<u64>,
+}
+
+/// Result of explicit shared Cargo target maintenance.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SharedIncrementalTargetMaintenance {
+    target_dir: PathBuf,
+    logical_size_bytes_before: u64,
+    logical_size_bytes_after: u64,
+    last_used_before: SystemTime,
+    cleared: bool,
+    lock_wait: Duration,
+    maintenance: Duration,
+}
+
+/// Observation settings for one cacheable Wasm build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WasmBuildProgressConfig {
+    heartbeat_interval: Option<Duration>,
+    emit_cargo_output: bool,
+}
+
+/// Raw child-process stream attached to a Cargo progress event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WasmBuildOutputStream {
+    /// Cargo standard output.
+    Stdout,
+    /// Cargo standard error.
+    Stderr,
+}
+
+/// Final cache state reported by a successful observed build.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WasmBuildProgressOutcome {
+    /// Cargo ran and exact artifacts were published.
+    Built,
+    /// Exact artifacts were reused without Cargo.
+    Reused,
+}
+
+/// Structured progress emitted by an observed cacheable Wasm build.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WasmBuildProgressEvent {
+    /// One build/cache acquisition started.
+    Started,
+    /// One exact Cargo input-resolution pass completed.
+    InputsResolved {
+        /// Complete exact build fingerprint.
+        fingerprint: InputDigest,
+        /// Source/configuration-only digest.
+        input_digest: InputDigest,
+        /// Time spent on this resolution pass.
+        elapsed: Duration,
+    },
+    /// No reusable exact entry existed for this fingerprint.
+    CacheMiss {
+        /// Missing exact fingerprint.
+        fingerprint: InputDigest,
+    },
+    /// Exact artifacts were found and materialized when necessary.
+    CacheHit {
+        /// Reused exact fingerprint.
+        fingerprint: InputDigest,
+    },
+    /// The build is about to wait for a caller-owned shared Cargo target.
+    SharedTargetLockStarted {
+        /// Shared target selected by the build specification.
+        target_dir: PathBuf,
+    },
+    /// Exclusive shared-target ownership was acquired.
+    SharedTargetLockAcquired {
+        /// Canonical shared target directory.
+        target_dir: PathBuf,
+        /// Time spent waiting for another process.
+        wait: Duration,
+    },
+    /// Cargo compilation started.
+    CargoStarted {
+        /// Cargo target receiving compilation state.
+        target_dir: PathBuf,
+    },
+    /// One raw Cargo output chunk was read without lossy UTF-8 conversion.
+    CargoOutput {
+        /// Child-process stream that produced the bytes.
+        stream: WasmBuildOutputStream,
+        /// Raw output bytes in per-stream read order.
+        bytes: Vec<u8>,
+    },
+    /// Cargo remained active without another emitted output chunk.
+    CargoHeartbeat {
+        /// Time elapsed since Cargo started.
+        elapsed: Duration,
+    },
+    /// Cargo exited and all captured output was drained.
+    CargoFinished {
+        /// Whether Cargo reported success.
+        success: bool,
+        /// Portable exit code when the platform exposes one.
+        code: Option<i32>,
+        /// Complete Cargo execution duration.
+        elapsed: Duration,
+    },
+    /// The complete cacheable build operation succeeded.
+    Finished {
+        /// Whether Cargo ran or an exact entry was reused.
+        outcome: WasmBuildProgressOutcome,
+        /// Exact fingerprint selected by the operation.
+        fingerprint: InputDigest,
+        /// Total operation duration.
+        elapsed: Duration,
+    },
+}
+
+impl Default for WasmBuildProgressConfig {
+    fn default() -> Self {
+        Self {
+            heartbeat_interval: Some(Duration::from_secs(10)),
+            emit_cargo_output: true,
+        }
+    }
+}
+
+impl WasmBuildProgressConfig {
+    /// Observe Cargo output and emit a heartbeat at least every ten quiet seconds.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Select the maximum quiet interval between Cargo heartbeat events.
+    ///
+    /// A zero interval is rejected before any build work begins.
+    #[must_use]
+    pub const fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat_interval = Some(interval);
+        self
+    }
+
+    /// Disable time-based heartbeats while retaining phase and output events.
+    #[must_use]
+    pub const fn without_heartbeats(mut self) -> Self {
+        self.heartbeat_interval = None;
+        self
+    }
+
+    /// Select whether raw Cargo stdout/stderr chunks are forwarded.
+    ///
+    /// Output is always captured for structured build failures.
+    #[must_use]
+    pub const fn with_cargo_output(mut self, emit: bool) -> Self {
+        self.emit_cargo_output = emit;
+        self
+    }
+
+    /// Configured heartbeat interval, or `None` when disabled.
+    #[must_use]
+    pub const fn heartbeat_interval(self) -> Option<Duration> {
+        self.heartbeat_interval
+    }
+
+    /// Whether raw Cargo output chunks are emitted to the observer.
+    #[must_use]
+    pub const fn emits_cargo_output(self) -> bool {
+        self.emit_cargo_output
+    }
+}
+
+struct ProgressReporter<'a> {
+    config: WasmBuildProgressConfig,
+    observer: Option<&'a mut dyn FnMut(WasmBuildProgressEvent)>,
+}
+
+impl ProgressReporter<'_> {
+    fn silent() -> Self {
+        Self {
+            config: WasmBuildProgressConfig {
+                heartbeat_interval: None,
+                emit_cargo_output: false,
+            },
+            observer: None,
+        }
+    }
+
+    fn emit(&mut self, event: WasmBuildProgressEvent) {
+        if let Some(observer) = &mut self.observer {
+            observer(event);
+        }
+    }
+
+    const fn is_observed(&self) -> bool {
+        self.observer.is_some()
+    }
 }
 
 /// Wasm-cache compatibility name for generic artifact-cache retention limits.
@@ -659,6 +866,102 @@ impl SharedIncrementalTargetInspection {
     }
 }
 
+impl SharedIncrementalTargetPrunePolicy {
+    /// Create an explicit policy without a clearing threshold.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            max_age: None,
+            max_size_bytes: None,
+        }
+    }
+
+    /// Clear shared Cargo state when its recorded use is older than `max_age`.
+    #[must_use]
+    pub const fn with_max_age(mut self, max_age: Duration) -> Self {
+        self.max_age = Some(max_age);
+        self
+    }
+
+    /// Clear shared Cargo state when its logical size exceeds `bytes`.
+    #[must_use]
+    pub const fn with_max_size_bytes(mut self, bytes: u64) -> Self {
+        self.max_size_bytes = Some(bytes);
+        self
+    }
+
+    /// Configured maximum time since recorded build use.
+    #[must_use]
+    pub const fn max_age(self) -> Option<Duration> {
+        self.max_age
+    }
+
+    /// Configured maximum logical target size.
+    #[must_use]
+    pub const fn max_size_bytes(self) -> Option<u64> {
+        self.max_size_bytes
+    }
+}
+
+impl SharedIncrementalTargetMaintenance {
+    /// Canonical shared Cargo target directory maintained under lock.
+    #[must_use]
+    pub fn target_dir(&self) -> &Path {
+        &self.target_dir
+    }
+
+    /// Logical bytes observed before applying the policy.
+    #[must_use]
+    pub const fn logical_size_bytes_before(&self) -> u64 {
+        self.logical_size_bytes_before
+    }
+
+    /// Logical bytes retained after applying the policy.
+    #[must_use]
+    pub const fn logical_size_bytes_after(&self) -> u64 {
+        self.logical_size_bytes_after
+    }
+
+    /// Most recent build use observed before applying the policy.
+    #[must_use]
+    pub const fn last_used_before(&self) -> SystemTime {
+        self.last_used_before
+    }
+
+    /// Whether a configured limit caused the mutable target contents to be cleared.
+    #[must_use]
+    pub const fn was_cleared(&self) -> bool {
+        self.cleared
+    }
+
+    /// Time spent waiting for another process using the shared target.
+    #[must_use]
+    pub const fn lock_wait(&self) -> Duration {
+        self.lock_wait
+    }
+
+    /// Time spent measuring and, when required, clearing the target.
+    #[must_use]
+    pub const fn maintenance(&self) -> Duration {
+        self.maintenance
+    }
+}
+
+impl std::fmt::Display for SharedIncrementalTargetMaintenance {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "target={} action={} bytes={}=>{} lock={:?} maintenance={:?}",
+            self.target_dir.display(),
+            if self.cleared { "cleared" } else { "retained" },
+            self.logical_size_bytes_before,
+            self.logical_size_bytes_after,
+            self.lock_wait,
+            self.maintenance,
+        )
+    }
+}
+
 impl std::fmt::Display for WasmBuildTimings {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -749,6 +1052,126 @@ pub fn inspect_shared_incremental_target(
     }))
 }
 
+/// Apply explicit whole-target retention to caller-owned shared Cargo state.
+///
+/// Returns `None` without creating anything when the target does not exist.
+/// Policy evaluation and any clearing occur under the same cross-process lock
+/// used by shared-incremental builds. The target root, `CACHEDIR.TAG`, and
+/// `.ic-testkit` lock metadata are preserved, so another process cannot enter
+/// through a replacement lock while maintenance is active.
+/// Every other target child is removed when a limit is exceeded; unrelated
+/// data that must survive must not be colocated there. Exact Cargo input
+/// resolution first rejects targets overlapping source or configuration.
+///
+/// This function is never called automatically by exact Wasm acquisitions.
+/// Consumers retain ownership of when mutable incremental state may be lost.
+pub fn maintain_shared_incremental_target(
+    spec: &WasmBuildSpec,
+    policy: SharedIncrementalTargetPrunePolicy,
+) -> Result<Option<SharedIncrementalTargetMaintenance>, WasmBuildError> {
+    let target_dir =
+        shared_incremental_target(spec).ok_or_else(|| WasmBuildError::InvalidSpec {
+            message: "shared incremental target is not configured".to_owned(),
+        })?;
+    match fs::symlink_metadata(&target_dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => {
+            return Err(WasmBuildError::InvalidSpec {
+                message: format!(
+                    "shared incremental Cargo target {} must be a directory",
+                    target_dir.display()
+                ),
+            });
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(WasmBuildError::Io {
+                operation: "inspect shared incremental Cargo target before maintenance",
+                path: target_dir,
+                source,
+            });
+        }
+    }
+
+    // Reuse the exact build resolver so destructive maintenance cannot act on
+    // a target that overlaps Cargo sources, configuration, or additional
+    // inputs. The target itself is excluded as generated state during hashing.
+    let _ = resolve_cargo_build_inputs(spec)?;
+    let (_lock, lock_wait, canonical) = lock_shared_incremental_target(spec)?;
+    let started = Instant::now();
+    let logical_size_bytes_before =
+        directory_logical_size(&canonical).map_err(|source| WasmBuildError::Io {
+            operation: "measure shared incremental Cargo target before maintenance",
+            path: canonical.clone(),
+            source,
+        })?;
+    let last_used_before =
+        cache_entry_last_used(&canonical).map_err(|source| WasmBuildError::Io {
+            operation: "read shared incremental Cargo target use time before maintenance",
+            path: canonical.clone(),
+            source,
+        })?;
+    let expired = policy.max_age.is_some_and(|max_age| {
+        SystemTime::now()
+            .duration_since(last_used_before)
+            .is_ok_and(|age| age > max_age)
+    });
+    let oversized = policy
+        .max_size_bytes
+        .is_some_and(|max_size_bytes| logical_size_bytes_before > max_size_bytes);
+    let cleared = expired || oversized;
+    if cleared {
+        clear_shared_incremental_target_contents(&canonical)?;
+        record_cache_entry_use(&canonical)?;
+    }
+    let logical_size_bytes_after = if cleared {
+        directory_logical_size(&canonical).map_err(|source| WasmBuildError::Io {
+            operation: "measure shared incremental Cargo target after maintenance",
+            path: canonical.clone(),
+            source,
+        })?
+    } else {
+        logical_size_bytes_before
+    };
+    Ok(Some(SharedIncrementalTargetMaintenance {
+        target_dir: canonical,
+        logical_size_bytes_before,
+        logical_size_bytes_after,
+        last_used_before,
+        cleared,
+        lock_wait,
+        maintenance: started.elapsed(),
+    }))
+}
+
+fn clear_shared_incremental_target_contents(target_dir: &Path) -> Result<(), WasmBuildError> {
+    let entries = fs::read_dir(target_dir).map_err(|source| WasmBuildError::Io {
+        operation: "read shared incremental Cargo target for maintenance",
+        path: target_dir.to_owned(),
+        source,
+    })?;
+    for entry in entries {
+        let path = entry
+            .map_err(|source| WasmBuildError::Io {
+                operation: "read shared incremental Cargo target entry for maintenance",
+                path: target_dir.to_owned(),
+                source,
+            })?
+            .path();
+        let preserved = path
+            .file_name()
+            .is_some_and(|name| name == ".ic-testkit" || name == "CACHEDIR.TAG");
+        if !preserved {
+            remove_path_if_present(&path).map_err(|source| WasmBuildError::Io {
+                operation: "clear shared incremental Cargo target entry",
+                path,
+                source,
+            })?;
+        }
+    }
+    Ok(())
+}
+
 /// Build or reuse one exact set of Cargo Wasm artifacts.
 ///
 /// The operation takes an exclusive process lock scoped to `target_dir`, then
@@ -758,19 +1181,60 @@ pub fn inspect_shared_incremental_target(
 pub fn build_wasm_canisters_cached(
     spec: &WasmBuildSpec,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
+    build_wasm_canisters_cached_internal(spec, &mut ProgressReporter::silent())
+}
+
+/// Build or reuse one exact Wasm set while streaming structured progress.
+///
+/// Cargo output remains captured for [`WasmBuildError::CommandFailed`] and is
+/// additionally forwarded as raw chunks when enabled. Quiet Cargo processes
+/// emit periodic heartbeats, so a legitimate cold build need not appear
+/// stalled. Observer panics propagate after terminating the child process and
+/// preserving normal incomplete-entry cleanup.
+pub fn build_wasm_canisters_cached_with_progress<F>(
+    spec: &WasmBuildSpec,
+    config: WasmBuildProgressConfig,
+    mut observer: F,
+) -> Result<WasmBuildOutcome, WasmBuildError>
+where
+    F: FnMut(WasmBuildProgressEvent),
+{
+    if config.heartbeat_interval == Some(Duration::ZERO) {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "Wasm build progress heartbeat interval must be greater than zero".to_owned(),
+        });
+    }
+    build_wasm_canisters_cached_internal(
+        spec,
+        &mut ProgressReporter {
+            config,
+            observer: Some(&mut observer),
+        },
+    )
+}
+
+fn build_wasm_canisters_cached_internal(
+    spec: &WasmBuildSpec,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<WasmBuildOutcome, WasmBuildError> {
     let total_started = Instant::now();
     validate_spec(spec)?;
+    progress.emit(WasmBuildProgressEvent::Started);
     let (cache_lock, first_lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
 
-    let resolved = build_fingerprint(spec)?;
+    let resolved = resolve_inputs_with_progress(spec, progress)?;
     if let Some(outcome) =
         try_reuse_wasm_artifacts(spec, &resolved, first_lock_wait, None, total_started)?
     {
+        emit_finished_progress(&outcome, progress);
         return Ok(outcome);
     }
+    progress.emit(WasmBuildProgressEvent::CacheMiss {
+        fingerprint: resolved.fingerprint,
+    });
 
-    match &spec.cache_mode {
+    let outcome = match &spec.cache_mode {
         WasmBuildCacheMode::Isolated => {
             let cache_entry = cache_entry_directory(spec, resolved.fingerprint);
             build_wasm_cache_miss(
@@ -780,16 +1244,26 @@ pub fn build_wasm_canisters_cached(
                 None,
                 cache_entry,
                 total_started,
+                progress,
             )
         }
         WasmBuildCacheMode::SharedIncremental { .. } => {
             drop(cache_lock);
+            let configured_target = shared_incremental_target(spec)
+                .expect("shared cache mode must resolve a shared Cargo target");
+            progress.emit(WasmBuildProgressEvent::SharedTargetLockStarted {
+                target_dir: configured_target,
+            });
             let (shared_lock, shared_lock_wait, shared_target) =
                 lock_shared_incremental_target(spec)?;
+            progress.emit(WasmBuildProgressEvent::SharedTargetLockAcquired {
+                target_dir: shared_target.clone(),
+                wait: shared_lock_wait,
+            });
             let (_cache_lock, second_lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
             ensure_cache_directory_tag(&spec.target_dir)?;
 
-            let mut current = build_fingerprint(spec)?;
+            let mut current = resolve_inputs_with_progress(spec, progress)?;
             current.timings.include(resolved.timings);
             let lock_wait = first_lock_wait.saturating_add(second_lock_wait);
             if let Some(outcome) = try_reuse_wasm_artifacts(
@@ -799,6 +1273,7 @@ pub fn build_wasm_canisters_cached(
                 Some(shared_lock_wait),
                 total_started,
             )? {
+                emit_finished_progress(&outcome, progress);
                 return Ok(outcome);
             }
 
@@ -809,11 +1284,43 @@ pub fn build_wasm_canisters_cached(
                 Some(shared_lock_wait),
                 shared_target,
                 total_started,
+                progress,
             );
             drop(shared_lock);
             outcome
         }
-    }
+    }?;
+    emit_finished_progress(&outcome, progress);
+    Ok(outcome)
+}
+
+fn resolve_inputs_with_progress(
+    spec: &WasmBuildSpec,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
+    let resolved = build_fingerprint(spec)?;
+    progress.emit(WasmBuildProgressEvent::InputsResolved {
+        fingerprint: resolved.fingerprint,
+        input_digest: resolved.input_digest,
+        elapsed: resolved.timings.total,
+    });
+    Ok(resolved)
+}
+
+fn emit_finished_progress(outcome: &WasmBuildOutcome, progress: &mut ProgressReporter<'_>) {
+    let state = if outcome.is_reused() {
+        progress.emit(WasmBuildProgressEvent::CacheHit {
+            fingerprint: outcome.record().fingerprint,
+        });
+        WasmBuildProgressOutcome::Reused
+    } else {
+        WasmBuildProgressOutcome::Built
+    };
+    progress.emit(WasmBuildProgressEvent::Finished {
+        outcome: state,
+        fingerprint: outcome.record().fingerprint,
+        elapsed: outcome.record().timings.total,
+    });
 }
 
 fn try_reuse_wasm_artifacts(
@@ -873,6 +1380,7 @@ fn build_wasm_cache_miss(
     shared_incremental_lock_wait: Option<Duration>,
     cargo_target_dir: PathBuf,
     total_started: Instant,
+    progress: &mut ProgressReporter<'_>,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
     let fingerprint = resolved.fingerprint;
     let mut input_resolution = resolved.timings;
@@ -892,7 +1400,7 @@ fn build_wasm_cache_miss(
             record_cache_entry_use(&cargo_target_dir)?;
         }
         let build_started = Instant::now();
-        run_cargo_build(spec, &cargo_target_dir)?;
+        run_cargo_build(spec, &cargo_target_dir, progress)?;
         let cargo_build = build_started.elapsed();
         let built_artifacts = expected_artifacts(spec, &cargo_target_dir);
         let missing = missing_artifacts(&built_artifacts);
@@ -900,7 +1408,7 @@ fn build_wasm_cache_miss(
             return Err(WasmBuildError::MissingArtifacts { paths: missing });
         }
 
-        let verified = build_fingerprint(spec)?;
+        let verified = resolve_inputs_with_progress(spec, progress)?;
         input_resolution.include(verified.timings);
         if fingerprint != verified.fingerprint {
             return Err(WasmBuildError::InputsChangedDuringBuild {
@@ -1714,6 +2222,22 @@ fn validate_shared_incremental_target_boundary(
             path: shared_target.clone(),
             source,
         })?;
+    let resolved_inputs = inputs
+        .iter()
+        .map(|(_, input)| {
+            let canonical = input.canonicalize().map_err(|source| WasmBuildError::Io {
+                operation: "resolve Cargo input boundary",
+                path: input.clone(),
+                source,
+            })?;
+            let metadata = fs::metadata(&canonical).map_err(|source| WasmBuildError::Io {
+                operation: "inspect Cargo input boundary",
+                path: canonical.clone(),
+                source,
+            })?;
+            Ok((canonical, metadata.is_dir()))
+        })
+        .collect::<Result<Vec<_>, WasmBuildError>>()?;
     let safe_generated_roots = std::iter::once(spec.target_dir.clone())
         .chain(std::iter::once(spec.workspace_root.join("target")))
         .chain(
@@ -1723,6 +2247,11 @@ fn validate_shared_incremental_target_boundary(
                 .map(|(_, path)| path.join("target")),
         )
         .filter_map(|path| canonicalize_allow_missing(&path).ok())
+        .filter(|root| {
+            !resolved_inputs
+                .iter()
+                .any(|(input, _is_directory)| input.starts_with(root))
+        })
         .collect::<Vec<_>>();
     if safe_generated_roots
         .iter()
@@ -1731,21 +2260,14 @@ fn validate_shared_incremental_target_boundary(
         return Ok(());
     }
 
-    for (_, input) in inputs {
-        let input = input.canonicalize().map_err(|source| WasmBuildError::Io {
-            operation: "resolve Cargo input boundary",
-            path: input.clone(),
-            source,
-        })?;
-        let metadata = fs::metadata(&input).map_err(|source| WasmBuildError::Io {
-            operation: "inspect Cargo input boundary",
-            path: input.clone(),
-            source,
-        })?;
-        if shared_target == input || (metadata.is_dir() && shared_target.starts_with(&input)) {
+    for (input, is_directory) in resolved_inputs {
+        if shared_target == input
+            || (is_directory && shared_target.starts_with(&input))
+            || input.starts_with(&shared_target)
+        {
             return Err(WasmBuildError::InvalidSpec {
                 message: format!(
-                    "shared incremental target {} must be outside exact Cargo inputs or inside a generated target directory",
+                    "shared incremental target {} must not overlap exact Cargo inputs unless it is inside a generated target directory",
                     shared_target.display()
                 ),
             });
@@ -1815,7 +2337,11 @@ fn apply_command_environment(command: &mut Command, spec: &WasmBuildSpec) {
     }
 }
 
-fn run_cargo_build(spec: &WasmBuildSpec, build_target_dir: &Path) -> Result<(), WasmBuildError> {
+fn run_cargo_build(
+    spec: &WasmBuildSpec,
+    build_target_dir: &Path,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<(), WasmBuildError> {
     let mut command = Command::new(&spec.cargo_program);
     command
         .current_dir(&spec.workspace_root)
@@ -1827,14 +2353,224 @@ fn run_cargo_build(spec: &WasmBuildSpec, build_target_dir: &Path) -> Result<(), 
         command.args(["-p", package]);
     }
 
-    let output = command
-        .output()
+    if !progress.is_observed() {
+        let output = command
+            .output()
+            .map_err(|source| WasmBuildError::CommandSpawn {
+                phase: WasmBuildPhase::CargoBuild,
+                program: spec.cargo_program.clone(),
+                source,
+            })?;
+        return ensure_command_success(WasmBuildPhase::CargoBuild, output).map(|_| ());
+    }
+
+    run_observed_cargo_build(spec, build_target_dir, command, progress)
+}
+
+fn run_observed_cargo_build(
+    spec: &WasmBuildSpec,
+    build_target_dir: &Path,
+    mut command: Command,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<(), WasmBuildError> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let started = Instant::now();
+    let child = command
+        .spawn()
         .map_err(|source| WasmBuildError::CommandSpawn {
             phase: WasmBuildPhase::CargoBuild,
             program: spec.cargo_program.clone(),
             source,
         })?;
-    ensure_command_success(WasmBuildPhase::CargoBuild, output).map(|_| ())
+    let mut child = ObservedChild::new(child);
+    progress.emit(WasmBuildProgressEvent::CargoStarted {
+        target_dir: build_target_dir.to_owned(),
+    });
+
+    let stdout = child
+        .child_mut()
+        .stdout
+        .take()
+        .expect("Cargo stdout must be piped");
+    let stderr = child
+        .child_mut()
+        .stderr
+        .take()
+        .expect("Cargo stderr must be piped");
+    let (sender, chunks) = mpsc::channel();
+    let stdout_sender = sender.clone();
+    let stdout_reader = thread::spawn(move || {
+        read_process_output(stdout, WasmBuildOutputStream::Stdout, stdout_sender)
+    });
+    let stderr_reader =
+        thread::spawn(move || read_process_output(stderr, WasmBuildOutputStream::Stderr, sender));
+
+    let captured = capture_observed_cargo_output(chunks, progress, started);
+
+    let status = child.wait().map_err(|source| WasmBuildError::Io {
+        operation: "wait for observed cargo build",
+        path: PathBuf::from(&spec.cargo_program),
+        source,
+    })?;
+    join_output_reader(
+        stdout_reader,
+        "read observed cargo stdout",
+        &spec.cargo_program,
+    )?;
+    join_output_reader(
+        stderr_reader,
+        "read observed cargo stderr",
+        &spec.cargo_program,
+    )?;
+    let elapsed = started.elapsed();
+    progress.emit(WasmBuildProgressEvent::CargoFinished {
+        success: status.success(),
+        code: status.code(),
+        elapsed,
+    });
+
+    ensure_command_success(
+        WasmBuildPhase::CargoBuild,
+        Output {
+            status,
+            stdout: captured.stdout,
+            stderr: captured.stderr,
+        },
+    )
+    .map(|_| ())
+}
+
+struct CapturedProcessOutput {
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+fn capture_observed_cargo_output(
+    chunks: mpsc::Receiver<ProcessOutputChunk>,
+    progress: &mut ProgressReporter<'_>,
+    started: Instant,
+) -> CapturedProcessOutput {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut last_emitted = Instant::now();
+    loop {
+        let message = match progress.config.heartbeat_interval {
+            Some(interval) => {
+                let quiet_for = last_emitted.elapsed();
+                if quiet_for >= interval {
+                    progress.emit(WasmBuildProgressEvent::CargoHeartbeat {
+                        elapsed: started.elapsed(),
+                    });
+                    last_emitted = Instant::now();
+                    None
+                } else {
+                    match chunks.recv_timeout(interval.saturating_sub(quiet_for)) {
+                        Ok(chunk) => Some(chunk),
+                        Err(RecvTimeoutError::Timeout) => {
+                            progress.emit(WasmBuildProgressEvent::CargoHeartbeat {
+                                elapsed: started.elapsed(),
+                            });
+                            last_emitted = Instant::now();
+                            None
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+            }
+            None => match chunks.recv() {
+                Ok(chunk) => Some(chunk),
+                Err(_) => break,
+            },
+        };
+        let Some(chunk) = message else {
+            continue;
+        };
+        match chunk.stream {
+            WasmBuildOutputStream::Stdout => stdout.extend_from_slice(&chunk.bytes),
+            WasmBuildOutputStream::Stderr => stderr.extend_from_slice(&chunk.bytes),
+        }
+        if progress.config.emit_cargo_output {
+            progress.emit(WasmBuildProgressEvent::CargoOutput {
+                stream: chunk.stream,
+                bytes: chunk.bytes,
+            });
+            last_emitted = Instant::now();
+        }
+    }
+    CapturedProcessOutput { stdout, stderr }
+}
+
+#[derive(Debug)]
+struct ProcessOutputChunk {
+    stream: WasmBuildOutputStream,
+    bytes: Vec<u8>,
+}
+
+fn read_process_output<R: io::Read>(
+    mut reader: R,
+    stream: WasmBuildOutputStream,
+    sender: mpsc::Sender<ProcessOutputChunk>,
+) -> io::Result<()> {
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            return Ok(());
+        }
+        if sender
+            .send(ProcessOutputChunk {
+                stream,
+                bytes: buffer[..count].to_vec(),
+            })
+            .is_err()
+        {
+            return Ok(());
+        }
+    }
+}
+
+fn join_output_reader(
+    reader: thread::JoinHandle<io::Result<()>>,
+    operation: &'static str,
+    cargo_program: &OsStr,
+) -> Result<(), WasmBuildError> {
+    let result = reader.join().map_err(|_| WasmBuildError::Io {
+        operation,
+        path: PathBuf::from(cargo_program),
+        source: io::Error::other("Cargo output reader panicked"),
+    })?;
+    result.map_err(|source| WasmBuildError::Io {
+        operation,
+        path: PathBuf::from(cargo_program),
+        source,
+    })
+}
+
+struct ObservedChild(Option<Child>);
+
+impl ObservedChild {
+    const fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+
+    const fn child_mut(&mut self) -> &mut Child {
+        self.0.as_mut().expect("observed child must be present")
+    }
+
+    fn wait(&mut self) -> io::Result<ExitStatus> {
+        let status = self.child_mut().wait()?;
+        self.0.take();
+        Ok(status)
+    }
+}
+
+impl Drop for ObservedChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn ensure_command_success(phase: WasmBuildPhase, output: Output) -> Result<Output, WasmBuildError> {
@@ -2093,11 +2829,13 @@ impl std::error::Error for WasmBuildError {
 #[cfg(test)]
 mod tests {
     use super::{
-        IncompleteBuildDirectory, WasmBuildCachePrunePolicy, WasmBuildError, WasmBuildOutcome,
-        WasmBuildSpec, append_cargo_configuration_inputs, ensure_cache_directory_tag,
-        finish_fingerprint_build, inspect_shared_incremental_target, metadata_arguments,
-        prune_wasm_build_cache, prune_wasm_build_cache_locked, resolve_cargo_build_inputs,
-        validate_spec,
+        IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetPrunePolicy,
+        WasmBuildCachePrunePolicy, WasmBuildError, WasmBuildOutcome, WasmBuildOutputStream,
+        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
+        append_cargo_configuration_inputs, build_wasm_canisters_cached_with_progress,
+        ensure_cache_directory_tag, finish_fingerprint_build, inspect_shared_incremental_target,
+        maintain_shared_incremental_target, metadata_arguments, prune_wasm_build_cache,
+        prune_wasm_build_cache_locked, resolve_cargo_build_inputs, run_cargo_build, validate_spec,
     };
     use crate::artifacts::cache_fs::{
         CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size, write_last_used,
@@ -2110,6 +2848,9 @@ mod tests {
         path::{Path, PathBuf},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
 
     #[test]
     fn metadata_receives_only_resolution_arguments() {
@@ -2191,10 +2932,28 @@ mod tests {
                 .expect("rehash changed resolved inputs")
         );
 
-        let unsafe_target =
-            spec.with_shared_incremental_target(package.join("src/generated-target"));
+        let unsafe_path = package.join("src/generated-target");
+        let unsafe_target = spec.clone().with_shared_incremental_target(&unsafe_path);
         assert!(matches!(
             resolve_cargo_build_inputs(&unsafe_target),
+            Err(WasmBuildError::InvalidSpec { .. })
+        ));
+        fs::create_dir_all(&unsafe_path).expect("create unsafe maintenance target");
+        let sentinel = unsafe_path.join("source-sentinel");
+        fs::write(&sentinel, b"preserve").expect("write unsafe maintenance sentinel");
+        let maintenance = maintain_shared_incremental_target(
+            &unsafe_target,
+            SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0),
+        );
+        assert!(
+            matches!(maintenance, Err(WasmBuildError::InvalidSpec { .. })),
+            "unsafe maintenance returned {maintenance:?}",
+        );
+        assert!(sentinel.is_file());
+
+        let broad_target = spec.with_shared_incremental_target(&root);
+        assert!(matches!(
+            resolve_cargo_build_inputs(&broad_target),
             Err(WasmBuildError::InvalidSpec { .. })
         ));
         fs::remove_dir_all(root).expect("remove Cargo input fixture");
@@ -2227,6 +2986,174 @@ mod tests {
         );
         assert!(!target.exists());
         fs::remove_dir_all(root).expect("remove shared-target inspection fixture");
+    }
+
+    #[test]
+    fn shared_target_maintenance_clears_cargo_state_but_preserves_coordination() {
+        let root = unique_temp_directory("shared-target-maintenance");
+        let package = root.join("fixture");
+        fs::create_dir_all(package.join("src")).expect("create maintenance fixture package");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+        )
+        .expect("write maintenance fixture workspace");
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write maintenance fixture manifest");
+        fs::write(package.join("src/lib.rs"), "pub fn fixture() {}\n")
+            .expect("write maintenance fixture source");
+        let target = root.join("shared-target");
+        fs::create_dir_all(target.join("debug/deps")).expect("create shared Cargo state");
+        fs::write(target.join("debug/deps/object.o"), vec![7_u8; 128])
+            .expect("write shared Cargo state");
+        fs::write(target.join(".rustc_info.json"), b"rustc state")
+            .expect("write shared Cargo metadata");
+        let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+            .with_shared_incremental_target(&target);
+
+        let report = maintain_shared_incremental_target(
+            &spec,
+            SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0),
+        )
+        .expect("maintain shared target")
+        .expect("existing shared target report");
+
+        assert!(report.was_cleared());
+        assert!(report.logical_size_bytes_before() > report.logical_size_bytes_after());
+        assert!(!target.join("debug").exists());
+        assert!(!target.join(".rustc_info.json").exists());
+        assert!(target.join("CACHEDIR.TAG").is_file());
+        assert!(target.join(".ic-testkit/wasm-incremental.lock").is_file());
+
+        let retained =
+            maintain_shared_incremental_target(&spec, SharedIncrementalTargetPrunePolicy::new())
+                .expect("reinspect shared target")
+                .expect("existing shared target report");
+        assert!(!retained.was_cleared());
+        assert_eq!(
+            retained.logical_size_bytes_before(),
+            retained.logical_size_bytes_after()
+        );
+        fs::remove_dir_all(root).expect("remove shared-target maintenance fixture");
+    }
+
+    #[test]
+    fn zero_progress_heartbeat_is_rejected_before_build_validation() {
+        let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug");
+        let result = build_wasm_canisters_cached_with_progress(
+            &spec,
+            WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::ZERO),
+            |_| {},
+        );
+        assert!(
+            matches!(result, Err(WasmBuildError::InvalidSpec { message }) if message.contains("heartbeat"))
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
+        let root = unique_temp_directory("observed-cargo-progress");
+        let cargo = root.join("observed-cargo.sh");
+        fs::write(
+            &cargo,
+            "#!/bin/sh\nprintf 'observed-stdout'\nprintf 'observed-stderr' >&2\nsleep 0.05\n",
+        )
+        .expect("write observed Cargo fixture");
+        let mut permissions = fs::metadata(&cargo)
+            .expect("read script metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&cargo, permissions).expect("make Cargo fixture executable");
+        let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+            .with_cargo_program(&cargo);
+        let mut events = Vec::new();
+        let mut observer = |event| events.push(event);
+        let mut progress = ProgressReporter {
+            config: WasmBuildProgressConfig::new()
+                .with_heartbeat_interval(Duration::from_millis(10)),
+            observer: Some(&mut observer),
+        };
+
+        run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
+            .expect("run observed Cargo fixture");
+        drop(progress);
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        for event in &events {
+            if let WasmBuildProgressEvent::CargoOutput { stream, bytes } = event {
+                match stream {
+                    WasmBuildOutputStream::Stdout => stdout.extend_from_slice(bytes),
+                    WasmBuildOutputStream::Stderr => stderr.extend_from_slice(bytes),
+                }
+            }
+        }
+        assert_eq!(stdout, b"observed-stdout");
+        assert_eq!(stderr, b"observed-stderr");
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, WasmBuildProgressEvent::CargoHeartbeat { .. }))
+        );
+        assert!(events.iter().any(|event| matches!(
+            event,
+            WasmBuildProgressEvent::CargoFinished { success: true, .. }
+        )));
+        fs::remove_dir_all(root).expect("remove observed Cargo fixture");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
+        let root = unique_temp_directory("observed-cargo-failure");
+        let cargo = root.join("failing-cargo.sh");
+        fs::write(
+            &cargo,
+            "#!/bin/sh\nprintf 'failure-stdout'\nprintf 'failure-stderr' >&2\nexit 23\n",
+        )
+        .expect("write failing Cargo fixture");
+        let mut permissions = fs::metadata(&cargo)
+            .expect("read script metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&cargo, permissions).expect("make Cargo fixture executable");
+        let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+            .with_cargo_program(&cargo);
+        let mut events = Vec::new();
+        let mut observer = |event| events.push(event);
+        let mut progress = ProgressReporter {
+            config: WasmBuildProgressConfig::new().without_heartbeats(),
+            observer: Some(&mut observer),
+        };
+
+        let error = run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
+            .expect_err("Cargo fixture must fail");
+        drop(progress);
+
+        assert!(matches!(
+            error,
+            WasmBuildError::CommandFailed {
+                status,
+                stdout,
+                stderr,
+                ..
+            } if status.code() == Some(23)
+                && stdout == "failure-stdout"
+                && stderr == "failure-stderr"
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            WasmBuildProgressEvent::CargoFinished {
+                success: false,
+                code: Some(23),
+                ..
+            }
+        )));
+        fs::remove_dir_all(root).expect("remove failing observed Cargo fixture");
     }
 
     #[test]

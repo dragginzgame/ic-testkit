@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-06 - Independent artifact orchestration
+
+### Added
+
+- Adds independent cached-Wasm batch orchestration that deliberately runs one
+  Cargo command per `WasmBuildSpec`, preserving each package set's standalone
+  dependency-feature resolution while reporting ordered outcomes and the
+  successful prefix of a failed batch.
+- Adds opt-in structured Wasm build progress with input-resolution and lock
+  phases, raw OS-native Cargo stdout/stderr chunks, configurable quiet-period
+  heartbeats, exit status, and final cache outcome events. Existing build APIs
+  remain silent.
+- Adds sequential independent transactional artifact batching with at most one
+  live miss transaction, synchronous cleanup after caller build errors, and
+  explicit non-atomic failure semantics.
+- Adds explicit lock-coordinated shared Cargo target retention. Callers may
+  clear the complete mutable compilation state by age or logical-size limit
+  while preserving the target root, cache tag, and process-lock metadata.
+
+### Changed
+
+- Strengthens shared incremental-target boundary validation to reject overlap
+  in either direction with exact Cargo inputs. Destructive maintenance reruns
+  exact input resolution before clearing and leaves unsafe targets untouched.
+
+### Testing
+
+- Adds focused feature-isolation, progress-streaming, shared-target retention,
+  transactional batch reuse, and failed-builder cleanup regressions.
+
 ## [0.6.1] - 2026-08-06 - Exact cache integration refinements
 
 ### Added

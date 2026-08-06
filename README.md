@@ -16,10 +16,11 @@
   <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/cave.png" alt="ic-testkit banner" width="640">
 </p>
 
-`ic-testkit` is a focused test-harness layer around
-[`pocket-ic`](https://crates.io/crates/pocket-ic). It re-exports PocketIC's
-primary native types and adds reusable behavior where a harness benefits from
-typed errors, deterministic policy, or shared test infrastructure.
+`ic-testkit` is test infrastructure for Internet Computer applications that
+have outgrown one-off PocketIC scripts. It keeps
+[`pocket-ic`](https://crates.io/crates/pocket-ic) visible while adding reusable
+building blocks for typed calls, multi-canister fixtures, safe baseline reuse,
+reproducible Wasm pipelines, diagnostics, and performance reports.
 
 It does not wrap the simulator, mirror PocketIC's API, manage a second server
 binary cache, or serialize independent PocketIC instances.
@@ -30,13 +31,68 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.3.1"
+ic-testkit = "0.6.1"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
 `[dependencies]` and use `ic_testkit::performance`.
 
 The crate supports Rust 1.88 and uses PocketIC 15.
+
+## Features for application-scale test suites
+
+Complex applications tend to make test infrastructure expensive in several
+dimensions at once: many Wasm variants must be built, a topology must be
+installed and seeded, state must be reset honestly between tests, and failures
+must retain enough context to diagnose in CI. The main features are designed to
+compose across that complete loop:
+
+| Test-suite need | What ic-testkit provides | Why it matters |
+| --- | --- | --- |
+| Exercise the real topology | Direct `PocketIc` access, generic installation, caller-owned multi-canister recipes | Tests can model their actual canister graph without fitting it into a framework-owned abstraction |
+| Reuse expensive setup safely | Transactional snapshots, bounded fixture pools, typed reset requirements, readiness and invariant receipts | Warm tests are fast, while every reusable state domain has an explicit application-owned policy |
+| Build reproducible inputs | Content-addressed Wasm builds, transactional external artifact sets, exact freshness checks, batching and retention | Concurrent processes reuse complete artifacts and reject source, toolchain, or publication races |
+| Make failures actionable | Typed startup, Candid, install, snapshot, pool, and artifact errors with preserved causes and partial timings | A rejection stays distinct from transport failure, and recovery failures keep both the original and rebuild context |
+| Observe long and parallel suites | Structured build progress, cache/pool outcomes, phase timings, and best-effort canister diagnostics | CI logs can show whether time was spent waiting, building, restoring, validating, or recovering |
+| Catch performance regressions | Canister-side instruction and memory markers plus host-side parsing, aggregation, comparison, and report writing | Functional and performance coverage can exercise the same application workflows |
+
+### A typical complex-suite workflow
+
+1. Describe each Wasm variant with `WasmBuildSpec`; exact hits reuse immutable
+   outputs, while independent batch entries keep Cargo feature resolution
+   separate.
+2. Install and seed the application topology in a `PocketIcBaselineRecipe`,
+   including every canister and external resource relevant to the baseline.
+3. Acquire a bounded pool lease. A cold slot builds once; a warm slot restores
+   snapshots, resets non-snapshot state, drives the topology to readiness, and
+   validates final invariants before the test receives it.
+4. Drive the application through typed Candid calls. Emit structured outcomes
+   and timings, dump canister diagnostics on failure, and invalidate the lease
+   after any mutation outside the recipe's reset contract.
+5. Parse performance markers into spans, aggregates, comparisons, and reports
+   when the same scenario also has instruction or memory budgets.
+
+See the compile-checked
+[`multi_canister_baseline_pool`](crates/ic-testkit/examples/multi_canister_baseline_pool.rs)
+and
+[`transactional_artifact_cache`](crates/ic-testkit/examples/transactional_artifact_cache.rs)
+examples for complete reusable recipes.
+
+### Choose the right isolation level
+
+Not every test should use a cache. Choose the narrowest fixture that preserves
+the behavior under test:
+
+| Fixture | Best fit |
+| --- | --- |
+| Fresh caller-owned `PocketIc` | Installation, upgrade, topology, teardown, time, cycle-accounting, and snapshot behavior |
+| `StandaloneCanisterFixture` | A single installed canister with concise typed calls, but no cross-test reuse |
+| `CachedStandaloneCanisterFixturePool<N>` | Repeated single-canister scenarios whose relevant state is captured by one baseline snapshot |
+| `CachedPocketIcBaselinePool<R>` | Expensive multi-canister topologies with an explicit recipe for snapshots, non-snapshot state, readiness, and invariants |
+
+Pools bound resource use; they do not turn incomplete reset coverage into safe
+reuse. Keep a test on a fresh instance when its mutations cannot be completely
+restored or validated.
 
 ## API at a glance
 
@@ -55,7 +111,7 @@ The crate supports Rust 1.88 and uses PocketIC 15.
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
 
-`ic_testkit::pic::prelude::*` imports the six extension traits only. Data types
+`ic_testkit::pic::prelude::*` imports the seven extension traits only. Data types
 and PocketIC types remain explicit imports.
 
 ## PocketIC ownership and concurrency
@@ -545,7 +601,8 @@ retaining exact immutable final Wasm entries:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
-    WasmBuildSpec, build_wasm_canisters_cached, inspect_shared_incremental_target,
+    SharedIncrementalTargetPrunePolicy, WasmBuildSpec, build_wasm_canisters_cached,
+    inspect_shared_incremental_target, maintain_shared_incremental_target,
     resolve_cargo_build_inputs,
 };
 
@@ -564,8 +621,14 @@ let inputs = resolve_cargo_build_inputs(&spec)?;
 let outcome = build_wasm_canisters_cached(&spec)?;
 let shared_usage = inspect_shared_incremental_target(&spec)?
     .expect("the shared target exists after a cache miss");
+let maintenance = maintain_shared_incremental_target(
+    &spec,
+    SharedIncrementalTargetPrunePolicy::new()
+        .with_max_age(std::time::Duration::from_secs(7 * 24 * 60 * 60))
+        .with_max_size_bytes(4 * 1024 * 1024 * 1024),
+)?;
 eprintln!(
-    "{} inputs={} shared_bytes={} {}",
+    "{} inputs={} shared_bytes={} maintenance={maintenance:?} {}",
     inputs.fingerprint(),
     inputs.inputs().len(),
     shared_usage.logical_size_bytes(),
@@ -582,6 +645,73 @@ caller-owned incremental state. Retention owns only immutable output entries,
 not the shared Cargo target. `inspect_shared_incremental_target` takes the same
 cross-process lock and reports its canonical path, logical size, last recorded
 build use, and lock wait without removing caller-owned Cargo state.
+`maintain_shared_incremental_target` is an explicit whole-target operation: if
+an age or size threshold is exceeded it removes every other child while
+retaining the root, cache tag, and live coordination lock. Callers must not
+colocate unrelated data that needs to survive a clear. Exact Wasm acquisitions
+never invoke that maintenance automatically. Before clearing, the exact Cargo
+resolver rejects a target that overlaps source, configuration, or additional
+inputs.
+
+Long cold Cargo builds can expose synchronous structured progress without
+changing the existing silent API:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
+    build_wasm_canisters_cached_with_progress,
+};
+use std::time::Duration;
+
+# let workspace = std::path::PathBuf::from(".");
+let spec = WasmBuildSpec::new(
+    &workspace,
+    &workspace.join("target/pic-wasm"),
+    &["counter_canister"],
+    "debug",
+);
+let outcome = build_wasm_canisters_cached_with_progress(
+    &spec,
+    WasmBuildProgressConfig::new()
+        .with_heartbeat_interval(Duration::from_secs(15))
+        .with_cargo_output(false),
+    |event| {
+        if let WasmBuildProgressEvent::CargoHeartbeat { elapsed } = event {
+            eprintln!("Cargo is still running after {elapsed:?}");
+        }
+    },
+)?;
+eprintln!("{outcome}");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Observers run synchronously on the build thread and should return promptly.
+Raw output events preserve non-UTF-8 bytes; output is still captured in
+`WasmBuildError` when forwarding is disabled. An observer panic terminates and
+waits for the Cargo child before normal lock and incomplete-entry cleanup.
+
+Suites building several variants can batch independent specs without changing
+Cargo feature semantics:
+
+```rust,no_run
+use ic_testkit::artifacts::{WasmBuildSpec, build_wasm_canisters_cached_batch};
+
+# let workspace = std::path::PathBuf::from(".");
+# let target = workspace.join("target/pic-wasm");
+let specs = [
+    WasmBuildSpec::new(&workspace, &target, &["role_a"], "debug"),
+    WasmBuildSpec::new(&workspace, &target, &["role_b"], "debug"),
+];
+let batch = build_wasm_canisters_cached_batch(&specs)?;
+eprintln!("{batch}");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The batch is sequential and fail-fast. Every entry uses the ordinary
+single-spec implementation and its own exact identity, locks, policy, and
+Cargo command; packages are never collapsed into one invocation that could
+unify shared dependency features. A failure exposes the already-completed
+prefix, whose artifacts remain valid.
 
 `ResolvedCargoBuildInputs::is_current` provides the same before/after identity
 check for external Cargo-derived workflows. OS-native iterator builders ending
@@ -650,6 +780,14 @@ eprintln!("artifact key: {}", outcome.record().key());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+Multiple independent external recipes can use
+`build_artifact_caches_batch`. Its callback receives only cache misses and only
+one live transaction at a time, avoiding self-deadlock when specs share a
+coordination scope. Callback failures synchronously abort the current staging
+directory. The operation is deliberately not atomic across specs: use one
+`ArtifactCacheSpec` with several outputs when all artifacts must publish as one
+transaction.
+
 A miss transaction exposes checked staging paths for redirectable tools and an
 `import_output` helper for commands that write to fixed locations. `commit`
 accepts only the complete declared output set and publishes its manifest last;
@@ -702,6 +840,9 @@ PocketIC policy. Its complete contract is recorded in the
 [`0.5` transactional artifact-set design](docs/design/0.5-artifact-transactions/0.5-design.md).
 Shared Cargo-target ownership and exact-output guarantees are recorded in the
 [`0.6` shared-incremental Wasm design](docs/design/0.6-shared-incremental-wasm/0.6-design.md).
+Independent orchestration, progress, and explicit mutable-target maintenance
+are recorded in the
+[`0.7` artifact orchestration design](docs/design/0.7-artifact-orchestration/0.7-design.md).
 
 ## Benchmark markers and reports
 

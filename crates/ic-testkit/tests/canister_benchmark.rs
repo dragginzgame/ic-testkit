@@ -3,8 +3,9 @@ use ic_testkit::{
     artifacts::{
         ArtifactCacheError, ArtifactCachePreparation, ArtifactCacheSpec, WasmBuildCacheMaintenance,
         WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
-        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
-        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
+        build_wasm_canisters_cached_batch, inspect_shared_incremental_target,
+        prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
+        wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -25,6 +26,80 @@ use ic_testkit::artifacts::WasmBuildError;
 use std::{ffi::OsString, os::unix::fs::PermissionsExt as _};
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
+
+#[test]
+fn independent_wasm_batch_preserves_standalone_feature_resolution() {
+    let root = unique_temp_dir("ic-testkit-independent-feature-batch");
+    let workspace = root.join("workspace");
+    for package in ["shared", "feature_a", "feature_b"] {
+        fs::create_dir_all(workspace.join(package).join("src"))
+            .expect("create feature fixture package");
+    }
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"shared\", \"feature_a\", \"feature_b\"]\nresolver = \"2\"\n",
+    )
+    .expect("write feature fixture workspace");
+    fs::write(
+        workspace.join("shared/Cargo.toml"),
+        "[package]\nname = \"shared\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+         [features]\na = []\nb = []\n",
+    )
+    .expect("write shared feature manifest");
+    fs::write(
+        workspace.join("shared/src/lib.rs"),
+        "#[cfg(all(feature = \"a\", feature = \"b\"))]\n\
+         compile_error!(\"standalone package features were unified\");\n\
+         pub fn value() -> u8 { 1 }\n",
+    )
+    .expect("write shared feature source");
+    for (package, feature) in [("feature_a", "a"), ("feature_b", "b")] {
+        fs::write(
+            workspace.join(package).join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+                 [lib]\ncrate-type = [\"cdylib\"]\n\
+                 [dependencies]\nshared = {{ path = \"../shared\", features = [\"{feature}\"] }}\n"
+            ),
+        )
+        .expect("write feature canister manifest");
+        fs::write(
+            workspace.join(package).join("src/lib.rs"),
+            "#[unsafe(no_mangle)]\npub extern \"C\" fn probe() -> u8 { shared::value() }\n",
+        )
+        .expect("write feature canister source");
+    }
+    let target = root.join("exact-target");
+    let specs = [
+        WasmBuildSpec::new(&workspace, &target, &["feature_a"], "debug"),
+        WasmBuildSpec::new(&workspace, &target, &["feature_b"], "debug"),
+    ];
+
+    let batch = build_wasm_canisters_cached_batch(&specs)
+        .expect("independent feature builds must not be combined");
+
+    assert_eq!(batch.outcomes().len(), 2);
+    assert!(
+        batch
+            .outcomes()
+            .iter()
+            .all(|outcome| matches!(outcome, WasmBuildOutcome::Built(_)))
+    );
+    assert!(wasm_path(&target, "feature_a", "debug").is_file());
+    assert!(wasm_path(&target, "feature_b", "debug").is_file());
+
+    let with_invalid_tail = [
+        specs[0].clone(),
+        specs[1].clone(),
+        WasmBuildSpec::new(&workspace, &target, &[], "debug"),
+    ];
+    let error = build_wasm_canisters_cached_batch(&with_invalid_tail)
+        .expect_err("invalid trailing spec must fail after reusable prefix");
+    assert_eq!(error.failed_index(), 2);
+    assert_eq!(error.completed().len(), 2);
+    assert!(error.completed().iter().all(WasmBuildOutcome::is_reused));
+    fs::remove_dir_all(root).expect("remove independent feature fixture");
+}
 
 #[test]
 fn perf_probe_canister_emits_parseable_benchmark_markers() {

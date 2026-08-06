@@ -15,6 +15,8 @@ mod workspace;
 mod test_support;
 
 mod tool;
+mod transaction_batch;
+mod wasm_batch;
 
 pub use cache_fs::{ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport};
 pub use digest::InputDigest;
@@ -27,12 +29,23 @@ pub use transaction::{
     ArtifactCachePreparation, ArtifactCacheRecord, ArtifactCacheSpec, ArtifactCacheTimings,
     ArtifactOutputValidation, prepare_artifact_cache, prune_artifact_cache,
 };
+pub use transaction_batch::{
+    ArtifactCacheBatchError, ArtifactCacheBatchOutcome, build_artifact_caches_batch,
+};
 pub use wasm::{build_wasm_canisters, read_wasm, wasm_artifacts_ready, wasm_path};
+pub use wasm_batch::{
+    WasmBuildBatchError, WasmBuildBatchOutcome, WasmBuildBatchProgressEvent,
+    build_wasm_canisters_cached_batch, build_wasm_canisters_cached_batch_with_progress,
+};
 pub use wasm_cache::{
     CargoBuildInput, ResolvedCargoBuildInputs, SharedIncrementalTargetInspection,
+    SharedIncrementalTargetMaintenance, SharedIncrementalTargetPrunePolicy,
     WasmBuildCacheMaintenance, WasmBuildCacheMode, WasmBuildCachePrunePolicy,
-    WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome, WasmBuildPhase, WasmBuildRecord,
-    WasmBuildSpec, WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached,
-    inspect_shared_incremental_target, prune_wasm_build_cache, resolve_cargo_build_inputs,
+    WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome, WasmBuildOutputStream,
+    WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildProgressOutcome,
+    WasmBuildRecord, WasmBuildSpec, WasmBuildTimings, WasmInputResolutionTimings,
+    build_wasm_canisters_cached, build_wasm_canisters_cached_with_progress,
+    inspect_shared_incremental_target, maintain_shared_incremental_target, prune_wasm_build_cache,
+    resolve_cargo_build_inputs,
 };
 pub use workspace::{test_target_dir, workspace_root_for};
