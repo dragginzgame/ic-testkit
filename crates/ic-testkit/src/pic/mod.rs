@@ -47,8 +47,9 @@ pub use errors::{
 };
 pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
 pub use snapshot::{
-    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
-    SnapshotAttemptFailure, SnapshotCleanupFailure, SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots,
+    PocketIcCapturedSnapshotExt, PocketIcSnapshotExt, SnapshotAttemptFailure,
+    SnapshotCleanupFailure, SnapshotRestoreFunding,
 };
 pub use standalone::StandaloneCanisterFixture;
 pub use standalone_pool::{
@@ -66,7 +67,7 @@ pub use transport::is_dead_pocket_ic_transport_error;
 /// repeated trait lists across a large integration-test crate.
 pub mod prelude {
     pub use super::{
-        CandidCallExt, CanisterInstallExt, PocketIcBuilderExt, PocketIcDiagnosticsExt,
-        PocketIcSnapshotExt, PocketIcTimeExt,
+        CandidCallExt, CanisterInstallExt, PocketIcBuilderExt, PocketIcCapturedSnapshotExt,
+        PocketIcDiagnosticsExt, PocketIcSnapshotExt, PocketIcTimeExt,
     };
 }

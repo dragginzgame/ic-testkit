@@ -6,8 +6,8 @@ use std::{
 };
 
 use super::{
-    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
-    SnapshotRestoreFunding, transport,
+    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots,
+    PocketIcCapturedSnapshotExt, PocketIcSnapshotExt, SnapshotRestoreFunding, transport,
 };
 
 /// One owned PocketIC instance with captured snapshots and caller metadata.
@@ -185,6 +185,25 @@ impl<T> CachedPocketIcBaselineGuard<'_, T> {
             .expect("cached PocketIC baseline must exist")
             .restore_with_funding(controller_id, funding)
     }
+
+    /// Restore with exactly the senders retained during snapshot capture.
+    pub fn restore_with_captured_senders(&self) -> Result<(), ControllerSnapshotError> {
+        self.guard
+            .as_ref()
+            .expect("cached PocketIC baseline must exist")
+            .restore_with_captured_senders()
+    }
+
+    /// Restore with captured senders and an explicit cycle-funding policy.
+    pub fn restore_with_captured_senders_and_funding(
+        &self,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError> {
+        self.guard
+            .as_ref()
+            .expect("cached PocketIC baseline must exist")
+            .restore_with_captured_senders_and_funding(funding)
+    }
 }
 
 impl<T> CachedPocketIcBaseline<T> {
@@ -247,6 +266,21 @@ impl<T> CachedPocketIcBaseline<T> {
             &self.snapshots,
             funding,
         )
+    }
+
+    /// Restore with exactly the senders retained during snapshot capture.
+    pub fn restore_with_captured_senders(&self) -> Result<(), ControllerSnapshotError> {
+        self.pocket_ic
+            .restore_snapshots_with_captured_senders(&self.snapshots)
+    }
+
+    /// Restore with captured senders and an explicit cycle-funding policy.
+    pub fn restore_with_captured_senders_and_funding(
+        &self,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError> {
+        self.pocket_ic
+            .restore_snapshots_with_captured_senders_and_funding(&self.snapshots, funding)
     }
 
     /// Borrow the owned PocketIC instance behind this cached baseline.

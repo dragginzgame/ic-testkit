@@ -1,7 +1,7 @@
 use candid::Principal;
 use ic_testkit::pic::{
-    CanisterSnapshotTarget, ControllerSnapshotError, PocketIc, PocketIcSnapshotExt,
-    SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, PocketIc, PocketIcCapturedSnapshotExt,
+    PocketIcSnapshotExt, SnapshotRestoreFunding,
 };
 use pocket_ic::CanisterSettings;
 
@@ -38,6 +38,9 @@ fn explicit_snapshot_senders_support_mixed_controller_sets_without_fallback() {
     let mut expected = vec![anonymous_canister, explicit_canister];
     expected.sort();
     assert_eq!(snapshots.canister_ids().collect::<Vec<_>>(), expected);
+    pocket_ic
+        .restore_snapshots_with_captured_senders(&snapshots)
+        .expect("restore mixed-controller snapshots with exact captured senders");
 }
 
 #[test]

@@ -12,12 +12,15 @@ use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
         LAST_USED_FILE, directory_logical_size, ensure_cache_directory_tag, is_sha256_directory,
-        lock_cache_file, prune_direct_child_directories, record_cache_entry_use,
-        remove_path_if_present, try_lock_cache_file,
+        lock_cache_file, perform_scheduled_cache_maintenance, prune_direct_child_directories,
+        record_cache_entry_use, remove_path_if_present, try_lock_cache_file,
     },
     digest::{
         InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
         digest_labeled_paths, os_bytes, write_atomic,
+    },
+    wasm_cache::{
+        ResolvedCargoBuildInputs, WasmBuildError, WasmBuildSpec, resolve_cargo_build_inputs,
     },
 };
 
@@ -40,7 +43,9 @@ pub enum ArtifactOutputValidation {
 ///
 /// Declared inputs and tools must not be located inside `cache_root`. Output
 /// destinations must remain outside it, resolve to distinct paths, and not
-/// overlap a declared input or tool.
+/// overlap a declared input or tool. Cargo-derived cache/output paths must
+/// likewise remain outside resolved inputs unless covered by their exact
+/// generated-state exclusions.
 #[derive(Clone, Eq, PartialEq)]
 pub struct ArtifactCacheSpec {
     cache_root: PathBuf,
@@ -52,8 +57,10 @@ pub struct ArtifactCacheSpec {
     arguments: Vec<OsString>,
     environment: BTreeMap<OsString, Option<OsString>>,
     identities: Vec<LabeledIdentity>,
+    cargo_build_inputs: Vec<CargoBuildInputSet>,
     outputs: Vec<OutputSpec>,
     prune_policy: Option<ArtifactCachePrunePolicy>,
+    prune_interval: Option<Duration>,
 }
 
 /// Result of preparing a transactional artifact-set acquisition.
@@ -143,6 +150,22 @@ pub enum ArtifactCacheError {
         before: InputDigest,
         after: InputDigest,
     },
+    /// A resolved Cargo source/configuration set changed after it was captured.
+    CargoBuildInputsChanged {
+        /// Caller-selected logical input-set label.
+        label: String,
+        /// Exact Cargo fingerprint or source digest captured by the resolver.
+        before: InputDigest,
+        /// Exact fingerprint or source digest observed during revalidation.
+        after: InputDigest,
+    },
+    /// Rehashing a resolved Cargo input set failed.
+    CargoBuildInputRevalidation {
+        /// Caller-selected logical input-set label.
+        label: String,
+        /// Underlying exact Cargo input error.
+        source: WasmBuildError,
+    },
     /// One or more declared staged outputs were missing or failed validation.
     InvalidOutputs { outputs: Vec<(String, PathBuf)> },
     /// A logical output name was not declared by the transaction specification.
@@ -165,6 +188,13 @@ struct LabeledPath {
 struct LabeledIdentity {
     label: String,
     value: Vec<u8>,
+}
+
+#[derive(Clone, Eq, PartialEq)]
+struct CargoBuildInputSet {
+    label: String,
+    build_spec: WasmBuildSpec,
+    resolved: ResolvedCargoBuildInputs,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -203,8 +233,10 @@ impl ArtifactCacheSpec {
             arguments: Vec::new(),
             environment: BTreeMap::new(),
             identities: Vec::new(),
+            cargo_build_inputs: Vec::new(),
             outputs: Vec::new(),
             prune_policy: None,
+            prune_interval: None,
         }
     }
 
@@ -310,6 +342,27 @@ impl ArtifactCacheSpec {
         self
     }
 
+    /// Add one exact Cargo input snapshot as transactional cache identity and guard.
+    ///
+    /// The resolved fingerprint keys toolchain, arguments, environment and the
+    /// dependency closure. Its Cargo-aware source/configuration paths and
+    /// exclusions are rehashed automatically during preparation, cache-hit
+    /// materialization and transaction commit.
+    #[must_use]
+    pub fn with_cargo_build_inputs(
+        mut self,
+        label: &str,
+        build_spec: &WasmBuildSpec,
+        resolved: &ResolvedCargoBuildInputs,
+    ) -> Self {
+        self.cargo_build_inputs.push(CargoBuildInputSet {
+            label: label.to_owned(),
+            build_spec: build_spec.clone(),
+            resolved: resolved.clone(),
+        });
+        self
+    }
+
     /// Declare one nonempty regular-file output and its nonoverlapping public destination.
     #[must_use]
     pub fn with_output(self, name: &str, destination: &Path) -> Self {
@@ -338,6 +391,25 @@ impl ArtifactCacheSpec {
     #[must_use]
     pub const fn with_prune_policy(mut self, policy: ArtifactCachePrunePolicy) -> Self {
         self.prune_policy = Some(policy);
+        self.prune_interval = None;
+        self
+    }
+
+    /// Apply retention at most once per `minimum_interval` for this namespace.
+    ///
+    /// The small due-marker check still occurs under the namespace lock.
+    /// Successful acquisitions skip the directory scan until the interval has
+    /// elapsed. The interval applies to attempted maintenance, including a
+    /// nonfatal failed attempt. A zero interval is equivalent to
+    /// [`Self::with_prune_policy`].
+    #[must_use]
+    pub const fn with_prune_policy_at_most_every(
+        mut self,
+        policy: ArtifactCachePrunePolicy,
+        minimum_interval: Duration,
+    ) -> Self {
+        self.prune_policy = Some(policy);
+        self.prune_interval = Some(minimum_interval);
         self
     }
 
@@ -383,8 +455,17 @@ impl std::fmt::Debug for ArtifactCacheSpec {
                     .map(|identity| identity.label.as_str())
                     .collect::<Vec<_>>(),
             )
+            .field(
+                "cargo_build_input_labels",
+                &self
+                    .cargo_build_inputs
+                    .iter()
+                    .map(|input| input.label.as_str())
+                    .collect::<Vec<_>>(),
+            )
             .field("outputs", &self.outputs)
             .field("prune_policy", &self.prune_policy)
+            .field("prune_interval", &self.prune_interval)
             .finish()
     }
 }
@@ -644,6 +725,7 @@ impl ArtifactBuildTransaction {
         self.timings.output_validation = validation_started.elapsed();
 
         let capture_started = Instant::now();
+        revalidate_cargo_build_input_fingerprints(&self.spec)?;
         let verified = resolve_key(&self.spec)?;
         self.timings.input_capture = self
             .timings
@@ -724,8 +806,8 @@ pub fn prepare_artifact_cache(
 ) -> Result<ArtifactCachePreparation, ArtifactCacheError> {
     let total_started = Instant::now();
     validate_spec(spec)?;
-    let namespace_directory = initialize_cache(spec)?;
     validate_filesystem_boundaries(spec)?;
+    let namespace_directory = initialize_cache(spec)?;
 
     let coordination_lock_path = coordination_lock_path(spec);
     let (coordination_lock, coordination_wait) =
@@ -734,6 +816,9 @@ pub fn prepare_artifact_cache(
         coordination_lock_wait: coordination_wait,
         ..ArtifactCacheTimings::default()
     };
+    let initial_cargo_started = Instant::now();
+    revalidate_cargo_build_input_fingerprints(spec)?;
+    timings.input_capture = initial_cargo_started.elapsed();
     let mut last_change = None;
 
     for _ in 0..MAX_PREPARATION_RETRIES {
@@ -777,6 +862,7 @@ pub fn prepare_artifact_cache(
                 .materialization
                 .saturating_add(materialization_started.elapsed());
             let after_started = Instant::now();
+            revalidate_cargo_build_input_fingerprints(spec)?;
             let after = resolve_key(spec)?;
             timings.input_capture = timings
                 .input_capture
@@ -824,6 +910,29 @@ pub fn prepare_artifact_cache(
 
     let (before, after) = last_change.expect("preparation retries require a recorded input change");
     Err(ArtifactCacheError::InputsChangedDuringPreparation { before, after })
+}
+
+fn revalidate_cargo_build_input_fingerprints(
+    spec: &ArtifactCacheSpec,
+) -> Result<(), ArtifactCacheError> {
+    for cargo_input in &spec.cargo_build_inputs {
+        let current = resolve_cargo_build_inputs(&cargo_input.build_spec).map_err(|source| {
+            ArtifactCacheError::CargoBuildInputRevalidation {
+                label: cargo_input.label.clone(),
+                source,
+            }
+        })?;
+        let before = cargo_input.resolved.fingerprint();
+        let after = current.fingerprint();
+        if after != before {
+            return Err(ArtifactCacheError::CargoBuildInputsChanged {
+                label: cargo_input.label.clone(),
+                before,
+                after,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Prune one transactional artifact namespace without acquiring an artifact.
@@ -891,6 +1000,16 @@ fn validate_spec(spec: &ArtifactCacheSpec) -> Result<(), ArtifactCacheError> {
             return invalid_spec(&format!("duplicate identity label `{}`", identity.label));
         }
     }
+    let mut cargo_input_labels = BTreeSet::new();
+    for cargo_inputs in &spec.cargo_build_inputs {
+        validate_label("Cargo build input", &cargo_inputs.label)?;
+        if !cargo_input_labels.insert(&cargo_inputs.label) {
+            return invalid_spec(&format!(
+                "duplicate Cargo build input label `{}`",
+                cargo_inputs.label
+            ));
+        }
+    }
     if spec
         .environment
         .keys()
@@ -922,7 +1041,12 @@ fn validate_spec(spec: &ArtifactCacheSpec) -> Result<(), ArtifactCacheError> {
 }
 
 fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), ArtifactCacheError> {
-    let cache_root = canonicalize_path(&spec.cache_root, "canonicalize artifact cache root")?;
+    let cache_root =
+        canonicalize_allow_missing(&spec.cache_root).map_err(|source| ArtifactCacheError::Io {
+            operation: "resolve artifact cache root",
+            path: spec.cache_root.clone(),
+            source,
+        })?;
     let mut declared_paths = Vec::with_capacity(spec.inputs.len() + spec.tools.len());
     for (kind, labeled_paths) in [("input", &spec.inputs), ("tool", &spec.tools)] {
         for labeled in labeled_paths {
@@ -942,6 +1066,14 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
                 })?
                 .is_dir();
             declared_paths.push((kind, labeled.label.as_str(), canonical, is_directory));
+        }
+    }
+    for cargo_inputs in &spec.cargo_build_inputs {
+        if resolved_cargo_inputs_watch_path(&cargo_inputs.resolved, &cache_root)? {
+            return invalid_spec(&format!(
+                "artifact cache root must be outside resolved Cargo build inputs `{}` or inside one of their generated-state exclusions",
+                cargo_inputs.label
+            ));
         }
     }
 
@@ -974,6 +1106,14 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
                 ));
             }
         }
+        for cargo_inputs in &spec.cargo_build_inputs {
+            if resolved_cargo_inputs_watch_path(&cargo_inputs.resolved, &destination)? {
+                return invalid_spec(&format!(
+                    "output `{}` destination must be outside resolved Cargo build inputs `{}` or inside one of their generated-state exclusions",
+                    output.name, cargo_inputs.label
+                ));
+            }
+        }
         match fs::metadata(&destination) {
             Ok(metadata) if metadata.is_dir() => {
                 return invalid_spec(&format!(
@@ -993,6 +1133,38 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
         }
     }
     Ok(())
+}
+
+fn resolved_cargo_inputs_watch_path(
+    resolved: &ResolvedCargoBuildInputs,
+    candidate: &Path,
+) -> Result<bool, ArtifactCacheError> {
+    for exclusion in resolved.exclusions() {
+        let exclusion =
+            canonicalize_allow_missing(exclusion).map_err(|source| ArtifactCacheError::Io {
+                operation: "resolve Cargo build input exclusion",
+                path: exclusion.clone(),
+                source,
+            })?;
+        if candidate.starts_with(exclusion) {
+            return Ok(false);
+        }
+    }
+
+    for input in resolved.inputs() {
+        let path = canonicalize_path(input.path(), "canonicalize resolved Cargo build input")?;
+        let is_directory = fs::metadata(&path)
+            .map_err(|source| ArtifactCacheError::Io {
+                operation: "inspect resolved Cargo build input",
+                path: path.clone(),
+                source,
+            })?
+            .is_dir();
+        if candidate == path || (is_directory && candidate.starts_with(path)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn canonicalize_path(path: &Path, operation: &'static str) -> Result<PathBuf, ArtifactCacheError> {
@@ -1118,7 +1290,7 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
                 .map(|tool| (PathBuf::from("tool").join(&tool.label), tool.path.clone())),
         )
         .collect::<Vec<_>>();
-    let input_digest = digest_labeled_paths(
+    let declared_input_digest = digest_labeled_paths(
         "artifact-set-inputs-v1",
         &paths,
         std::slice::from_ref(&spec.cache_root),
@@ -1128,6 +1300,38 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
         path: spec.cache_root.clone(),
         source,
     })?;
+    let input_digest = if spec.cargo_build_inputs.is_empty() {
+        declared_input_digest
+    } else {
+        let mut cargo_inputs = spec.cargo_build_inputs.iter().collect::<Vec<_>>();
+        cargo_inputs.sort_by(|left, right| left.label.cmp(&right.label));
+        let mut inputs = InputHasher::new("artifact-set-inputs-with-cargo-v1");
+        inputs.field("declared-input-digest", declared_input_digest.as_bytes());
+        for cargo_input in cargo_inputs {
+            let current = cargo_input
+                .resolved
+                .current_input_digest()
+                .map_err(|source| ArtifactCacheError::CargoBuildInputRevalidation {
+                    label: cargo_input.label.clone(),
+                    source,
+                })?;
+            let before = cargo_input.resolved.input_digest();
+            if current != before {
+                return Err(ArtifactCacheError::CargoBuildInputsChanged {
+                    label: cargo_input.label.clone(),
+                    before,
+                    after: current,
+                });
+            }
+            inputs.field("cargo-input-label", cargo_input.label.as_bytes());
+            inputs.field(
+                "cargo-build-fingerprint",
+                cargo_input.resolved.fingerprint().as_bytes(),
+            );
+            inputs.field("cargo-input-digest", current.as_bytes());
+        }
+        inputs.finish()
+    };
 
     let mut hasher = InputHasher::new(ARTIFACT_CACHE_FORMAT);
     hasher.field("namespace", spec.namespace.as_bytes());
@@ -1422,20 +1626,16 @@ fn perform_maintenance_locked(
     protected_entry: &Path,
 ) -> (Option<ArtifactCacheMaintenance>, Option<Duration>) {
     spec.prune_policy.map_or((None, None), |policy| {
-        let started = Instant::now();
-        let result = prune_artifact_namespace_locked(
-            &spec.cache_root,
-            namespace,
-            policy,
-            Some(protected_entry),
-        );
-        let maintenance = match result {
-            Ok(report) => ArtifactCacheMaintenance::Pruned(report),
-            Err(error) => ArtifactCacheMaintenance::PruneFailed {
-                message: error.to_string(),
-            },
-        };
-        (Some(maintenance), Some(started.elapsed()))
+        let identity = policy.maintenance_identity();
+        perform_scheduled_cache_maintenance(namespace, spec.prune_interval, &identity, || {
+            prune_artifact_namespace_locked(
+                &spec.cache_root,
+                namespace,
+                policy,
+                Some(protected_entry),
+            )
+            .map_err(|error| error.to_string())
+        })
     })
 }
 
@@ -1689,6 +1889,18 @@ impl std::fmt::Display for ArtifactCacheError {
                 formatter,
                 "artifact inputs changed while the caller was building: {before} -> {after}",
             ),
+            Self::CargoBuildInputsChanged {
+                label,
+                before,
+                after,
+            } => write!(
+                formatter,
+                "resolved Cargo build inputs `{label}` changed: {before} -> {after}",
+            ),
+            Self::CargoBuildInputRevalidation { label, source } => write!(
+                formatter,
+                "failed to revalidate resolved Cargo build inputs `{label}`: {source}",
+            ),
             Self::InvalidOutputs { outputs } => write!(
                 formatter,
                 "artifact transaction has missing or invalid outputs: {}",
@@ -1721,6 +1933,7 @@ impl std::error::Error for ArtifactCacheError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io { source, .. } | Self::FailedTransactionCleanup { source, .. } => Some(source),
+            Self::CargoBuildInputRevalidation { source, .. } => Some(source),
             _ => None,
         }
     }

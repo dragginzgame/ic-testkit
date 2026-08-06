@@ -1,9 +1,10 @@
 use candid::Principal;
 use ic_testkit::{
     artifacts::{
-        WasmBuildCacheMaintenance, WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
-        build_wasm_canisters_cached, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
-        wasm_path, workspace_root_for,
+        ArtifactCacheError, ArtifactCachePreparation, ArtifactCacheSpec, WasmBuildCacheMaintenance,
+        WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
+        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
+        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -38,7 +39,10 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");
 
     let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
-        .with_prune_policy(WasmBuildCachePrunePolicy::new());
+        .with_prune_policy_at_most_every(
+            WasmBuildCachePrunePolicy::new(),
+            std::time::Duration::from_secs(60 * 60),
+        );
     let first = build_wasm_canisters_cached(&spec).expect("first exact Wasm build");
     assert!(matches!(first, WasmBuildOutcome::Built(_)));
     assert!(first.record().timings().cargo_build().is_some());
@@ -48,6 +52,11 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     assert!(matches!(reused, WasmBuildOutcome::Reused(_)));
     assert_eq!(first.record().fingerprint(), reused.record().fingerprint());
     assert!(reused.record().timings().cargo_build().is_none());
+    assert!(
+        reused.record().maintenance().is_none(),
+        "scheduled maintenance should skip a second immediate cache hit"
+    );
+    assert!(reused.record().timings().cache_maintenance().is_some());
 
     let wasm_path = wasm_path(&target_dir, PERF_PROBE_PACKAGE, "debug");
     fs::write(&wasm_path, b"tampered").expect("overwrite cached Wasm artifact");
@@ -212,6 +221,15 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
     );
     assert!(shared_target.join("wasm32-unknown-unknown").is_dir());
     assert!(marker.is_file());
+    let inspection = inspect_shared_incremental_target(&spec)
+        .expect("inspect shared Cargo target")
+        .expect("built shared Cargo target should exist");
+    assert_eq!(
+        inspection.target_dir(),
+        shared_target.canonicalize().unwrap()
+    );
+    assert!(inspection.logical_size_bytes() > 0);
+    let last_used = inspection.last_used();
 
     let cache_entry = target_dir
         .join(".ic-testkit/wasm-targets")
@@ -232,6 +250,14 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
             .shared_incremental_lock_wait()
             .is_none(),
         "an immediate exact hit should not acquire the shared-target lock"
+    );
+    assert_eq!(
+        inspect_shared_incremental_target(&spec)
+            .unwrap()
+            .unwrap()
+            .last_used(),
+        last_used,
+        "an exact hit must not touch caller-owned shared Cargo state"
     );
 
     let changed = spec
@@ -255,6 +281,97 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
 
     fs::remove_dir_all(target_dir).expect("clean shared-mode exact cache");
     fs::remove_dir_all(shared_target).expect("clean shared Cargo target");
+}
+
+#[test]
+fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
+    let root = unique_temp_dir("ic-testkit-cargo-input-artifact-bridge");
+    let workspace = root.join("workspace");
+    let package = workspace.join("package");
+    fs::create_dir_all(package.join("src")).expect("create Cargo bridge fixture");
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"package\"]\nresolver = \"2\"\n",
+    )
+    .expect("write bridge workspace manifest");
+    fs::write(
+        package.join("Cargo.toml"),
+        "[package]\nname = \"artifact_bridge_probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .expect("write bridge package manifest");
+    let source = package.join("src/lib.rs");
+    fs::write(&source, "pub fn value() -> u8 { 1 }\n").expect("write bridge source");
+    let wasm_spec = WasmBuildSpec::new(
+        &workspace,
+        &workspace.join("target/exact-wasm"),
+        &["artifact_bridge_probe"],
+        "debug",
+    );
+    let resolved = resolve_cargo_build_inputs(&wasm_spec).expect("resolve bridge Cargo inputs");
+    let destination = workspace.join("target/public/transformed.wasm");
+    let mismatched_build_spec = wasm_spec
+        .clone()
+        .with_extra_env(&[("IC_TESTKIT_BRIDGE_MODE", "changed")]);
+    let mismatched = ArtifactCacheSpec::new(
+        &workspace.join("target/artifact-cache"),
+        "cargo-bridge",
+        "pipeline/v1",
+    )
+    .with_cargo_build_inputs("wasm-source", &mismatched_build_spec, &resolved)
+    .with_output("transformed.wasm", &destination);
+    assert!(matches!(
+        prepare_artifact_cache(&mismatched),
+        Err(ArtifactCacheError::CargoBuildInputsChanged { .. })
+    ));
+
+    let artifact_spec = ArtifactCacheSpec::new(
+        &workspace.join("target/artifact-cache"),
+        "cargo-bridge",
+        "pipeline/v1",
+    )
+    .with_cargo_build_inputs("wasm-source", &wasm_spec, &resolved)
+    .with_output("transformed.wasm", &destination);
+    let transaction = match prepare_artifact_cache(&artifact_spec).expect("prepare bridge miss") {
+        ArtifactCachePreparation::Build(transaction) => transaction,
+        ArtifactCachePreparation::Reused(_) => panic!("new bridge fixture must miss"),
+    };
+    fs::write(
+        transaction.output_path("transformed.wasm").unwrap(),
+        b"transformed",
+    )
+    .expect("write transformed output");
+    fs::write(&source, "pub fn value() -> u8 { 2 }\n").expect("change exact Cargo input");
+
+    assert!(matches!(
+        transaction.commit(),
+        Err(ArtifactCacheError::CargoBuildInputsChanged { .. })
+    ));
+    assert!(!destination.exists());
+
+    let refreshed = resolve_cargo_build_inputs(&wasm_spec).expect("refresh bridge Cargo inputs");
+    let refreshed_spec = ArtifactCacheSpec::new(
+        &workspace.join("target/artifact-cache"),
+        "cargo-bridge",
+        "pipeline/v1",
+    )
+    .with_cargo_build_inputs("wasm-source", &wasm_spec, &refreshed)
+    .with_output("transformed.wasm", &destination);
+    let transaction = match prepare_artifact_cache(&refreshed_spec).expect("prepare refreshed miss")
+    {
+        ArtifactCachePreparation::Build(transaction) => transaction,
+        ArtifactCachePreparation::Reused(_) => panic!("changed Cargo inputs must select a miss"),
+    };
+    fs::write(
+        transaction.output_path("transformed.wasm").unwrap(),
+        b"transformed-v2",
+    )
+    .expect("write refreshed transformed output");
+    transaction.commit().expect("commit refreshed artifact");
+    assert!(matches!(
+        prepare_artifact_cache(&refreshed_spec).expect("reuse refreshed artifact"),
+        ArtifactCachePreparation::Reused(_)
+    ));
+    fs::remove_dir_all(root).expect("remove Cargo bridge fixture");
 }
 
 #[test]

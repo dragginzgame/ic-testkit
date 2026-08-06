@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-06 - Exact cache integration refinements
+
+### Added
+
+- Adds exact-sender-only snapshot restoration for captured snapshot sets and
+  cached baselines, avoiding fallback management calls when capture already
+  established the correct sender for every canister.
+- Adds `ArtifactCacheSpec::with_cargo_build_inputs`, bridging exact resolved
+  Cargo dependency/configuration identity into transactional artifact caching
+  with full fingerprint and content revalidation through commit.
+- Adds lock-coordinated shared incremental-target inspection with canonical
+  path, logical size, last recorded build use, and lock-wait diagnostics.
+- Adds opt-in minimum maintenance intervals for Wasm and transactional caches,
+  preserving explicit retention limits while skipping repeated hit-path scans.
+
+### Changed
+
+- Records shared Cargo target build use without making its mutable incremental
+  state part of exact-cache retention ownership.
+- Restores standalone fixture-pool snapshots with their successful capture
+  sender instead of retrying controller fallbacks.
+
+### Testing
+
+- Adds focused mixed-controller restore, exact Cargo-to-artifact transaction,
+  scheduled-maintenance, and shared-target observation regressions.
+
 ## [0.6.0] - 2026-08-06 - Shared-incremental Wasm caching
 
 ### Added

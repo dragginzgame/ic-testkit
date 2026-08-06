@@ -243,19 +243,23 @@ Mixed-controller topologies can avoid expected rejected fallback calls by
 selecting the exact sender for each canister:
 
 ```rust,no_run
-use ic_testkit::pic::{CanisterSnapshotTarget, PocketIcSnapshotExt};
+use ic_testkit::pic::{
+    CanisterSnapshotTarget, PocketIcCapturedSnapshotExt, PocketIcSnapshotExt,
+};
 
 let snapshots = pocket_ic.capture_snapshots_with_senders([
     CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
     CanisterSnapshotTarget::new(child_canister, None),
 ])?;
-# let _ = snapshots;
+pocket_ic.restore_snapshots_with_captured_senders(&snapshots)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 The existing controller-based method remains useful when its ordered sender
 fallback is desired. `CachedPocketIcBaseline::capture_with_senders` exposes the
-same exact-sender policy for pooled baselines.
+same exact-sender policy for pooled baselines, and
+`restore_with_captured_senders` restores it without requiring or attempting a
+fallback controller.
 
 `CachedPocketIcBaseline<T>` stores one owned instance, its snapshots, and
 caller metadata. `restore_or_rebuild_cached_pocket_ic_baseline` synchronizes
@@ -527,6 +531,11 @@ fingerprint even when it exceeds the configured bound, and reports a nonfatal
 record. The standalone pruning function remains available when maintenance
 failure should be returned directly.
 
+High-frequency suites can use `with_prune_policy_at_most_every` to retain the
+same limits while replacing repeated hit-path directory scans with a small
+namespace marker check. The original `with_prune_policy` continues to run on
+every successful acquisition.
+
 `WasmBuildTimings::input_resolution_detail` separates Cargo/rustc identity,
 Cargo metadata, input discovery, and content hashing. The existing
 `input_resolution` accessor remains the aggregate for compatibility.
@@ -536,7 +545,8 @@ retaining exact immutable final Wasm entries:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
-    WasmBuildSpec, build_wasm_canisters_cached, resolve_cargo_build_inputs,
+    WasmBuildSpec, build_wasm_canisters_cached, inspect_shared_incremental_target,
+    resolve_cargo_build_inputs,
 };
 
 # let workspace = std::path::PathBuf::from(".");
@@ -552,10 +562,13 @@ let spec = WasmBuildSpec::new(
 
 let inputs = resolve_cargo_build_inputs(&spec)?;
 let outcome = build_wasm_canisters_cached(&spec)?;
+let shared_usage = inspect_shared_incremental_target(&spec)?
+    .expect("the shared target exists after a cache miss");
 eprintln!(
-    "{} inputs={} {}",
+    "{} inputs={} shared_bytes={} {}",
     inputs.fingerprint(),
     inputs.inputs().len(),
+    shared_usage.logical_size_bytes(),
     outcome,
 );
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -566,13 +579,23 @@ using that target serialize across processes; Cargo builds incrementally, then
 `ic-testkit` re-resolves every exact input and publishes only the final Wasm
 files. A source race rejects publication, while a failed build preserves the
 caller-owned incremental state. Retention owns only immutable output entries,
-not the shared Cargo target.
+not the shared Cargo target. `inspect_shared_incremental_target` takes the same
+cross-process lock and reports its canonical path, logical size, last recorded
+build use, and lock wait without removing caller-owned Cargo state.
 
 `ResolvedCargoBuildInputs::is_current` provides the same before/after identity
 check for external Cargo-derived workflows. OS-native iterator builders ending
 in `_os` preserve dynamic and non-UTF-8 argument and environment bytes. Use
 `resolve_executable` to turn a bare `PATH` program into a canonical executable
 file before declaring it through `ArtifactCacheSpec::with_tool`.
+
+External transforms derived from a Cargo package closure can pass both the
+build spec and its resolved snapshot to
+`ArtifactCacheSpec::with_cargo_build_inputs`. The complete Cargo fingerprint
+becomes transactional identity, and the exact Cargo-aware input paths and
+generated-state exclusions are revalidated during preparation, hit
+materialization, and commit. This avoids duplicating Cargo discovery as broad
+workspace scans while still rejecting source or toolchain races.
 
 External deterministic tools use the transactional artifact-set cache. The
 caller declares exact inputs, tool bytes, arguments, relevant environment, and
@@ -601,10 +624,11 @@ let spec = ArtifactCacheSpec::new(
 .with_arguments(&["--optimize-for-size"])
 .with_environment(&[("OPTIMIZER_MODE", "deterministic")])
 .with_output("optimized.wasm", &destination)
-.with_prune_policy(
+.with_prune_policy_at_most_every(
     ArtifactCachePrunePolicy::new()
         .with_max_age(Duration::from_secs(14 * 24 * 60 * 60))
         .with_max_size_bytes(2 * 1024 * 1024 * 1024),
+    Duration::from_secs(60 * 60),
 );
 
 let outcome = match prepare_artifact_cache(&spec)? {
@@ -656,6 +680,11 @@ streaming. Configured or explicit retention also removes staging abandoned by
 terminated processes when the corresponding content-key lock proves that no
 transaction is active. `ArtifactCachePruneReport` reports those uncommitted
 directories separately from committed entry age/size eviction.
+
+`ArtifactCacheSpec::with_prune_policy_at_most_every` applies the same explicit
+limits but scans no more frequently than the selected interval. A skipped pass
+has no maintenance outcome; its inexpensive marker-check duration remains in
+the timing record.
 
 No retention limit is automatic. As a starting point for developer caches,
 the examples use a 14-day age bound with a size appropriate to the entry type

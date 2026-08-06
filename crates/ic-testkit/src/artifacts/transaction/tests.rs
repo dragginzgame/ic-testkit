@@ -16,6 +16,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
     thread,
+    time::Duration,
 };
 
 #[test]
@@ -438,6 +439,44 @@ fn pruning_protects_active_entry_and_removes_older_key() {
         ArtifactCachePreparation::Build(_)
     ));
     fs::remove_dir_all(root).expect("remove transaction-pruning test directory");
+}
+
+#[test]
+fn scheduled_pruning_skips_an_immediate_second_acquisition() {
+    let root = unique_temp_directory("scheduled-transaction-pruning");
+    let input = root.join("input");
+    fs::write(&input, b"input").expect("write input");
+    let spec = ArtifactCacheSpec::new(&root.join("cache"), "scheduled", "recipe/v1")
+        .with_input("input", &input)
+        .with_output("output", &root.join("output"))
+        .with_prune_policy_at_most_every(
+            ArtifactCachePrunePolicy::new(),
+            Duration::from_secs(60 * 60),
+        );
+
+    let built = build_output(&spec, b"output");
+    assert!(built.record().maintenance().is_some());
+    let reused = prepare_artifact_cache(&spec).expect("reuse scheduled artifact");
+    let record = reused
+        .reused_record()
+        .expect("scheduled artifact should hit");
+    assert!(record.maintenance().is_none());
+    assert!(record.timings().maintenance().is_some());
+
+    let changed_policy = spec.with_prune_policy_at_most_every(
+        ArtifactCachePrunePolicy::new().with_max_size_bytes(0),
+        Duration::from_secs(60 * 60),
+    );
+    let reused = prepare_artifact_cache(&changed_policy).expect("reuse under changed policy");
+    assert!(
+        reused
+            .reused_record()
+            .expect("changed policy should still hit")
+            .maintenance()
+            .is_some(),
+        "a changed retention policy must not inherit another policy's interval"
+    );
+    fs::remove_dir_all(root).expect("remove scheduled-pruning test directory");
 }
 
 #[test]

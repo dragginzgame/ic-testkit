@@ -151,6 +151,26 @@ pub trait PocketIcSnapshotExt {
     ) -> Result<(), ControllerSnapshotError>;
 }
 
+/// Exact-sender restoration for snapshots that retained their capture sender.
+pub trait PocketIcCapturedSnapshotExt {
+    /// Restore every snapshot with exactly the sender retained during capture.
+    ///
+    /// This performs no fallback attempts. In particular, a captured
+    /// anonymous sender remains `None` instead of falling back to a supplied
+    /// controller principal.
+    fn restore_snapshots_with_captured_senders(
+        &self,
+        snapshots: &ControllerSnapshots,
+    ) -> Result<(), ControllerSnapshotError>;
+
+    /// Restore with captured senders and an explicit cycle-funding policy.
+    fn restore_snapshots_with_captured_senders_and_funding(
+        &self,
+        snapshots: &ControllerSnapshots,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError>;
+}
+
 impl PocketIcSnapshotExt for PocketIc {
     fn capture_snapshots_with_senders<I>(
         &self,
@@ -212,11 +232,46 @@ impl PocketIcSnapshotExt for PocketIc {
         for (canister_id, snapshot_id, sender) in snapshots.iter() {
             restore_controller_snapshot(
                 self,
-                controller_id,
                 canister_id,
-                sender,
                 snapshot_id,
                 funding,
+                [
+                    sender,
+                    if sender.is_some() {
+                        None
+                    } else {
+                        Some(controller_id)
+                    },
+                ],
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl PocketIcCapturedSnapshotExt for PocketIc {
+    fn restore_snapshots_with_captured_senders(
+        &self,
+        snapshots: &ControllerSnapshots,
+    ) -> Result<(), ControllerSnapshotError> {
+        self.restore_snapshots_with_captured_senders_and_funding(
+            snapshots,
+            SnapshotRestoreFunding::Preserve,
+        )
+    }
+
+    fn restore_snapshots_with_captured_senders_and_funding(
+        &self,
+        snapshots: &ControllerSnapshots,
+        funding: SnapshotRestoreFunding,
+    ) -> Result<(), ControllerSnapshotError> {
+        for (canister_id, snapshot_id, sender) in snapshots.iter() {
+            restore_controller_snapshot(
+                self,
+                canister_id,
+                snapshot_id,
+                funding,
+                std::iter::once(sender),
             )?;
         }
         Ok(())
@@ -490,18 +545,11 @@ fn cleanup_captured_snapshots(
 
 fn restore_controller_snapshot(
     pocket_ic: &PocketIc,
-    controller_id: Principal,
     canister_id: Principal,
-    snapshot_sender: Option<Principal>,
     snapshot_id: &[u8],
     funding: SnapshotRestoreFunding,
+    candidates: impl IntoIterator<Item = Option<Principal>>,
 ) -> Result<(), ControllerSnapshotError> {
-    let fallback_sender = if snapshot_sender.is_some() {
-        None
-    } else {
-        Some(controller_id)
-    };
-    let candidates = [snapshot_sender, fallback_sender];
     let mut attempts = Vec::new();
 
     for sender in candidates {

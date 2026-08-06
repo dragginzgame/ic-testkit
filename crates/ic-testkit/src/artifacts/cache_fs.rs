@@ -14,6 +14,7 @@ const CACHE_DIRECTORY_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n
 pub(super) const CACHE_DIRECTORY_TAG_SIGNATURE: &str =
     "Signature: 8a477f597d28d172789f06886806bc55\n";
 pub(super) const LAST_USED_FILE: &str = ".ic-testkit-last-used";
+const LAST_MAINTENANCE_FILE: &str = ".ic-testkit-last-maintenance";
 
 /// Caller-selected retention limits for content-addressed artifact entries.
 ///
@@ -84,6 +85,14 @@ impl ArtifactCachePrunePolicy {
     #[must_use]
     pub const fn max_size_bytes(self) -> Option<u64> {
         self.max_size_bytes
+    }
+
+    pub(super) fn maintenance_identity(self) -> String {
+        format!(
+            "age={:?};size={:?}",
+            self.max_age.map(|duration| duration.as_nanos()),
+            self.max_size_bytes
+        )
     }
 }
 
@@ -232,22 +241,125 @@ pub(super) fn record_cache_entry_use(path: &Path) -> Result<(), CacheFsError> {
     write_last_used(path, SystemTime::now())
 }
 
+fn cache_maintenance_due(
+    path: &Path,
+    minimum_interval: Option<Duration>,
+    maintenance_identity: &str,
+) -> Result<bool, CacheFsError> {
+    let Some(minimum_interval) = minimum_interval else {
+        return Ok(true);
+    };
+    let marker = path.join(LAST_MAINTENANCE_FILE);
+    let contents = match fs::read_to_string(&marker) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(source) => {
+            return Err(CacheFsError {
+                operation: "read cache maintenance time",
+                path: marker,
+                source,
+            });
+        }
+    };
+    let mut lines = contents.lines();
+    let Some(last_maintenance) = lines.next().and_then(decode_system_time) else {
+        return Ok(true);
+    };
+    if lines.next() != Some(maintenance_identity) {
+        return Ok(true);
+    }
+    Ok(match SystemTime::now().duration_since(last_maintenance) {
+        Ok(elapsed) => elapsed >= minimum_interval,
+        Err(_) => true,
+    })
+}
+
+fn record_cache_maintenance(path: &Path, maintenance_identity: &str) -> Result<(), CacheFsError> {
+    fs::create_dir_all(path).map_err(|source| CacheFsError {
+        operation: "create cache maintenance directory",
+        path: path.to_owned(),
+        source,
+    })?;
+    let marker = path.join(LAST_MAINTENANCE_FILE);
+    let elapsed = encode_system_time(&marker, SystemTime::now())?;
+    let contents = format!("{}\n{maintenance_identity}\n", elapsed.as_nanos());
+    write_atomic(&marker, contents.as_bytes()).map_err(|source| CacheFsError {
+        operation: "record cache maintenance time",
+        path: marker,
+        source,
+    })
+}
+
+pub(super) fn perform_scheduled_cache_maintenance(
+    path: &Path,
+    minimum_interval: Option<Duration>,
+    maintenance_identity: &str,
+    maintenance: impl FnOnce() -> Result<ArtifactCachePruneReport, String>,
+) -> (Option<ArtifactCacheMaintenance>, Option<Duration>) {
+    let started = Instant::now();
+    match cache_maintenance_due(path, minimum_interval, maintenance_identity) {
+        Ok(false) => return (None, Some(started.elapsed())),
+        Ok(true) => {}
+        Err(error) => {
+            return (
+                Some(ArtifactCacheMaintenance::PruneFailed {
+                    message: error.to_string(),
+                }),
+                Some(started.elapsed()),
+            );
+        }
+    }
+
+    let result = maintenance();
+    let marker = record_cache_maintenance(path, maintenance_identity);
+    let outcome = match (result, marker) {
+        (Ok(report), Ok(())) => ArtifactCacheMaintenance::Pruned(report),
+        (Err(message), Ok(())) => ArtifactCacheMaintenance::PruneFailed { message },
+        (Ok(_), Err(error)) => ArtifactCacheMaintenance::PruneFailed {
+            message: error.to_string(),
+        },
+        (Err(message), Err(marker)) => ArtifactCacheMaintenance::PruneFailed {
+            message: format!(
+                "{message}; additionally failed to record the maintenance attempt: {marker}"
+            ),
+        },
+    };
+    (Some(outcome), Some(started.elapsed()))
+}
+
 pub(super) fn write_last_used(path: &Path, last_used: SystemTime) -> Result<(), CacheFsError> {
     let marker = path.join(LAST_USED_FILE);
-    let elapsed = last_used
+    write_system_time(&marker, last_used, "record cache use time")
+}
+
+fn write_system_time(
+    path: &Path,
+    timestamp: SystemTime,
+    operation: &'static str,
+) -> Result<(), CacheFsError> {
+    let elapsed = encode_system_time(path, timestamp)?;
+    write_atomic(path, elapsed.as_nanos().to_string().as_bytes()).map_err(|source| CacheFsError {
+        operation,
+        path: path.to_owned(),
+        source,
+    })
+}
+
+fn encode_system_time(path: &Path, timestamp: SystemTime) -> Result<Duration, CacheFsError> {
+    timestamp
         .duration_since(UNIX_EPOCH)
         .map_err(|source| CacheFsError {
-            operation: "encode cache use time",
-            path: marker.clone(),
+            operation: "encode cache time",
+            path: path.to_owned(),
             source: io::Error::new(io::ErrorKind::InvalidInput, source),
-        })?;
-    write_atomic(&marker, elapsed.as_nanos().to_string().as_bytes()).map_err(|source| {
-        CacheFsError {
-            operation: "record cache use time",
-            path: marker,
-            source,
-        }
-    })
+        })
+}
+
+fn decode_system_time(contents: &str) -> Option<SystemTime> {
+    let nanoseconds = contents.parse::<u128>().ok()?;
+    let seconds = u64::try_from(nanoseconds / 1_000_000_000).ok()?;
+    let subsecond_nanos = (nanoseconds % 1_000_000_000) as u32;
+    UNIX_EPOCH.checked_add(Duration::new(seconds, subsecond_nanos))
 }
 
 pub(super) fn prune_direct_child_directories(
@@ -342,6 +454,24 @@ struct CacheEntry {
     removed: bool,
 }
 
+impl std::fmt::Display for CacheFsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "failed to {} at {}: {}",
+            self.operation,
+            self.path.display(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for CacheFsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 fn cache_entries(
     cache_root: &Path,
     is_eligible: impl Fn(&Path) -> bool,
@@ -393,18 +523,12 @@ fn cache_entries(
     Ok(entries)
 }
 
-fn cache_entry_last_used(path: &Path) -> io::Result<SystemTime> {
+pub(super) fn cache_entry_last_used(path: &Path) -> io::Result<SystemTime> {
     let marker = path.join(LAST_USED_FILE);
     if let Ok(contents) = fs::read_to_string(&marker)
-        && let Ok(nanoseconds) = contents.parse::<u128>()
+        && let Some(timestamp) = decode_system_time(&contents)
     {
-        let seconds = nanoseconds / 1_000_000_000;
-        let subsecond_nanos = (nanoseconds % 1_000_000_000) as u32;
-        if let Ok(seconds) = u64::try_from(seconds)
-            && let Some(timestamp) = UNIX_EPOCH.checked_add(Duration::new(seconds, subsecond_nanos))
-        {
-            return Ok(timestamp);
-        }
+        return Ok(timestamp);
     }
     fs::metadata(path)?.modified()
 }

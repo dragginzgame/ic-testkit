@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotRestoreFunding,
-    StandaloneCanisterFixture,
+    ControllerSnapshotError, ControllerSnapshots, PocketIcCapturedSnapshotExt, PocketIcSnapshotExt,
+    SnapshotRestoreFunding, StandaloneCanisterFixture,
     bounded_pool::{BoundedSlotLease, BoundedSlotPool},
     transport,
 };
@@ -36,11 +36,7 @@ impl StandaloneFixtureBaseline {
     fn restore(&self, funding: SnapshotRestoreFunding) -> Result<(), ControllerSnapshotError> {
         self.fixture
             .pocket_ic()
-            .restore_controller_snapshots_with_funding(
-                self.fixture.canister_id(),
-                &self.snapshots,
-                funding,
-            )
+            .restore_snapshots_with_captured_senders_and_funding(&self.snapshots, funding)
     }
 }
 

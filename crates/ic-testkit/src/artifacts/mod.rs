@@ -29,9 +29,10 @@ pub use transaction::{
 };
 pub use wasm::{build_wasm_canisters, read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_cache::{
-    CargoBuildInput, ResolvedCargoBuildInputs, WasmBuildCacheMaintenance, WasmBuildCacheMode,
-    WasmBuildCachePrunePolicy, WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome,
-    WasmBuildPhase, WasmBuildRecord, WasmBuildSpec, WasmBuildTimings, WasmInputResolutionTimings,
-    build_wasm_canisters_cached, prune_wasm_build_cache, resolve_cargo_build_inputs,
+    CargoBuildInput, ResolvedCargoBuildInputs, SharedIncrementalTargetInspection,
+    WasmBuildCacheMaintenance, WasmBuildCacheMode, WasmBuildCachePrunePolicy,
+    WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome, WasmBuildPhase, WasmBuildRecord,
+    WasmBuildSpec, WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached,
+    inspect_shared_incremental_target, prune_wasm_build_cache, resolve_cargo_build_inputs,
 };
 pub use workspace::{test_target_dir, workspace_root_for};
