@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-06 - Transactional cache maintenance
+
+### Changed
+
+- Moves the transactional cache's unit tests into a dedicated source file and
+  keeps shared test-only filesystem setup centralized.
+- Preserves both source and destination paths, plus the underlying I/O cause,
+  when a streamed atomic artifact copy fails.
+
+### Testing
+
+- Adds an actual two-process transactional-cache regression that starts both
+  callers together under distinct coordination scopes and proves the shared
+  exact content lock issues only one build transaction.
+
 ## [0.5.1] - 2026-08-06 - Transactional cache hardening
 
 ### Fixed

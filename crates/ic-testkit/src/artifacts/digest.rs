@@ -11,6 +11,31 @@ use std::{
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Debug)]
+struct AtomicCopyErrorContext {
+    source_path: PathBuf,
+    destination_path: PathBuf,
+    source: io::Error,
+}
+
+impl std::fmt::Display for AtomicCopyErrorContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "failed to atomically copy {} to {}: {}",
+            self.source_path.display(),
+            self.destination_path.display(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for AtomicCopyErrorContext {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// SHA-256 digest of one deterministic artifact-input set.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct InputDigest([u8; 32]);
@@ -207,9 +232,21 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
 }
 
 pub(super) fn copy_file_atomic(source: &Path, destination: &Path) -> io::Result<u64> {
-    let mut source_file = File::open(source)?;
-    write_file_atomic(destination, |destination_file| {
-        io::copy(&mut source_file, destination_file)
+    let result = (|| {
+        let mut source_file = File::open(source)?;
+        write_file_atomic(destination, |destination_file| {
+            io::copy(&mut source_file, destination_file)
+        })
+    })();
+    result.map_err(|source_error| {
+        io::Error::new(
+            source_error.kind(),
+            AtomicCopyErrorContext {
+                source_path: source.to_owned(),
+                destination_path: destination.to_owned(),
+                source: source_error,
+            },
+        )
     })
 }
 
@@ -299,6 +336,12 @@ mod tests {
             bytes
         );
         assert_eq!(fs::read(&destination).unwrap(), contents);
+
+        let missing = root.join("missing");
+        let error = copy_file_atomic(&missing, &destination).expect_err("missing source must fail");
+        let message = error.to_string();
+        assert!(message.contains(&missing.display().to_string()));
+        assert!(message.contains(&destination.display().to_string()));
         fs::remove_dir_all(root).expect("remove streaming-digest test directory");
     }
 }
