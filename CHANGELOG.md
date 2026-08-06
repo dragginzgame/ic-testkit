@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-08-06 - Integrated shared-target maintenance
+
 ### Added
 
 - Adds `WasmBuildSpec::with_shared_incremental_target_maintenance_at_most_every`
