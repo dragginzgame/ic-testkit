@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-06 - Scheduled shared-target maintenance
+
 ### Added
 
 - Adds cross-process interval-limited shared incremental-target maintenance
