@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-08-06 - Acquisition-wide build progress
+
 ### Added
 
 - Adds acquisition-wide, phase-aware Wasm build heartbeats for exact and
