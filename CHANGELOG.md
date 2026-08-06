@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-06 - Current artifact workflow guidance
+
 ### Changed
 
 - Updates README installation guidance to the compatible `0.7` release line,
