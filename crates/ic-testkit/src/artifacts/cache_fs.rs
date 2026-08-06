@@ -3,6 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
+    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -201,6 +202,32 @@ pub(super) fn lock_cache_file(path: &Path) -> Result<(File, Duration), CacheFsEr
         source,
     })?;
     Ok((file, started.elapsed()))
+}
+
+pub(super) fn lock_cache_file_with_wait_observer(
+    path: &Path,
+    poll_interval: Duration,
+    mut observer: impl FnMut(Duration),
+) -> Result<(File, Duration), CacheFsError> {
+    let file = open_cache_lock_file(path)?;
+    let started = Instant::now();
+    loop {
+        match file.try_lock_exclusive() {
+            Ok(()) => return Ok((file, started.elapsed())),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                observer(started.elapsed());
+                thread::sleep(poll_interval.min(Duration::from_millis(25)));
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(source) => {
+                return Err(CacheFsError {
+                    operation: "try lock cache",
+                    path: path.to_owned(),
+                    source,
+                });
+            }
+        }
+    }
 }
 
 pub(super) fn try_lock_cache_file(path: &Path) -> Result<Option<File>, CacheFsError> {

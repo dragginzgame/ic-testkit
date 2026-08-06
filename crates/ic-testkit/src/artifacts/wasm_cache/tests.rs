@@ -2,11 +2,12 @@ use super::{
     IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetMaintenanceOutcome,
     SharedIncrementalTargetPrunePolicy, WasmBuildCachePrunePolicy, WasmBuildError,
     WasmBuildOutcome, WasmBuildOutputStream, WasmBuildProgressConfig, WasmBuildProgressEvent,
-    WasmBuildSpec, append_cargo_configuration_inputs, build_wasm_canisters_cached_with_progress,
-    ensure_cache_directory_tag, finish_fingerprint_build, inspect_shared_incremental_target,
-    maintain_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
-    metadata_arguments, prune_wasm_build_cache, prune_wasm_build_cache_locked,
-    resolve_cargo_build_inputs, run_cargo_build, validate_spec,
+    WasmBuildProgressPhase, WasmBuildSpec, append_cargo_configuration_inputs,
+    build_wasm_canisters_cached_with_progress, ensure_cache_directory_tag,
+    finish_fingerprint_build, inspect_shared_incremental_target, lock_wasm_build_cache,
+    lock_wasm_build_cache_with_progress, maintain_shared_incremental_target,
+    maintain_shared_incremental_target_at_most_every, metadata_arguments, prune_wasm_build_cache,
+    prune_wasm_build_cache_locked, resolve_cargo_build_inputs, run_cargo_build, validate_spec,
 };
 use crate::artifacts::cache_fs::{
     CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size, write_last_used,
@@ -17,6 +18,11 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -340,6 +346,87 @@ fn zero_progress_heartbeat_is_rejected_before_build_validation() {
 }
 
 #[test]
+fn observed_phase_emits_phase_aware_heartbeats() {
+    let mut events = Vec::new();
+    let value = {
+        let mut observer = |event| events.push(event);
+        let mut progress = ProgressReporter::observed(
+            WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(5)),
+            &mut observer,
+        );
+        progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
+            thread::sleep(Duration::from_millis(25));
+            42
+        })
+    };
+
+    assert_eq!(value, 42);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        WasmBuildProgressEvent::Heartbeat {
+            phase: WasmBuildProgressPhase::ContentHashing,
+            elapsed,
+        } if *elapsed >= Duration::from_millis(5)
+    )));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, WasmBuildProgressEvent::CargoHeartbeat { .. }))
+    );
+}
+
+#[test]
+fn observer_panic_joins_active_phase_worker() {
+    let completed = Arc::new(AtomicBool::new(false));
+    let worker_completed = Arc::clone(&completed);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut observer = |_| panic!("synthetic observer panic");
+        let mut progress = ProgressReporter::observed(
+            WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(5)),
+            &mut observer,
+        );
+        progress.run_phase(WasmBuildProgressPhase::InputDiscovery, move || {
+            thread::sleep(Duration::from_millis(25));
+            worker_completed.store(true, Ordering::SeqCst);
+        });
+    }));
+
+    assert!(result.is_err());
+    assert!(completed.load(Ordering::SeqCst));
+}
+
+#[test]
+fn exact_cache_lock_wait_emits_phase_aware_heartbeats() {
+    let target_dir = unique_temp_directory("observed-exact-lock-wait");
+    let (held_lock, _) = lock_wasm_build_cache(&target_dir).expect("acquire fixture cache lock");
+    let release = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(35));
+        drop(held_lock);
+    });
+    let mut events = Vec::new();
+    {
+        let mut observer = |event| events.push(event);
+        let mut progress = ProgressReporter::observed(
+            WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(5)),
+            &mut observer,
+        );
+        let (_lock, wait) = lock_wasm_build_cache_with_progress(&target_dir, &mut progress)
+            .expect("acquire observed fixture cache lock");
+        assert!(wait >= Duration::from_millis(5));
+    }
+    release.join().expect("join fixture lock holder");
+
+    assert!(events.iter().any(|event| matches!(
+        event,
+        WasmBuildProgressEvent::Heartbeat {
+            phase: WasmBuildProgressPhase::ExactCacheLock,
+            ..
+        }
+    )));
+    fs::remove_dir_all(target_dir).expect("remove observed lock fixture");
+}
+
+#[test]
 #[cfg(unix)]
 fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
     let root = unique_temp_directory("observed-cargo-progress");
@@ -353,11 +440,10 @@ fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
     let mut events = Vec::new();
     {
         let mut observer = |event| events.push(event);
-        let mut progress = ProgressReporter {
-            config: WasmBuildProgressConfig::new()
-                .with_heartbeat_interval(Duration::from_millis(10)),
-            observer: Some(&mut observer),
-        };
+        let mut progress = ProgressReporter::observed(
+            WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(10)),
+            &mut observer,
+        );
 
         run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
             .expect("run observed Cargo fixture");
@@ -382,6 +468,13 @@ fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
     );
     assert!(events.iter().any(|event| matches!(
         event,
+        WasmBuildProgressEvent::Heartbeat {
+            phase: WasmBuildProgressPhase::CargoBuild,
+            ..
+        }
+    )));
+    assert!(events.iter().any(|event| matches!(
+        event,
         WasmBuildProgressEvent::CargoFinished { success: true, .. }
     )));
     fs::remove_dir_all(root).expect("remove observed Cargo fixture");
@@ -401,10 +494,10 @@ fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     let mut events = Vec::new();
     let error = {
         let mut observer = |event| events.push(event);
-        let mut progress = ProgressReporter {
-            config: WasmBuildProgressConfig::new().without_heartbeats(),
-            observer: Some(&mut observer),
-        };
+        let mut progress = ProgressReporter::observed(
+            WasmBuildProgressConfig::new().without_heartbeats(),
+            &mut observer,
+        );
 
         run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
             .expect_err("Cargo fixture must fail")

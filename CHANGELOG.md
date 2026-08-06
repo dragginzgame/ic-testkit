@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Adds acquisition-wide, phase-aware Wasm build heartbeats for exact and
+  shared-target lock waits, Cargo input resolution, shared and exact cache
+  maintenance, Cargo compilation, and artifact validation/publication.
+
+### Changed
+
+- Retains `CargoHeartbeat` as a compatibility event alongside the generic
+  Cargo-build heartbeat, and joins active synchronous phase work before an
+  observer panic propagates so no heartbeat worker is detached.
+
+### Testing
+
+- Adds focused regressions for quiet phase heartbeats, exact-cache lock waits,
+  Cargo compatibility events, and panic-safe worker joining.
+
 ## [0.7.4] - 2026-08-06 - Integrated shared-target maintenance
 
 ### Added

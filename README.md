@@ -662,8 +662,9 @@ and coordinates the target even on exact hits, reuses the acquisition's input
 resolution for due maintenance, and reports the result through the build
 record and structured progress events.
 
-Long cold Cargo builds can expose synchronous structured progress without
-changing the existing silent API:
+Long input resolution, lock waits, maintenance, Cargo builds, and artifact
+publication can expose synchronous structured progress without changing the
+existing silent API:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
@@ -685,8 +686,8 @@ let outcome = build_wasm_canisters_cached_with_progress(
         .with_heartbeat_interval(Duration::from_secs(15))
         .with_cargo_output(false),
     |event| {
-        if let WasmBuildProgressEvent::CargoHeartbeat { elapsed } = event {
-            eprintln!("Cargo is still running after {elapsed:?}");
+        if let WasmBuildProgressEvent::Heartbeat { phase, elapsed } = event {
+            eprintln!("{phase} is still active after {elapsed:?}");
         }
     },
 )?;
@@ -696,8 +697,10 @@ eprintln!("{outcome}");
 
 Observers run synchronously on the build thread and should return promptly.
 Raw output events preserve non-UTF-8 bytes; output is still captured in
-`WasmBuildError` when forwarding is disabled. An observer panic terminates and
-waits for the Cargo child before normal lock and incomplete-entry cleanup.
+`WasmBuildError` when forwarding is disabled. `CargoHeartbeat` remains as a
+compatibility event and accompanies each phase-aware Cargo-build heartbeat.
+An observer panic joins active phase work, terminates and waits for a running
+Cargo build, and then performs normal lock and incomplete-entry cleanup.
 
 Suites that require standalone feature resolution for several variants can
 batch independent specs without changing Cargo feature semantics:
