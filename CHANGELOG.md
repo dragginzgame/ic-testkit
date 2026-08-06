@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-06 - Transactional cache hardening
+
+### Fixed
+
+- Rejects declared inputs and tools located within the cache root instead of
+  silently excluding them from exact hashing. Output destinations must remain
+  outside the cache and must not alias another output or overlap a declared
+  input or tool.
+- Treats malformed manifest bytes, non-directory content entries, unexpected
+  entry-root files, and other inspectable schema corruption as cache misses
+  that are removed and rebuilt. Staged transactions likewise reject files
+  outside the declared `outputs` directory.
+- Removes abandoned transaction staging during retention only after
+  non-blockingly acquiring the corresponding content-key lock, so pruning
+  reclaims terminated builds without touching active transactions. Prune
+  reports expose the removed uncommitted-directory count and logical bytes.
+
+### Changed
+
+- Streams input hashing, output hashing, fixed-output importing, transactional
+  materialization, and Wasm-cache materialization instead of buffering entire
+  artifacts in memory. The digest and on-disk cache formats remain unchanged.
+- Shares atomic file copying, path removal, digest-directory recognition, and
+  test temporary-directory setup across the Wasm and transactional caches.
+  Transaction output declarations are normalized once instead of repeatedly
+  allocated and sorted during acquisition.
+- Expands regression coverage across invalid specifications, keyed and
+  deliberately unkeyed identity fields, cache/input/output path boundaries,
+  malformed entries, exact entry schemas, active/orphan staging, streaming
+  digest compatibility, explicit aborts, and unknown outputs.
+
 ## [0.5.0] - 2026-08-06 - Transactional artifact-set caching
 
 ### Added

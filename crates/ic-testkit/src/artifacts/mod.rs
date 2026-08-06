@@ -11,6 +11,9 @@ mod wasm;
 mod wasm_cache;
 mod workspace;
 
+#[cfg(test)]
+mod test_support;
+
 pub use cache_fs::{ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport};
 pub use digest::InputDigest;
 pub use icp::{

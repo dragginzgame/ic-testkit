@@ -13,11 +13,13 @@ use toml::Value as TomlValue;
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
-        ensure_cache_directory_tag as ensure_cache_tag, lock_cache_file,
+        ensure_cache_directory_tag as ensure_cache_tag, is_sha256_directory, lock_cache_file,
         prune_direct_child_directories, record_cache_entry_use as record_entry_use,
+        remove_path_if_present,
     },
     digest::{
-        InputDigest, InputHasher, digest_bytes, digest_labeled_paths, os_bytes, write_atomic,
+        InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
+        digest_labeled_paths, os_bytes, write_atomic,
     },
     wasm::wasm_path,
 };
@@ -578,13 +580,8 @@ fn prune_wasm_build_cache_locked(
     protected_entry: Option<&Path>,
 ) -> Result<WasmBuildCachePruneReport, WasmBuildError> {
     let cache_root = target_dir.join(".ic-testkit/wasm-targets");
-    prune_direct_child_directories(
-        &cache_root,
-        policy,
-        protected_entry,
-        is_fingerprint_directory,
-    )
-    .map_err(wasm_cache_fs_error)
+    prune_direct_child_directories(&cache_root, policy, protected_entry, is_sha256_directory)
+        .map_err(wasm_cache_fs_error)
 }
 
 struct IncompleteBuildDirectory {
@@ -602,7 +599,7 @@ impl IncompleteBuildDirectory {
     }
 
     fn cleanup(mut self) -> io::Result<()> {
-        let result = remove_dir_all_if_present(&self.path);
+        let result = remove_path_if_present(&self.path);
         if result.is_ok() {
             self.armed = false;
         }
@@ -613,7 +610,7 @@ impl IncompleteBuildDirectory {
 impl Drop for IncompleteBuildDirectory {
     fn drop(&mut self) {
         if self.armed {
-            let _ = remove_dir_all_if_present(&self.path);
+            let _ = remove_path_if_present(&self.path);
         }
     }
 }
@@ -660,13 +657,6 @@ fn record_cache_entry_use_if_present(path: &Path) -> Result<(), WasmBuildError> 
 
 fn record_cache_entry_use(path: &Path) -> Result<(), WasmBuildError> {
     record_entry_use(path).map_err(wasm_cache_fs_error)
-}
-
-fn is_fingerprint_directory(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| {
-        let bytes = name.as_encoded_bytes();
-        bytes.len() == 64 && bytes.iter().all(u8::is_ascii_hexdigit)
-    })
 }
 
 fn wasm_cache_fs_error(error: CacheFsError) -> WasmBuildError {
@@ -1367,7 +1357,7 @@ fn artifact_stamp_path(artifact: &Path) -> PathBuf {
 }
 
 fn artifact_stamp_contents(artifact: &Path, fingerprint: InputDigest) -> io::Result<String> {
-    let artifact_digest = digest_bytes("wasm-artifact-v1", &fs::read(artifact)?);
+    let (_, artifact_digest) = digest_file("wasm-artifact-v1", artifact)?;
     Ok(format!(
         "{CACHE_FORMAT_VERSION}\nbuild-sha256:{fingerprint}\nartifact-sha256:{artifact_digest}\n"
     ))
@@ -1401,12 +1391,7 @@ fn materialize_artifacts(
     fingerprint: InputDigest,
 ) -> Result<(), WasmBuildError> {
     for (cached, artifact) in cached_artifacts.iter().zip(artifacts) {
-        let contents = fs::read(cached).map_err(|source| WasmBuildError::Io {
-            operation: "read content-addressed Wasm artifact",
-            path: cached.clone(),
-            source,
-        })?;
-        write_atomic(artifact, &contents).map_err(|source| WasmBuildError::Io {
+        copy_file_atomic(cached, artifact).map_err(|source| WasmBuildError::Io {
             operation: "publish Wasm artifact",
             path: artifact.clone(),
             source,
@@ -1416,19 +1401,11 @@ fn materialize_artifacts(
 }
 
 fn remove_directory_if_present(path: &Path) -> Result<(), WasmBuildError> {
-    remove_dir_all_if_present(path).map_err(|source| WasmBuildError::Io {
+    remove_path_if_present(path).map_err(|source| WasmBuildError::Io {
         operation: "remove incomplete content-addressed Cargo target directory",
         path: path.to_owned(),
         source,
     })
-}
-
-fn remove_dir_all_if_present(path: &Path) -> io::Result<()> {
-    match fs::remove_dir_all(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
 }
 
 fn create_dir_all(path: &Path, operation: &'static str) -> Result<(), WasmBuildError> {
@@ -1559,16 +1536,14 @@ mod tests {
     use crate::artifacts::cache_fs::{
         CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size, write_last_used,
     };
+    use crate::artifacts::test_support::unique_temp_directory;
     use std::{
         collections::BTreeSet,
         ffi::OsString,
         fs,
         path::{Path, PathBuf},
-        sync::atomic::{AtomicU64, Ordering},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
-
-    static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn metadata_receives_only_resolution_arguments() {
@@ -1805,19 +1780,6 @@ mod tests {
         fs::create_dir_all(&path).expect("create cache entry");
         fs::write(path.join("payload"), vec![0; payload_bytes]).expect("write cache payload");
         write_last_used(&path, last_used).expect("write cache use time");
-        path
-    }
-
-    fn unique_temp_directory(label: &str) -> PathBuf {
-        let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "ic-testkit-{label}-{}-{sequence}",
-            std::process::id()
-        ));
-        if path.exists() {
-            fs::remove_dir_all(&path).expect("remove stale test directory");
-        }
-        fs::create_dir_all(&path).expect("create test directory");
         path
     }
 }

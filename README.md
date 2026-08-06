@@ -572,10 +572,23 @@ pipeline semantics change. Namespace and recipe identifiers are hashed before
 being used on disk, environment values are never rendered in `Debug` or cache
 manifests, and public destination paths do not affect content identity.
 
+Declared input and tool roots may contain the cache directory, which is
+excluded while recursively hashing that broader tree, but they must not be
+located inside the cache themselves. Public output destinations must also stay
+outside the cache, resolve to distinct paths, and not overlap a declared input
+or tool. These checks prevent silently unkeyed inputs, self-invalidating
+recipes, and two logical outputs overwriting the same file.
+
 The default coordination scope is the namespace. Recipes that use the same
 mutable external work tree can select a shared scope even when their content
 keys differ. Independent recipes can use distinct scopes. Exact content-key
 locking still ensures that overlapping callers build one result only.
+
+Artifact contents are hashed, imported, and materialized with bounded-memory
+streaming. Configured or explicit retention also removes staging abandoned by
+terminated processes when the corresponding content-key lock proves that no
+transaction is active. `ArtifactCachePruneReport` reports those uncommitted
+directories separately from committed entry age/size eviction.
 
 `WatchedInputSnapshot` likewise hashes file paths and contents instead of
 modification times. Generated artifacts become reusable only after

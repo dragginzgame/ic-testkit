@@ -3,8 +3,8 @@ use std::{
     collections::BTreeSet,
     ffi::OsStr,
     fmt::Write as _,
-    fs::{self, OpenOptions},
-    io::{self, Write as _},
+    fs::{self, File, OpenOptions},
+    io::{self, Read as _, Write as _},
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -49,18 +49,48 @@ impl InputHasher {
     }
 
     pub(super) fn field(&mut self, label: &str, value: &[u8]) {
+        self.field_header(
+            label,
+            u64::try_from(value.len()).expect("input value length must fit in u64"),
+        );
+        self.0.update(value);
+    }
+
+    fn field_header(&mut self, label: &str, value_len: u64) {
         self.0.update(
             u64::try_from(label.len())
                 .expect("input label length must fit in u64")
                 .to_le_bytes(),
         );
         self.0.update(label.as_bytes());
-        self.0.update(
-            u64::try_from(value.len())
-                .expect("input value length must fit in u64")
-                .to_le_bytes(),
-        );
-        self.0.update(value);
+        self.0.update(value_len.to_le_bytes());
+    }
+
+    fn file_field(&mut self, label: &str, path: &Path) -> io::Result<u64> {
+        let mut file = File::open(path)?;
+        let expected_len = file.metadata()?.len();
+        self.field_header(label, expected_len);
+
+        let mut actual_len = 0_u64;
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let read = file.read(&mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            actual_len = actual_len
+                .saturating_add(u64::try_from(read).expect("artifact read length must fit in u64"));
+            self.0.update(&buffer[..read]);
+        }
+        if actual_len != expected_len {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "file changed size while hashing: expected {expected_len} bytes, read {actual_len}"
+                ),
+            ));
+        }
+        Ok(actual_len)
     }
 
     pub(super) fn finish(self) -> InputDigest {
@@ -72,6 +102,12 @@ pub(super) fn digest_bytes(domain: &str, value: &[u8]) -> InputDigest {
     let mut hasher = InputHasher::new(domain);
     hasher.field("content", value);
     hasher.finish()
+}
+
+pub(super) fn digest_file(domain: &str, path: &Path) -> io::Result<(u64, InputDigest)> {
+    let mut hasher = InputHasher::new(domain);
+    let bytes = hasher.file_field("content", path)?;
+    Ok((bytes, hasher.finish()))
 }
 
 pub(super) fn digest_labeled_paths(
@@ -97,6 +133,7 @@ pub(super) fn digest_labeled_paths(
             &path,
             &excluded_roots,
             &mut visited_directories,
+            true,
         )?;
     }
     Ok(hasher.finish())
@@ -108,12 +145,22 @@ fn hash_path(
     path: &Path,
     excluded_roots: &[PathBuf],
     visited_directories: &mut BTreeSet<PathBuf>,
+    declared_root: bool,
 ) -> io::Result<()> {
     let canonical = path.canonicalize()?;
     if excluded_roots
         .iter()
         .any(|excluded| canonical.starts_with(excluded))
     {
+        if declared_root {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "declared input is located inside an excluded cache root: {}",
+                    path.display()
+                ),
+            ));
+        }
         return Ok(());
     }
 
@@ -121,7 +168,7 @@ fn hash_path(
     let label_bytes = os_bytes(label.as_os_str());
     if metadata.is_file() {
         hasher.field("file-path", &label_bytes);
-        hasher.field("file-content", &fs::read(path)?);
+        hasher.file_field("file-content", path)?;
         return Ok(());
     }
     if !metadata.is_dir() {
@@ -149,12 +196,27 @@ fn hash_path(
             &entry.path(),
             excluded_roots,
             visited_directories,
+            false,
         )?;
     }
     Ok(())
 }
 
 pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
+    write_file_atomic(path, |file| file.write_all(contents))
+}
+
+pub(super) fn copy_file_atomic(source: &Path, destination: &Path) -> io::Result<u64> {
+    let mut source_file = File::open(source)?;
+    write_file_atomic(destination, |destination_file| {
+        io::copy(&mut source_file, destination_file)
+    })
+}
+
+fn write_file_atomic<T>(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> io::Result<T>,
+) -> io::Result<T> {
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -179,9 +241,10 @@ pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
             .create_new(true)
             .write(true)
             .open(&temp_path)?;
-        file.write_all(contents)?;
+        let value = write(&mut file)?;
         file.sync_all()?;
-        fs::rename(&temp_path, path)
+        fs::rename(&temp_path, path)?;
+        Ok(value)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
@@ -207,4 +270,35 @@ pub(super) fn os_bytes(value: &OsStr) -> Vec<u8> {
 #[cfg(not(any(unix, windows)))]
 pub(super) fn os_bytes(value: &OsStr) -> Vec<u8> {
     value.to_string_lossy().as_bytes().to_vec()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{copy_file_atomic, digest_bytes, digest_file, write_atomic};
+    use crate::artifacts::test_support::unique_temp_directory;
+    use std::fs;
+
+    #[test]
+    fn streaming_digest_and_atomic_copy_preserve_exact_bytes() {
+        let root = unique_temp_directory("streaming-digest");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        let mut contents = vec![0_u8; 192 * 1024];
+        for (index, byte) in contents.iter_mut().enumerate() {
+            *byte = u8::try_from(index % 251).expect("test byte must fit");
+        }
+        fs::write(&source, &contents).expect("write source");
+
+        let (bytes, streamed) = digest_file("streaming-test-v1", &source).expect("digest file");
+        assert_eq!(bytes, u64::try_from(contents.len()).unwrap());
+        assert_eq!(streamed, digest_bytes("streaming-test-v1", &contents));
+
+        write_atomic(&destination, b"old").expect("write original destination");
+        assert_eq!(
+            copy_file_atomic(&source, &destination).expect("copy source atomically"),
+            bytes
+        );
+        assert_eq!(fs::read(&destination).unwrap(), contents);
+        fs::remove_dir_all(root).expect("remove streaming-digest test directory");
+    }
 }

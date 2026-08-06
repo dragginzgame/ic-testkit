@@ -11,8 +11,9 @@ use super::digest::write_atomic;
 const CACHE_DIRECTORY_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
 # This file is a cache directory tag created by ic-testkit.\n\
 # For information about cache directory tags see https://bford.info/cachedir/\n";
-pub const CACHE_DIRECTORY_TAG_SIGNATURE: &str = "Signature: 8a477f597d28d172789f06886806bc55\n";
-const LAST_USED_FILE: &str = ".ic-testkit-last-used";
+pub(super) const CACHE_DIRECTORY_TAG_SIGNATURE: &str =
+    "Signature: 8a477f597d28d172789f06886806bc55\n";
+pub(super) const LAST_USED_FILE: &str = ".ic-testkit-last-used";
 
 /// Caller-selected retention limits for content-addressed artifact entries.
 ///
@@ -32,6 +33,8 @@ pub struct ArtifactCachePruneReport {
     entries_removed: usize,
     bytes_before: u64,
     bytes_removed: u64,
+    uncommitted_directories_removed: usize,
+    uncommitted_bytes_removed: u64,
 }
 
 /// Nonfatal retention attempted as part of a successful cache acquisition.
@@ -120,6 +123,23 @@ impl ArtifactCachePruneReport {
     pub const fn bytes_retained(self) -> u64 {
         self.bytes_before.saturating_sub(self.bytes_removed)
     }
+
+    /// Abandoned transaction directories removed outside the committed-entry totals.
+    #[must_use]
+    pub const fn uncommitted_directories_removed(self) -> usize {
+        self.uncommitted_directories_removed
+    }
+
+    /// Logical bytes removed from abandoned transaction directories.
+    #[must_use]
+    pub const fn uncommitted_bytes_removed(self) -> u64 {
+        self.uncommitted_bytes_removed
+    }
+
+    pub(super) const fn record_uncommitted_removal(&mut self, bytes: u64) {
+        self.uncommitted_directories_removed += 1;
+        self.uncommitted_bytes_removed = self.uncommitted_bytes_removed.saturating_add(bytes);
+    }
 }
 
 impl ArtifactCacheMaintenance {
@@ -143,13 +163,13 @@ impl ArtifactCacheMaintenance {
 }
 
 #[derive(Debug)]
-pub struct CacheFsError {
-    pub operation: &'static str,
-    pub path: PathBuf,
-    pub source: io::Error,
+pub(super) struct CacheFsError {
+    pub(super) operation: &'static str,
+    pub(super) path: PathBuf,
+    pub(super) source: io::Error,
 }
 
-pub fn ensure_cache_directory_tag(cache_root: &Path) -> Result<(), CacheFsError> {
+pub(super) fn ensure_cache_directory_tag(cache_root: &Path) -> Result<(), CacheFsError> {
     let path = cache_root.join("CACHEDIR.TAG");
     if fs::read_to_string(&path)
         .is_ok_and(|contents| contents.starts_with(CACHE_DIRECTORY_TAG_SIGNATURE))
@@ -163,25 +183,8 @@ pub fn ensure_cache_directory_tag(cache_root: &Path) -> Result<(), CacheFsError>
     })
 }
 
-pub fn lock_cache_file(path: &Path) -> Result<(File, Duration), CacheFsError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| CacheFsError {
-            operation: "create cache lock directory",
-            path: parent.to_owned(),
-            source,
-        })?;
-    }
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
-        .map_err(|source| CacheFsError {
-            operation: "open cache lock",
-            path: path.to_owned(),
-            source,
-        })?;
+pub(super) fn lock_cache_file(path: &Path) -> Result<(File, Duration), CacheFsError> {
+    let file = open_cache_lock_file(path)?;
     let started = Instant::now();
     file.lock_exclusive().map_err(|source| CacheFsError {
         operation: "lock cache",
@@ -191,11 +194,45 @@ pub fn lock_cache_file(path: &Path) -> Result<(File, Duration), CacheFsError> {
     Ok((file, started.elapsed()))
 }
 
-pub fn record_cache_entry_use(path: &Path) -> Result<(), CacheFsError> {
+pub(super) fn try_lock_cache_file(path: &Path) -> Result<Option<File>, CacheFsError> {
+    let file = open_cache_lock_file(path)?;
+    match file.try_lock_exclusive() {
+        Ok(()) => Ok(Some(file)),
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
+        Err(source) => Err(CacheFsError {
+            operation: "try lock cache",
+            path: path.to_owned(),
+            source,
+        }),
+    }
+}
+
+fn open_cache_lock_file(path: &Path) -> Result<File, CacheFsError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| CacheFsError {
+            operation: "create cache lock directory",
+            path: parent.to_owned(),
+            source,
+        })?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+        .map_err(|source| CacheFsError {
+            operation: "open cache lock",
+            path: path.to_owned(),
+            source,
+        })
+}
+
+pub(super) fn record_cache_entry_use(path: &Path) -> Result<(), CacheFsError> {
     write_last_used(path, SystemTime::now())
 }
 
-pub fn write_last_used(path: &Path, last_used: SystemTime) -> Result<(), CacheFsError> {
+pub(super) fn write_last_used(path: &Path, last_used: SystemTime) -> Result<(), CacheFsError> {
     let marker = path.join(LAST_USED_FILE);
     let elapsed = last_used
         .duration_since(UNIX_EPOCH)
@@ -213,7 +250,7 @@ pub fn write_last_used(path: &Path, last_used: SystemTime) -> Result<(), CacheFs
     })
 }
 
-pub fn prune_direct_child_directories(
+pub(super) fn prune_direct_child_directories(
     cache_root: &Path,
     policy: ArtifactCachePrunePolicy,
     protected_entry: Option<&Path>,
@@ -228,6 +265,8 @@ pub fn prune_direct_child_directories(
         entries_removed: 0,
         bytes_before,
         bytes_removed: 0,
+        uncommitted_directories_removed: 0,
+        uncommitted_bytes_removed: 0,
     };
     let now = SystemTime::now();
 
@@ -260,7 +299,7 @@ pub fn prune_direct_child_directories(
     Ok(report)
 }
 
-pub fn directory_logical_size(path: &Path) -> io::Result<u64> {
+pub(super) fn directory_logical_size(path: &Path) -> io::Result<u64> {
     let mut total = 0_u64;
     let mut pending = vec![path.to_owned()];
     while let Some(current) = pending.pop() {
@@ -274,6 +313,26 @@ pub fn directory_logical_size(path: &Path) -> io::Result<u64> {
         }
     }
     Ok(total)
+}
+
+pub(super) fn is_sha256_directory(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| {
+        let bytes = name.as_encoded_bytes();
+        bytes.len() == 64 && bytes.iter().all(u8::is_ascii_hexdigit)
+    })
+}
+
+pub(super) fn remove_path_if_present(path: &Path) -> io::Result<()> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
 }
 
 struct CacheEntry {
@@ -357,17 +416,11 @@ fn remove_cache_entry(
     if entry.removed {
         return Ok(());
     }
-    match fs::remove_dir_all(&entry.path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(source) => {
-            return Err(CacheFsError {
-                operation: "prune cache entry",
-                path: entry.path.clone(),
-                source,
-            });
-        }
-    }
+    remove_path_if_present(&entry.path).map_err(|source| CacheFsError {
+        operation: "prune cache entry",
+        path: entry.path.clone(),
+        source,
+    })?;
     entry.removed = true;
     report.entries_removed += 1;
     report.bytes_removed = report.bytes_removed.saturating_add(entry.bytes);
