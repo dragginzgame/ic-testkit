@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Updates README installation guidance to the compatible `0.7` release line,
+  demonstrates interval-limited shared-target maintenance, and distinguishes
+  independent per-spec batching from intentional multi-package Cargo builds.
+
 ## [0.7.2] - 2026-08-06 - Scheduled shared-target maintenance
 
 ### Added

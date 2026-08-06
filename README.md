@@ -31,7 +31,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.6.1"
+ic-testkit = "0.7"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -602,8 +602,7 @@ retaining exact immutable final Wasm entries:
 ```rust,no_run
 use ic_testkit::artifacts::{
     SharedIncrementalTargetPrunePolicy, WasmBuildSpec, build_wasm_canisters_cached,
-    inspect_shared_incremental_target, maintain_shared_incremental_target,
-    resolve_cargo_build_inputs,
+    inspect_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
 };
 
 # let workspace = std::path::PathBuf::from(".");
@@ -617,21 +616,20 @@ let spec = WasmBuildSpec::new(
 )
 .with_shared_incremental_target(&shared_incremental);
 
-let inputs = resolve_cargo_build_inputs(&spec)?;
-let outcome = build_wasm_canisters_cached(&spec)?;
-let shared_usage = inspect_shared_incremental_target(&spec)?
-    .expect("the shared target exists after a cache miss");
-let maintenance = maintain_shared_incremental_target(
+let maintenance = maintain_shared_incremental_target_at_most_every(
     &spec,
     SharedIncrementalTargetPrunePolicy::new()
         .with_max_age(std::time::Duration::from_secs(7 * 24 * 60 * 60))
         .with_max_size_bytes(4 * 1024 * 1024 * 1024),
+    std::time::Duration::from_secs(24 * 60 * 60),
 )?;
+let outcome = build_wasm_canisters_cached(&spec)?;
+let shared_usage = inspect_shared_incremental_target(&spec)?
+    .expect("the shared target exists after a cache miss");
 eprintln!(
-    "{} inputs={} shared_bytes={} maintenance={maintenance:?} {}",
-    inputs.fingerprint(),
-    inputs.inputs().len(),
+    "shared_bytes={} maintenance={} {}",
     shared_usage.logical_size_bytes(),
+    maintenance,
     outcome,
 );
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -651,7 +649,11 @@ retaining the root, cache tag, and live coordination lock. Callers must not
 colocate unrelated data that needs to survive a clear. Exact Wasm acquisitions
 never invoke that maintenance automatically. Before clearing, the exact Cargo
 resolver rejects a target that overlaps source, configuration, or additional
-inputs.
+inputs. High-frequency callers should use
+`maintain_shared_incremental_target_at_most_every`; matching recent passes
+coordinate through a small cross-process marker and skip both Cargo input
+resolution and whole-target traversal. Missing targets remain uncreated,
+policy changes are immediately due, and a zero interval always runs.
 
 Long cold Cargo builds can expose synchronous structured progress without
 changing the existing silent API:
@@ -690,8 +692,8 @@ Raw output events preserve non-UTF-8 bytes; output is still captured in
 `WasmBuildError` when forwarding is disabled. An observer panic terminates and
 waits for the Cargo child before normal lock and incomplete-entry cleanup.
 
-Suites building several variants can batch independent specs without changing
-Cargo feature semantics:
+Suites that require standalone feature resolution for several variants can
+batch independent specs without changing Cargo feature semantics:
 
 ```rust,no_run
 use ic_testkit::artifacts::{WasmBuildSpec, build_wasm_canisters_cached_batch};
@@ -711,7 +713,10 @@ The batch is sequential and fail-fast. Every entry uses the ordinary
 single-spec implementation and its own exact identity, locks, policy, and
 Cargo command; packages are never collapsed into one invocation that could
 unify shared dependency features. A failure exposes the already-completed
-prefix, whose artifacts remain valid.
+prefix, whose artifacts remain valid. When several packages are intentionally
+built together with Cargo's normal shared feature resolution, keep them in one
+multi-package `WasmBuildSpec`; splitting that build into per-package batch
+entries would repeat Cargo work and may change feature resolution.
 
 `ResolvedCargoBuildInputs::is_current` provides the same before/after identity
 check for external Cargo-derived workflows. OS-native iterator builders ending
