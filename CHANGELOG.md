@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Adds cross-process interval-limited shared incremental-target maintenance
+  with structured missing, skipped, and performed outcomes. Matching recent
+  passes skip both Cargo input resolution and whole-target traversal, while
+  policy changes and zero intervals remain immediately due.
+
+### Testing
+
+- Adds focused fast-path, policy-change, safety, missing-target, and subprocess
+  coordination coverage for scheduled shared-target retention.
+
 ## [0.7.1] - 2026-08-06 - Artifact hygiene and test organization
 
 ### Changed

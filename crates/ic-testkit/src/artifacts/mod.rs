@@ -38,13 +38,14 @@ pub use wasm_batch::{
 };
 pub use wasm_cache::{
     CargoBuildInput, ResolvedCargoBuildInputs, SharedIncrementalTargetInspection,
-    SharedIncrementalTargetMaintenance, SharedIncrementalTargetPrunePolicy,
-    WasmBuildCacheMaintenance, WasmBuildCacheMode, WasmBuildCachePrunePolicy,
-    WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome, WasmBuildOutputStream,
-    WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildProgressOutcome,
-    WasmBuildRecord, WasmBuildSpec, WasmBuildTimings, WasmInputResolutionTimings,
-    build_wasm_canisters_cached, build_wasm_canisters_cached_with_progress,
-    inspect_shared_incremental_target, maintain_shared_incremental_target, prune_wasm_build_cache,
-    resolve_cargo_build_inputs,
+    SharedIncrementalTargetMaintenance, SharedIncrementalTargetMaintenanceOutcome,
+    SharedIncrementalTargetPrunePolicy, WasmBuildCacheMaintenance, WasmBuildCacheMode,
+    WasmBuildCachePrunePolicy, WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome,
+    WasmBuildOutputStream, WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent,
+    WasmBuildProgressOutcome, WasmBuildRecord, WasmBuildSpec, WasmBuildTimings,
+    WasmInputResolutionTimings, build_wasm_canisters_cached,
+    build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
+    maintain_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
+    prune_wasm_build_cache, resolve_cargo_build_inputs,
 };
 pub use workspace::{test_target_dir, workspace_root_for};

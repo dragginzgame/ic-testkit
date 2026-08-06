@@ -55,7 +55,7 @@ cat >"${bump_case}/bin/make" <<'EOF'
 printf 'make %s\n' "$*" >>"${TRACE_FILE}"
 case "${*: -1}" in
   ensure-clean) exit "${CLEAN_STATUS:-0}" ;;
-  ci)
+  release-ci)
     [[ "${CHANGELOG_VERSION:-}" == "${EXPECTED_CHANGELOG_VERSION:-0.8.1}" ]] || exit 42
     exit "${CI_STATUS:-0}"
     ;;
@@ -103,8 +103,8 @@ set -e
 mapfile -t ci_trace <"${bump_case}/trace"
 [[ "${ci_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
   || fail "the bump script did not check cleanliness before CI"
-[[ "${ci_trace[2]:-}" == "make --no-print-directory ci" ]] \
-  || fail "the bump script did not run CI before editing version metadata"
+[[ "${ci_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
+  || fail "the bump script did not run cleanable release CI before editing version metadata"
 
 : >"${bump_case}/trace"
 (
@@ -120,8 +120,46 @@ mapfile -t minor_trace <"${bump_case}/trace"
   || fail "the minor bump script did not check the target-version changelog first"
 [[ "${minor_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
   || fail "the minor bump script did not check cleanliness before CI"
-[[ "${minor_trace[2]:-}" == "make --no-print-directory ci" ]] \
-  || fail "the minor bump script did not run CI before editing version metadata"
+[[ "${minor_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
+  || fail "the minor bump script did not run cleanable release CI before editing version metadata"
+
+cleanup_case="${work_dir}/cleanup"
+mkdir -p "${cleanup_case}/bin" "${cleanup_case}/tmp"
+cat >"${cleanup_case}/bin/make" <<'EOF'
+#!/usr/bin/env bash
+printf 'make %s\n' "$*" >>"${TRACE_FILE}"
+[[ "$*" == "--no-print-directory ci" ]] || exit 2
+printf '%s\n' "${TMPDIR:-}" >"${TMPDIR_TRACE}"
+mkdir -p "${TMPDIR}/nested-artifact"
+exit "${CI_STATUS:-0}"
+EOF
+cat >"${cleanup_case}/bin/cargo" <<'EOF'
+#!/usr/bin/env bash
+printf 'cargo %s\n' "$*" >>"${TRACE_FILE}"
+[[ "$*" == "clean" ]] || exit 2
+EOF
+chmod +x "${cleanup_case}/bin/make" "${cleanup_case}/bin/cargo"
+set +e
+(
+  cd "${repo_root}"
+  PATH="${cleanup_case}/bin:${PATH}" TRACE_FILE="${cleanup_case}/trace" \
+    TMPDIR_TRACE="${cleanup_case}/tmpdir" TMPDIR="${cleanup_case}/tmp" CI_STATUS=23 \
+    /bin/bash scripts/release/run-ci.sh
+) >/dev/null 2>&1
+cleanup_ci_status="$?"
+set -e
+[[ "${cleanup_ci_status}" -eq 23 ]] \
+  || fail "release CI cleanup did not preserve the CI failure"
+mapfile -t cleanup_trace <"${cleanup_case}/trace"
+[[ "${cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
+  || fail "the release CI wrapper did not run the CI gate"
+[[ "${cleanup_trace[1]:-}" == "cargo clean" ]] \
+  || fail "the release CI wrapper did not clean Cargo artifacts after a CI failure"
+ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
+[[ "${ci_tmp_dir}" == "${cleanup_case}/tmp/ic-testkit-release-ci."* ]] \
+  || fail "the release CI wrapper did not isolate temporary artifacts"
+[[ ! -e "${ci_tmp_dir}" ]] \
+  || fail "the release CI wrapper left its temporary directory behind"
 
 commit_case="${work_dir}/commit"
 mkdir -p "${commit_case}/bin"
@@ -189,8 +227,8 @@ push_status="$?"
 set -e
 [[ "${push_status}" -ne 0 ]] || fail "release-push hid a failing CI gate"
 [[ ! -e "${push_case}/pushed" ]] || fail "release-push pushed after a failed CI gate"
-[[ "$(<"${push_case}/trace")" == "make --no-print-directory ci" ]] \
-  || fail "release-push did not run CI before pushing"
+[[ "$(<"${push_case}/trace")" == "make --no-print-directory release-ci" ]] \
+  || fail "release-push did not run cleanable release CI before pushing"
 
 rm -f "${push_case}/trace" "${push_case}/pushed"
 set +e

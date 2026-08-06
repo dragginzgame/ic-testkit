@@ -241,7 +241,7 @@ pub(super) fn record_cache_entry_use(path: &Path) -> Result<(), CacheFsError> {
     write_last_used(path, SystemTime::now())
 }
 
-fn cache_maintenance_due(
+pub(super) fn cache_maintenance_due(
     path: &Path,
     minimum_interval: Option<Duration>,
     maintenance_identity: &str,
@@ -274,7 +274,10 @@ fn cache_maintenance_due(
     })
 }
 
-fn record_cache_maintenance(path: &Path, maintenance_identity: &str) -> Result<(), CacheFsError> {
+pub(super) fn record_cache_maintenance(
+    path: &Path,
+    maintenance_identity: &str,
+) -> Result<(), CacheFsError> {
     fs::create_dir_all(path).map_err(|source| CacheFsError {
         operation: "create cache maintenance directory",
         path: path.to_owned(),

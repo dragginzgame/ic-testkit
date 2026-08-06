@@ -15,10 +15,11 @@ use toml::Value as TomlValue;
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
-        cache_entry_last_used, directory_logical_size,
+        cache_entry_last_used, cache_maintenance_due, directory_logical_size,
         ensure_cache_directory_tag as ensure_cache_tag, is_sha256_directory, lock_cache_file,
         perform_scheduled_cache_maintenance, prune_direct_child_directories,
-        record_cache_entry_use as record_entry_use, remove_path_if_present,
+        record_cache_entry_use as record_entry_use, record_cache_maintenance,
+        remove_path_if_present,
     },
     digest::{
         InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
@@ -168,6 +169,33 @@ pub struct SharedIncrementalTargetMaintenance {
     cleared: bool,
     lock_wait: Duration,
     maintenance: Duration,
+}
+
+/// Result of interval-limited shared Cargo target maintenance.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SharedIncrementalTargetMaintenanceOutcome {
+    /// The configured shared target does not exist, so nothing was created or inspected.
+    Missing {
+        /// Configured target path. A missing path cannot necessarily be canonicalized.
+        target_dir: PathBuf,
+    },
+    /// A successful matching maintenance pass is still inside the requested interval.
+    Skipped {
+        /// Canonical shared Cargo target directory.
+        target_dir: PathBuf,
+        /// Time spent waiting for another process using the shared target.
+        lock_wait: Duration,
+        /// Time spent checking the small cross-process schedule marker.
+        schedule_check: Duration,
+    },
+    /// Retention was evaluated under the shared-target lock.
+    Performed {
+        /// Completed retention report.
+        maintenance: SharedIncrementalTargetMaintenance,
+        /// Time spent checking the small cross-process schedule marker.
+        schedule_check: Duration,
+    },
 }
 
 /// Observation settings for one cacheable Wasm build.
@@ -901,6 +929,14 @@ impl SharedIncrementalTargetPrunePolicy {
     pub const fn max_size_bytes(self) -> Option<u64> {
         self.max_size_bytes
     }
+
+    fn maintenance_identity(self) -> String {
+        format!(
+            "age={:?};size={:?}",
+            self.max_age.map(|duration| duration.as_nanos()),
+            self.max_size_bytes
+        )
+    }
 }
 
 impl SharedIncrementalTargetMaintenance {
@@ -959,6 +995,76 @@ impl std::fmt::Display for SharedIncrementalTargetMaintenance {
             self.lock_wait,
             self.maintenance,
         )
+    }
+}
+
+impl SharedIncrementalTargetMaintenanceOutcome {
+    /// Configured or canonical target associated with this result.
+    #[must_use]
+    pub fn target_dir(&self) -> &Path {
+        match self {
+            Self::Missing { target_dir } | Self::Skipped { target_dir, .. } => target_dir,
+            Self::Performed { maintenance, .. } => maintenance.target_dir(),
+        }
+    }
+
+    /// Completed maintenance report, when retention was evaluated.
+    #[must_use]
+    pub const fn maintenance(&self) -> Option<&SharedIncrementalTargetMaintenance> {
+        match self {
+            Self::Performed { maintenance, .. } => Some(maintenance),
+            Self::Missing { .. } | Self::Skipped { .. } => None,
+        }
+    }
+
+    /// Whether retention was evaluated during this call.
+    #[must_use]
+    pub const fn was_performed(&self) -> bool {
+        matches!(self, Self::Performed { .. })
+    }
+
+    /// Time spent waiting for another process, when the target existed.
+    #[must_use]
+    pub const fn lock_wait(&self) -> Option<Duration> {
+        match self {
+            Self::Missing { .. } => None,
+            Self::Skipped { lock_wait, .. } => Some(*lock_wait),
+            Self::Performed { maintenance, .. } => Some(maintenance.lock_wait()),
+        }
+    }
+
+    /// Time spent checking the schedule marker, when the target existed.
+    #[must_use]
+    pub const fn schedule_check(&self) -> Option<Duration> {
+        match self {
+            Self::Missing { .. } => None,
+            Self::Skipped { schedule_check, .. } | Self::Performed { schedule_check, .. } => {
+                Some(*schedule_check)
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for SharedIncrementalTargetMaintenanceOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Missing { target_dir } => {
+                write!(formatter, "target={} action=missing", target_dir.display())
+            }
+            Self::Skipped {
+                target_dir,
+                lock_wait,
+                schedule_check,
+            } => write!(
+                formatter,
+                "target={} action=skipped lock={lock_wait:?} schedule={schedule_check:?}",
+                target_dir.display(),
+            ),
+            Self::Performed {
+                maintenance,
+                schedule_check,
+            } => write!(formatter, "{maintenance} schedule={schedule_check:?}"),
+        }
     }
 }
 
@@ -1061,17 +1167,84 @@ pub fn maintain_shared_incremental_target(
     // inputs. The target itself is excluded as generated state during hashing.
     let _ = resolve_cargo_build_inputs(spec)?;
     let (_lock, lock_wait, canonical) = lock_shared_incremental_target(spec)?;
+    maintain_shared_incremental_target_locked(&canonical, policy, lock_wait).map(Some)
+}
+
+/// Apply whole-target retention at most once per interval across processes.
+///
+/// The schedule marker is checked under the same lock used by shared Cargo
+/// builds. A matching successful pass inside `minimum_interval` returns
+/// [`SharedIncrementalTargetMaintenanceOutcome::Skipped`] without resolving
+/// Cargo inputs or traversing the target. Missing targets are not created.
+/// Changing the policy makes maintenance immediately due, and a zero interval
+/// always evaluates retention.
+///
+/// Due maintenance performs exact Cargo input resolution before inspecting or
+/// clearing the target. Failures are returned and are not recorded as a
+/// successful pass, so an unsafe configuration cannot be hidden by the
+/// schedule.
+pub fn maintain_shared_incremental_target_at_most_every(
+    spec: &WasmBuildSpec,
+    policy: SharedIncrementalTargetPrunePolicy,
+    minimum_interval: Duration,
+) -> Result<SharedIncrementalTargetMaintenanceOutcome, WasmBuildError> {
+    let target_dir =
+        shared_incremental_target(spec).ok_or_else(|| WasmBuildError::InvalidSpec {
+            message: "shared incremental target is not configured".to_owned(),
+        })?;
+    if !shared_incremental_target_exists(
+        spec,
+        "inspect shared incremental Cargo target before scheduled maintenance",
+    )? {
+        return Ok(SharedIncrementalTargetMaintenanceOutcome::Missing { target_dir });
+    }
+
+    let (_lock, lock_wait, canonical) = lock_shared_incremental_target(spec)?;
+    let schedule_root = canonical.join(".ic-testkit");
+    let maintenance_identity = policy.maintenance_identity();
+    let schedule_started = Instant::now();
+    let due = cache_maintenance_due(
+        &schedule_root,
+        Some(minimum_interval),
+        &maintenance_identity,
+    )
+    .map_err(wasm_cache_fs_error)?;
+    let schedule_check = schedule_started.elapsed();
+    if !due {
+        return Ok(SharedIncrementalTargetMaintenanceOutcome::Skipped {
+            target_dir: canonical,
+            lock_wait,
+            schedule_check,
+        });
+    }
+
+    // Keep the schedule decision and maintenance in one critical section so
+    // concurrent test binaries cannot all perform the same expensive scan.
+    let _ = resolve_cargo_build_inputs(spec)?;
+    let maintenance = maintain_shared_incremental_target_locked(&canonical, policy, lock_wait)?;
+    record_cache_maintenance(&schedule_root, &maintenance_identity).map_err(wasm_cache_fs_error)?;
+    Ok(SharedIncrementalTargetMaintenanceOutcome::Performed {
+        maintenance,
+        schedule_check,
+    })
+}
+
+fn maintain_shared_incremental_target_locked(
+    canonical: &Path,
+    policy: SharedIncrementalTargetPrunePolicy,
+    lock_wait: Duration,
+) -> Result<SharedIncrementalTargetMaintenance, WasmBuildError> {
     let started = Instant::now();
     let logical_size_bytes_before =
-        directory_logical_size(&canonical).map_err(|source| WasmBuildError::Io {
+        directory_logical_size(canonical).map_err(|source| WasmBuildError::Io {
             operation: "measure shared incremental Cargo target before maintenance",
-            path: canonical.clone(),
+            path: canonical.to_owned(),
             source,
         })?;
     let last_used_before =
-        cache_entry_last_used(&canonical).map_err(|source| WasmBuildError::Io {
+        cache_entry_last_used(canonical).map_err(|source| WasmBuildError::Io {
             operation: "read shared incremental Cargo target use time before maintenance",
-            path: canonical.clone(),
+            path: canonical.to_owned(),
             source,
         })?;
     let expired = policy.max_age.is_some_and(|max_age| {
@@ -1084,27 +1257,27 @@ pub fn maintain_shared_incremental_target(
         .is_some_and(|max_size_bytes| logical_size_bytes_before > max_size_bytes);
     let cleared = expired || oversized;
     if cleared {
-        clear_shared_incremental_target_contents(&canonical)?;
-        record_cache_entry_use(&canonical)?;
+        clear_shared_incremental_target_contents(canonical)?;
+        record_cache_entry_use(canonical)?;
     }
     let logical_size_bytes_after = if cleared {
-        directory_logical_size(&canonical).map_err(|source| WasmBuildError::Io {
+        directory_logical_size(canonical).map_err(|source| WasmBuildError::Io {
             operation: "measure shared incremental Cargo target after maintenance",
-            path: canonical.clone(),
+            path: canonical.to_owned(),
             source,
         })?
     } else {
         logical_size_bytes_before
     };
-    Ok(Some(SharedIncrementalTargetMaintenance {
-        target_dir: canonical,
+    Ok(SharedIncrementalTargetMaintenance {
+        target_dir: canonical.to_owned(),
         logical_size_bytes_before,
         logical_size_bytes_after,
         last_used_before,
         cleared,
         lock_wait,
         maintenance: started.elapsed(),
-    }))
+    })
 }
 
 fn clear_shared_incremental_target_contents(target_dir: &Path) -> Result<(), WasmBuildError> {

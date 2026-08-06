@@ -2,7 +2,7 @@
 	actions-check build-test-canisters changelog-check check check-wasm ci clean \
 	clippy docs-check ensure-clean fmt fmt-check help msrv package patch publish \
 	minor publish-dry-run publish-guards-check release-check release-commit \
-	release-guards-check release-minor release-patch release-push release-stage \
+	release-ci release-guards-check release-minor release-patch release-push release-stage \
 	release-tag-check tags test test-canisters version
 
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
@@ -109,6 +109,9 @@ release-check:
 		$(MAKE) --no-print-directory "$$target"; \
 	done
 
+release-ci:
+	+MAKE="$(MAKE)" bash scripts/release/run-ci.sh
+
 publish: ensure-clean release-tag-check
 	bash scripts/release/publish-workspace.sh
 
@@ -151,7 +154,7 @@ release-tag-check:
 	bash "$(REPO_ROOT)scripts/release/check-tag-at-head.sh"
 
 release-push: ensure-clean release-tag-check
-	+$(MAKE) --no-print-directory ci
+	+$(MAKE) --no-print-directory release-ci
 	git push --follow-tags
 
 clean:

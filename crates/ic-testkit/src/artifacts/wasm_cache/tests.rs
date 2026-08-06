@@ -1,11 +1,12 @@
 use super::{
-    IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetPrunePolicy,
-    WasmBuildCachePrunePolicy, WasmBuildError, WasmBuildOutcome, WasmBuildOutputStream,
-    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
-    append_cargo_configuration_inputs, build_wasm_canisters_cached_with_progress,
+    IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetMaintenanceOutcome,
+    SharedIncrementalTargetPrunePolicy, WasmBuildCachePrunePolicy, WasmBuildError,
+    WasmBuildOutcome, WasmBuildOutputStream, WasmBuildProgressConfig, WasmBuildProgressEvent,
+    WasmBuildSpec, append_cargo_configuration_inputs, build_wasm_canisters_cached_with_progress,
     ensure_cache_directory_tag, finish_fingerprint_build, inspect_shared_incremental_target,
-    maintain_shared_incremental_target, metadata_arguments, prune_wasm_build_cache,
-    prune_wasm_build_cache_locked, resolve_cargo_build_inputs, run_cargo_build, validate_spec,
+    maintain_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
+    metadata_arguments, prune_wasm_build_cache, prune_wasm_build_cache_locked,
+    resolve_cargo_build_inputs, run_cargo_build, validate_spec,
 };
 use crate::artifacts::cache_fs::{
     CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size, write_last_used,
@@ -124,6 +125,16 @@ fn public_cargo_input_snapshot_detects_local_source_changes() {
         "unsafe maintenance returned {maintenance:?}",
     );
     assert!(sentinel.is_file());
+    let scheduled = maintain_shared_incremental_target_at_most_every(
+        &unsafe_target,
+        SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0),
+        Duration::from_secs(60),
+    );
+    assert!(
+        matches!(scheduled, Err(WasmBuildError::InvalidSpec { .. })),
+        "unsafe scheduled maintenance returned {scheduled:?}",
+    );
+    assert!(sentinel.is_file());
 
     let broad_target = spec.with_shared_incremental_target(&root);
     assert!(matches!(
@@ -158,6 +169,21 @@ fn shared_target_inspection_is_explicit_and_does_not_create_a_missing_target() {
             .expect("inspect missing shared target")
             .is_none()
     );
+    assert!(!target.exists());
+    let scheduled = maintain_shared_incremental_target_at_most_every(
+        &shared,
+        SharedIncrementalTargetPrunePolicy::new(),
+        Duration::from_secs(60),
+    )
+    .expect("schedule missing shared target maintenance");
+    assert!(matches!(
+        &scheduled,
+        SharedIncrementalTargetMaintenanceOutcome::Missing { .. }
+    ));
+    assert_eq!(scheduled.target_dir(), target);
+    assert!(!scheduled.was_performed());
+    assert_eq!(scheduled.lock_wait(), None);
+    assert_eq!(scheduled.schedule_check(), None);
     assert!(!target.exists());
     fs::remove_dir_all(root).expect("remove shared-target inspection fixture");
 }
@@ -212,6 +238,81 @@ fn shared_target_maintenance_clears_cargo_state_but_preserves_coordination() {
         retained.logical_size_bytes_after()
     );
     fs::remove_dir_all(root).expect("remove shared-target maintenance fixture");
+}
+
+#[test]
+fn scheduled_shared_target_maintenance_skips_expensive_work_inside_interval() {
+    let root = unique_temp_directory("scheduled-shared-target-maintenance");
+    let package = root.join("fixture");
+    fs::create_dir_all(package.join("src")).expect("create scheduled fixture package");
+    let workspace_manifest = root.join("Cargo.toml");
+    fs::write(
+        &workspace_manifest,
+        "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+    )
+    .expect("write scheduled fixture workspace");
+    fs::write(
+        package.join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .expect("write scheduled fixture manifest");
+    fs::write(package.join("src/lib.rs"), "pub fn fixture() {}\n")
+        .expect("write scheduled fixture source");
+    let target = root.join("shared-target");
+    fs::create_dir_all(target.join("debug/deps")).expect("create scheduled Cargo state");
+    fs::write(target.join("debug/deps/object.o"), vec![7_u8; 128])
+        .expect("write scheduled Cargo state");
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_shared_incremental_target(&target);
+    let policy = SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0);
+    let interval = Duration::from_secs(60 * 60);
+
+    let first = maintain_shared_incremental_target_at_most_every(&spec, policy, interval)
+        .expect("perform scheduled shared-target maintenance");
+    let report = first
+        .maintenance()
+        .expect("first scheduled maintenance must be performed");
+    assert!(first.was_performed());
+    assert!(report.was_cleared());
+    assert!(first.lock_wait().is_some());
+    assert!(first.schedule_check().is_some());
+    assert!(first.to_string().contains("action=cleared"));
+
+    let sentinel = target.join("debug/deps/preserve-on-skip");
+    fs::create_dir_all(sentinel.parent().expect("scheduled sentinel parent"))
+        .expect("recreate shared Cargo state");
+    fs::write(&sentinel, b"preserve").expect("write scheduled skip sentinel");
+    fs::remove_file(&workspace_manifest).expect("hide Cargo metadata from skipped call");
+
+    let skipped = maintain_shared_incremental_target_at_most_every(&spec, policy, interval)
+        .expect("skip recently completed shared-target maintenance");
+    assert!(matches!(
+        &skipped,
+        SharedIncrementalTargetMaintenanceOutcome::Skipped { .. }
+    ));
+    assert!(!skipped.was_performed());
+    assert!(skipped.lock_wait().is_some());
+    assert!(skipped.schedule_check().is_some());
+    assert!(skipped.to_string().contains("action=skipped"));
+    assert!(sentinel.is_file());
+
+    fs::write(
+        &workspace_manifest,
+        "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+    )
+    .expect("restore scheduled fixture workspace");
+    let changed_policy = SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(u64::MAX);
+    let changed = maintain_shared_incremental_target_at_most_every(&spec, changed_policy, interval)
+        .expect("changed policy must make scheduled maintenance due");
+    assert!(changed.was_performed());
+    assert!(sentinel.is_file());
+
+    let zero_interval =
+        maintain_shared_incremental_target_at_most_every(&spec, changed_policy, Duration::ZERO)
+            .expect("zero interval must perform shared-target maintenance");
+    assert!(zero_interval.was_performed());
+
+    fs::remove_dir_all(root).expect("remove scheduled shared-target fixture");
 }
 
 #[test]
