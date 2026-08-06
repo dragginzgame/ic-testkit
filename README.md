@@ -51,7 +51,7 @@ The crate supports Rust 1.88 and uses PocketIC 15.
 | Fixture pools | `CachedStandaloneCanisterFixturePool`, `CachedPocketIcBaselinePool` | Bounded standalone or recipe-driven multi-canister baseline reuse |
 | Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
-| Artifacts | `WasmBuildSpec`, `WasmBuildOutcome`, `WasmBuildCachePrunePolicy`, `WatchedInputSnapshot` | Content-addressed Wasm builds, bounded cache retention, exact freshness stamps, and dedicated target directories |
+| Artifacts | `ArtifactCacheSpec`, `WasmBuildSpec`, `WatchedInputSnapshot` | Transactional external artifact sets, content-addressed Wasm builds, bounded retention, and exact freshness stamps |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
 
@@ -510,15 +510,81 @@ failure should be returned directly.
 Cargo metadata, input discovery, and content hashing. The existing
 `input_resolution` accessor remains the aggregate for compatibility.
 
+External deterministic tools use the transactional artifact-set cache. The
+caller declares exact inputs, tool bytes, arguments, relevant environment, and
+the complete output schema; `ic-testkit` owns cross-process locking, staging,
+before/after input verification, validation, publication, materialization, and
+retention:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    ArtifactCacheOutcome, ArtifactCachePreparation, ArtifactCachePrunePolicy,
+    ArtifactCacheSpec, prepare_artifact_cache,
+};
+use std::{io, process::Command, time::Duration};
+
+# let workspace = std::path::PathBuf::from(".");
+let input = workspace.join("target/wasm/counter.wasm");
+let optimizer = workspace.join("tools/wasm-optimizer");
+let destination = workspace.join("target/optimized/counter.wasm");
+let spec = ArtifactCacheSpec::new(
+    &workspace.join("target/external-artifact-cache"),
+    "counter-optimizer",
+    "counter/optimizer/v1",
+)
+.with_input("counter.wasm", &input)
+.with_tool("optimizer", &optimizer)
+.with_arguments(&["--optimize-for-size"])
+.with_environment(&[("OPTIMIZER_MODE", "deterministic")])
+.with_output("optimized.wasm", &destination)
+.with_prune_policy(
+    ArtifactCachePrunePolicy::new()
+        .with_max_age(Duration::from_secs(14 * 24 * 60 * 60))
+        .with_max_size_bytes(2 * 1024 * 1024 * 1024),
+);
+
+let outcome = match prepare_artifact_cache(&spec)? {
+    ArtifactCachePreparation::Reused(record) => ArtifactCacheOutcome::Reused(record),
+    ArtifactCachePreparation::Build(transaction) => {
+        let staged = transaction.output_path("optimized.wasm")?;
+        let status = Command::new(&optimizer)
+            .args(["--optimize-for-size", "-o"])
+            .arg(staged)
+            .arg(&input)
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other(format!("optimizer failed with {status}")).into());
+        }
+        transaction.commit()?
+    }
+};
+eprintln!("artifact key: {}", outcome.record().key());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+A miss transaction exposes checked staging paths for redirectable tools and an
+`import_output` helper for commands that write to fixed locations. `commit`
+accepts only the complete declared output set and publishes its manifest last;
+dropped, failed, or panicked transactions remove staging without creating a
+cache hit. Multi-output recipes declare several logical outputs and commit them
+as one unit. Recipe identity is caller-owned and must change when undeclared
+pipeline semantics change. Namespace and recipe identifiers are hashed before
+being used on disk, environment values are never rendered in `Debug` or cache
+manifests, and public destination paths do not affect content identity.
+
+The default coordination scope is the namespace. Recipes that use the same
+mutable external work tree can select a shared scope even when their content
+keys differ. Independent recipes can use distinct scopes. Exact content-key
+locking still ensures that overlapping callers build one result only.
+
 `WatchedInputSnapshot` likewise hashes file paths and contents instead of
 modification times. Generated artifacts become reusable only after
 `mark_artifact_fresh` atomically records the snapshot beside the successfully
 built artifact; an unstamped artifact is conservatively stale.
 
-The proposed follow-up unifies external multi-output builds and post-link
-transforms behind one transactional cache rather than adding tool-specific
-APIs. See the
-[consolidated artifact and fixture cache design](docs/design/0.3-artifact-cache/follow-up-design.md).
+The cache intentionally contains no Binaryen, `icp build`, package-name, or
+PocketIC policy. Its complete contract is recorded in the
+[`0.5` transactional artifact-set design](docs/design/0.5-artifact-transactions/0.5-design.md).
 
 ## Benchmark markers and reports
 

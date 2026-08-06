@@ -5,8 +5,9 @@
 Proposed after the released `0.3.5` cache-lifecycle work and updated through
 `0.4.2`. This document consolidates concrete Canic and IcyDB feedback. Complete
 Cargo configuration discovery, in-lock retention, and detailed input timings
-are now delivered; the broader transactional artifact-set work remains
-proposed.
+and the broader transactional artifact-set cache are now delivered. The
+implemented transaction contract lives in the
+[`0.5` transactional artifact-set design](../0.5-artifact-transactions/0.5-design.md).
 
 ## Consumer evidence
 
@@ -55,10 +56,10 @@ closure. It therefore detects content changes deterministically, but a changed
 README or test-only file can still invalidate a Wasm build.
 
 Configuration resolution now covers Cargo's complete hierarchical and include
-boundary. Future input resolution should retain a labeled per-file manifest and expose
-added, removed, and content-changed paths. That makes invalidation explainable
-without weakening it. A file may be excluded only when Cargo semantics or an
-explicit build recipe prove that it cannot affect the output.
+boundary. Future input resolution should retain a labeled per-file manifest and
+expose added, removed, and content-changed paths. That makes invalidation
+explainable without weakening it. A file may be excluded only when Cargo
+semantics or an explicit build recipe prove that it cannot affect the output.
 
 Cargo package `include` and `exclude` rules are not sufficient proof by
 themselves for local builds: Rust `include!`, procedural macros, and build
@@ -91,8 +92,11 @@ only with a safe cold fallback and post-build revalidation.
 
 ## One transactional artifact-cache core
 
-The core abstraction is a cache transaction over a named artifact set. Public
-type names remain provisional, but the responsibilities do not:
+The core abstraction is a cache transaction over a named artifact set. The
+complete locking, identity, publication, retention, and acceptance contract is
+now specified in the accepted
+[`0.5` design](../0.5-artifact-transactions/0.5-design.md); this section retains
+the original normalized overview:
 
 ```text
 ArtifactCacheSpec
@@ -203,10 +207,11 @@ presenting named snapshots as complete simulator isolation.
 
 1. ~~Correct Cargo configuration discovery~~ (delivered in `0.4.2`), then add
    exact per-path change reports.
-2. Extract one internal input/manifest/lock/staging/retention implementation
-   under the existing Wasm and watched-input APIs.
-3. Expose the transactional artifact-set API and validate it with both a
-   one-input transform and a multi-output external build fixture.
+2. ~~Extract shared lock, cache tag, last-use, size, and retention primitives
+   beneath the existing Wasm cache~~ (delivered in `0.5.0`).
+3. ~~Expose the transactional artifact-set API and validate it with both a
+   one-input transform and a multi-output external build fixture~~ (delivered
+   in `0.5.0`).
 4. Add the opt-in shared Cargo cohort strategy and measure cold, warm, disk,
    and concurrent behavior.
 5. Implement the bounded multi-canister baseline pool only through the typed

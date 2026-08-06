@@ -3,15 +3,23 @@
 //! These functions keep integration-test artifacts in caller-selected target
 //! directories and contain no application-specific package or profile policy.
 
+mod cache_fs;
 mod digest;
 mod icp;
+mod transaction;
 mod wasm;
 mod wasm_cache;
 mod workspace;
 
+pub use cache_fs::{ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport};
 pub use digest::InputDigest;
 pub use icp::{
     WatchedInputSnapshot, icp_artifact_ready_for_build, icp_artifact_ready_with_snapshot,
+};
+pub use transaction::{
+    ArtifactBuildTransaction, ArtifactCacheArtifact, ArtifactCacheError, ArtifactCacheOutcome,
+    ArtifactCachePreparation, ArtifactCacheRecord, ArtifactCacheSpec, ArtifactCacheTimings,
+    ArtifactOutputValidation, prepare_artifact_cache, prune_artifact_cache,
 };
 pub use wasm::{build_wasm_canisters, read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_cache::{

@@ -10,7 +10,8 @@ provides:
 - canister install and retry helpers
 - cached single- and multi-canister PocketIC baseline pools
 - deterministic fake principals and account-like values
-- content-addressed wasm artifact helpers with bounded cache retention
+- transactional external artifact sets and content-addressed Wasm builds with
+  bounded cache retention
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
 
@@ -25,4 +26,6 @@ setup, examples, local checks, and release notes.
 
 The repository also includes a complete
 [multi-canister baseline recipe](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/multi_canister_baseline_pool.rs)
-that is compiled by the crate's normal all-target checks.
+and a
+[transactional external-artifact example](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/transactional_artifact_cache.rs)
+that are compiled by the crate's normal all-target checks.

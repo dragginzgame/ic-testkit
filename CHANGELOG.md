@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-06 - Transactional artifact-set caching
+
+### Added
+
+- Adds `ArtifactCacheSpec`, `prepare_artifact_cache`, and owned miss
+  transactions for deterministic commands outside Cargo. Exact input and tool
+  contents, recipe identity, ordered arguments, relevant environment, opaque
+  identity fields, and the complete output schema select an immutable cache
+  entry.
+- Adds complete multi-output staging, checked logical output paths, fixed-path
+  output importing, before/after input verification, atomic entry publication,
+  caller-destination materialization, content-manifest validation, corruption
+  recovery, and panic-safe cleanup. Typed records report `Built` or `Reused`,
+  exact keys, materialized artifacts, phase timings, and nonfatal maintenance.
+- Adds separate coordination-scope, content-key, and namespace process locks so
+  recipes sharing external mutable state serialize without preventing exact
+  independent cache identity. Overlapping exact acquisitions build once.
+- Adds generic `ArtifactCachePrunePolicy`, `ArtifactCachePruneReport`,
+  `ArtifactCacheMaintenance`, and strict `prune_artifact_cache` retention for
+  transactional namespaces.
+- Adds a compiled external-transform example and coverage for exact concurrent
+  reuse, coordination locking, multi-output publication, corruption recovery,
+  failed-build cleanup, input races, import workflows, and retention.
+
+### Changed
+
+- Moves cache-directory tagging, process-lock creation, last-use tracking,
+  logical directory measurement, and age/size pruning beneath both the existing
+  Wasm cache and the transactional artifact cache. Existing
+  `WasmBuildCachePrunePolicy`, report, and maintenance names remain compatible
+  aliases with no Wasm cache layout migration.
+- Keeps the new cache host-only and command-agnostic, with no production Wasm
+  or PocketIC runtime behavior changes.
+
 ## [0.4.2] - 2026-08-05 - Exact Cargo inputs and in-lock maintenance
 
 ### Added

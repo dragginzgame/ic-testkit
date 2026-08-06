@@ -8,7 +8,8 @@
 //!
 //! The crate also provides:
 //!
-//! - host-only Wasm build and freshness helpers in [`artifacts`];
+//! - host-only transactional artifacts, Wasm builds, and freshness helpers in
+//!   [`artifacts`];
 //! - marker parsing, aggregation, comparison, and reports in [`benchmark`];
 //! - canister-side marker emission in [`performance`];
 //! - deterministic test principals through [`Fake`].
