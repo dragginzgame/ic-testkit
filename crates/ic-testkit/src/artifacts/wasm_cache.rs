@@ -3071,16 +3071,17 @@ mod tests {
         let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
             .with_cargo_program(&cargo);
         let mut events = Vec::new();
-        let mut observer = |event| events.push(event);
-        let mut progress = ProgressReporter {
-            config: WasmBuildProgressConfig::new()
-                .with_heartbeat_interval(Duration::from_millis(10)),
-            observer: Some(&mut observer),
-        };
+        {
+            let mut observer = |event| events.push(event);
+            let mut progress = ProgressReporter {
+                config: WasmBuildProgressConfig::new()
+                    .with_heartbeat_interval(Duration::from_millis(10)),
+                observer: Some(&mut observer),
+            };
 
-        run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
-            .expect("run observed Cargo fixture");
-        drop(progress);
+            run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
+                .expect("run observed Cargo fixture");
+        }
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -3124,15 +3125,16 @@ mod tests {
         let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
             .with_cargo_program(&cargo);
         let mut events = Vec::new();
-        let mut observer = |event| events.push(event);
-        let mut progress = ProgressReporter {
-            config: WasmBuildProgressConfig::new().without_heartbeats(),
-            observer: Some(&mut observer),
-        };
+        let error = {
+            let mut observer = |event| events.push(event);
+            let mut progress = ProgressReporter {
+                config: WasmBuildProgressConfig::new().without_heartbeats(),
+                observer: Some(&mut observer),
+            };
 
-        let error = run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
-            .expect_err("Cargo fixture must fail");
-        drop(progress);
+            run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
+                .expect_err("Cargo fixture must fail")
+        };
 
         assert!(matches!(
             error,
