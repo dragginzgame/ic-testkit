@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Adds `WasmBuildSpec::with_shared_incremental_target_maintenance_at_most_every`
+  so scheduled caller-owned target retention participates directly in cached
+  Wasm acquisition, build records, compact diagnostics, and progress events.
+
+### Changed
+
+- Reuses the acquisition's locked Cargo input resolution for due shared-target
+  maintenance. The opt-in path coordinates and creates the target even on an
+  exact hit, allowing the first acquisition to record its schedule marker.
+
+### Testing
+
+- Adds focused validation plus cold-build, immediate-hit, progress-ordering,
+  resolution-reuse, and missing-target recreation coverage.
+
 ## [0.7.3] - 2026-08-06 - Current artifact workflow guidance
 
 ### Changed

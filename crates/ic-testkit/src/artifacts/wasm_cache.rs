@@ -62,6 +62,13 @@ pub struct WasmBuildSpec {
     cache_mode: WasmBuildCacheMode,
     prune_policy: Option<WasmBuildCachePrunePolicy>,
     prune_interval: Option<Duration>,
+    shared_incremental_maintenance_config: Option<SharedIncrementalTargetMaintenanceConfig>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SharedIncrementalTargetMaintenanceConfig {
+    policy: SharedIncrementalTargetPrunePolicy,
+    minimum_interval: Duration,
 }
 
 /// Cargo-target ownership mode for one exact cached Wasm build.
@@ -94,6 +101,7 @@ pub struct WasmBuildRecord {
     artifacts: Vec<PathBuf>,
     timings: WasmBuildTimings,
     maintenance: Option<WasmBuildCacheMaintenance>,
+    shared_incremental_maintenance: Option<SharedIncrementalTargetMaintenanceOutcome>,
 }
 
 /// Timings for cache coordination, input resolution, and Cargo execution.
@@ -259,6 +267,16 @@ pub enum WasmBuildProgressEvent {
         target_dir: PathBuf,
         /// Time spent waiting for another process.
         wait: Duration,
+    },
+    /// Scheduled shared-target retention is about to be evaluated under lock.
+    SharedTargetMaintenanceStarted {
+        /// Canonical shared target selected by the build specification.
+        target_dir: PathBuf,
+    },
+    /// Scheduled shared-target retention completed or was skipped.
+    SharedTargetMaintenanceFinished {
+        /// Structured retention result attached to the successful acquisition.
+        outcome: SharedIncrementalTargetMaintenanceOutcome,
     },
     /// Cargo compilation started.
     CargoStarted {
@@ -475,6 +493,7 @@ impl WasmBuildSpec {
             cache_mode: WasmBuildCacheMode::Isolated,
             prune_policy: None,
             prune_interval: None,
+            shared_incremental_maintenance_config: None,
         }
     }
 
@@ -599,6 +618,30 @@ impl WasmBuildSpec {
         self
     }
 
+    /// Schedule caller-owned shared-target retention as part of acquisition.
+    ///
+    /// This option requires [`Self::with_shared_incremental_target`]. Every
+    /// acquisition coordinates through that target, including an exact hit,
+    /// so a missing target can be created and receive its first schedule
+    /// marker immediately. Matching recent passes only check the marker; due
+    /// passes reuse the acquisition's exact Cargo input resolution before
+    /// evaluating retention. The structured result is attached to the build
+    /// record and emitted through observed progress. Maintenance failures fail
+    /// the acquisition and do not record a successful schedule marker.
+    #[must_use]
+    pub const fn with_shared_incremental_target_maintenance_at_most_every(
+        mut self,
+        policy: SharedIncrementalTargetPrunePolicy,
+        minimum_interval: Duration,
+    ) -> Self {
+        self.shared_incremental_maintenance_config =
+            Some(SharedIncrementalTargetMaintenanceConfig {
+                policy,
+                minimum_interval,
+            });
+        self
+    }
+
     /// Apply cache retention under the build operation's existing process lock.
     ///
     /// Maintenance is best-effort: its structured result is attached to the
@@ -698,6 +741,14 @@ impl WasmBuildRecord {
     #[must_use]
     pub const fn maintenance(&self) -> Option<&WasmBuildCacheMaintenance> {
         self.maintenance.as_ref()
+    }
+
+    /// Scheduled caller-owned shared-target maintenance, when configured.
+    #[must_use]
+    pub const fn shared_incremental_maintenance(
+        &self,
+    ) -> Option<&SharedIncrementalTargetMaintenanceOutcome> {
+        self.shared_incremental_maintenance.as_ref()
     }
 }
 
@@ -1092,7 +1143,11 @@ impl std::fmt::Display for WasmBuildOutcome {
             self.record().fingerprint,
             self.record().artifacts.len(),
             self.record().timings,
-        )
+        )?;
+        if let Some(maintenance) = self.record().shared_incremental_maintenance() {
+            write!(formatter, " shared_maintenance=({maintenance})")?;
+        }
+        Ok(())
     }
 }
 
@@ -1200,6 +1255,40 @@ pub fn maintain_shared_incremental_target_at_most_every(
     }
 
     let (_lock, lock_wait, canonical) = lock_shared_incremental_target(spec)?;
+    let schedule = schedule_shared_incremental_target_maintenance(
+        &canonical,
+        policy,
+        minimum_interval,
+        lock_wait,
+    )?;
+    let schedule = match schedule {
+        SharedIncrementalTargetMaintenanceSchedule::Skipped(outcome) => return Ok(outcome),
+        SharedIncrementalTargetMaintenanceSchedule::Due(due) => due,
+    };
+
+    // Keep the schedule decision and maintenance in one critical section so
+    // concurrent test binaries cannot all perform the same expensive scan.
+    let _ = resolve_cargo_build_inputs(spec)?;
+    perform_due_shared_incremental_target_maintenance(&canonical, policy, lock_wait, schedule)
+}
+
+enum SharedIncrementalTargetMaintenanceSchedule {
+    Skipped(SharedIncrementalTargetMaintenanceOutcome),
+    Due(DueSharedIncrementalTargetMaintenance),
+}
+
+struct DueSharedIncrementalTargetMaintenance {
+    schedule_root: PathBuf,
+    maintenance_identity: String,
+    schedule_check: Duration,
+}
+
+fn schedule_shared_incremental_target_maintenance(
+    canonical: &Path,
+    policy: SharedIncrementalTargetPrunePolicy,
+    minimum_interval: Duration,
+    lock_wait: Duration,
+) -> Result<SharedIncrementalTargetMaintenanceSchedule, WasmBuildError> {
     let schedule_root = canonical.join(".ic-testkit");
     let maintenance_identity = policy.maintenance_identity();
     let schedule_started = Instant::now();
@@ -1211,17 +1300,35 @@ pub fn maintain_shared_incremental_target_at_most_every(
     .map_err(wasm_cache_fs_error)?;
     let schedule_check = schedule_started.elapsed();
     if !due {
-        return Ok(SharedIncrementalTargetMaintenanceOutcome::Skipped {
-            target_dir: canonical,
-            lock_wait,
-            schedule_check,
-        });
+        return Ok(SharedIncrementalTargetMaintenanceSchedule::Skipped(
+            SharedIncrementalTargetMaintenanceOutcome::Skipped {
+                target_dir: canonical.to_owned(),
+                lock_wait,
+                schedule_check,
+            },
+        ));
     }
+    Ok(SharedIncrementalTargetMaintenanceSchedule::Due(
+        DueSharedIncrementalTargetMaintenance {
+            schedule_root,
+            maintenance_identity,
+            schedule_check,
+        },
+    ))
+}
 
-    // Keep the schedule decision and maintenance in one critical section so
-    // concurrent test binaries cannot all perform the same expensive scan.
-    let _ = resolve_cargo_build_inputs(spec)?;
-    let maintenance = maintain_shared_incremental_target_locked(&canonical, policy, lock_wait)?;
+fn perform_due_shared_incremental_target_maintenance(
+    canonical: &Path,
+    policy: SharedIncrementalTargetPrunePolicy,
+    lock_wait: Duration,
+    due: DueSharedIncrementalTargetMaintenance,
+) -> Result<SharedIncrementalTargetMaintenanceOutcome, WasmBuildError> {
+    let DueSharedIncrementalTargetMaintenance {
+        schedule_root,
+        maintenance_identity,
+        schedule_check,
+    } = due;
+    let maintenance = maintain_shared_incremental_target_locked(canonical, policy, lock_wait)?;
     record_cache_maintenance(&schedule_root, &maintenance_identity).map_err(wasm_cache_fs_error)?;
     Ok(SharedIncrementalTargetMaintenanceOutcome::Performed {
         maintenance,
@@ -1356,13 +1463,26 @@ fn build_wasm_canisters_cached_internal(
     let total_started = Instant::now();
     validate_spec(spec)?;
     progress.emit(WasmBuildProgressEvent::Started);
+    if spec.shared_incremental_maintenance_config.is_some() {
+        let outcome = build_wasm_canisters_cached_with_scheduled_shared_maintenance(
+            spec,
+            total_started,
+            progress,
+        )?;
+        emit_finished_progress(&outcome, progress);
+        return Ok(outcome);
+    }
     let (cache_lock, first_lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
 
     let resolved = resolve_inputs_with_progress(spec, progress)?;
-    if let Some(outcome) =
-        try_reuse_wasm_artifacts(spec, &resolved, first_lock_wait, None, total_started)?
-    {
+    if let Some(outcome) = try_reuse_wasm_artifacts(
+        spec,
+        &resolved,
+        first_lock_wait,
+        &SharedIncrementalAcquisitionContext::default(),
+        total_started,
+    )? {
         emit_finished_progress(&outcome, progress);
         return Ok(outcome);
     }
@@ -1377,7 +1497,7 @@ fn build_wasm_canisters_cached_internal(
                 spec,
                 resolved,
                 first_lock_wait,
-                None,
+                SharedIncrementalAcquisitionContext::default(),
                 cache_entry,
                 total_started,
                 progress,
@@ -1402,11 +1522,15 @@ fn build_wasm_canisters_cached_internal(
             let mut current = resolve_inputs_with_progress(spec, progress)?;
             current.timings.include(resolved.timings);
             let lock_wait = first_lock_wait.saturating_add(second_lock_wait);
+            let shared_incremental = SharedIncrementalAcquisitionContext {
+                lock_wait: Some(shared_lock_wait),
+                maintenance: None,
+            };
             if let Some(outcome) = try_reuse_wasm_artifacts(
                 spec,
                 &current,
                 lock_wait,
-                Some(shared_lock_wait),
+                &shared_incremental,
                 total_started,
             )? {
                 emit_finished_progress(&outcome, progress);
@@ -1417,7 +1541,7 @@ fn build_wasm_canisters_cached_internal(
                 spec,
                 current,
                 lock_wait,
-                Some(shared_lock_wait),
+                shared_incremental,
                 shared_target,
                 total_started,
                 progress,
@@ -1427,6 +1551,95 @@ fn build_wasm_canisters_cached_internal(
         }
     }?;
     emit_finished_progress(&outcome, progress);
+    Ok(outcome)
+}
+
+fn build_wasm_canisters_cached_with_scheduled_shared_maintenance(
+    spec: &WasmBuildSpec,
+    total_started: Instant,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<WasmBuildOutcome, WasmBuildError> {
+    let configured_target = shared_incremental_target(spec)
+        .expect("validated scheduled maintenance must have a shared Cargo target");
+    progress.emit(WasmBuildProgressEvent::SharedTargetLockStarted {
+        target_dir: configured_target,
+    });
+    let (_shared_lock, shared_lock_wait, shared_target) = lock_shared_incremental_target(spec)?;
+    progress.emit(WasmBuildProgressEvent::SharedTargetLockAcquired {
+        target_dir: shared_target.clone(),
+        wait: shared_lock_wait,
+    });
+    let (_cache_lock, lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
+    ensure_cache_directory_tag(&spec.target_dir)?;
+
+    // Resolution under both locks proves the target boundary once for the
+    // scheduled retention pass and the following exact-cache acquisition.
+    let resolved = resolve_inputs_with_progress(spec, progress)?;
+    let shared_maintenance = perform_configured_shared_incremental_target_maintenance(
+        spec,
+        &shared_target,
+        shared_lock_wait,
+        progress,
+    )?;
+    let shared_incremental = SharedIncrementalAcquisitionContext {
+        lock_wait: Some(shared_lock_wait),
+        maintenance: Some(shared_maintenance),
+    };
+    if let Some(outcome) = try_reuse_wasm_artifacts(
+        spec,
+        &resolved,
+        lock_wait,
+        &shared_incremental,
+        total_started,
+    )? {
+        return Ok(outcome);
+    }
+    progress.emit(WasmBuildProgressEvent::CacheMiss {
+        fingerprint: resolved.fingerprint,
+    });
+    build_wasm_cache_miss(
+        spec,
+        resolved,
+        lock_wait,
+        shared_incremental,
+        shared_target,
+        total_started,
+        progress,
+    )
+}
+
+fn perform_configured_shared_incremental_target_maintenance(
+    spec: &WasmBuildSpec,
+    shared_target: &Path,
+    lock_wait: Duration,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<SharedIncrementalTargetMaintenanceOutcome, WasmBuildError> {
+    let config = spec
+        .shared_incremental_maintenance_config
+        .expect("configured shared-target maintenance must have settings");
+    progress.emit(WasmBuildProgressEvent::SharedTargetMaintenanceStarted {
+        target_dir: shared_target.to_owned(),
+    });
+    let schedule = schedule_shared_incremental_target_maintenance(
+        shared_target,
+        config.policy,
+        config.minimum_interval,
+        lock_wait,
+    )?;
+    let outcome = match schedule {
+        SharedIncrementalTargetMaintenanceSchedule::Skipped(outcome) => outcome,
+        SharedIncrementalTargetMaintenanceSchedule::Due(due) => {
+            perform_due_shared_incremental_target_maintenance(
+                shared_target,
+                config.policy,
+                lock_wait,
+                due,
+            )?
+        }
+    };
+    progress.emit(WasmBuildProgressEvent::SharedTargetMaintenanceFinished {
+        outcome: outcome.clone(),
+    });
     Ok(outcome)
 }
 
@@ -1459,11 +1672,17 @@ fn emit_finished_progress(outcome: &WasmBuildOutcome, progress: &mut ProgressRep
     });
 }
 
+#[derive(Clone, Debug, Default)]
+struct SharedIncrementalAcquisitionContext {
+    lock_wait: Option<Duration>,
+    maintenance: Option<SharedIncrementalTargetMaintenanceOutcome>,
+}
+
 fn try_reuse_wasm_artifacts(
     spec: &WasmBuildSpec,
     resolved: &ResolvedCargoBuildInputs,
     lock_wait: Duration,
-    shared_incremental_lock_wait: Option<Duration>,
+    shared_incremental: &SharedIncrementalAcquisitionContext,
     total_started: Instant,
 ) -> Result<Option<WasmBuildOutcome>, WasmBuildError> {
     let fingerprint = resolved.fingerprint;
@@ -1478,7 +1697,7 @@ fn try_reuse_wasm_artifacts(
                 input_digest: resolved.input_digest,
                 artifacts,
                 lock_wait,
-                shared_incremental_lock_wait,
+                shared_incremental: shared_incremental.clone(),
                 input_resolution: resolved.timings,
                 cargo_build: None,
                 active_entry: &cache_entry,
@@ -1500,7 +1719,7 @@ fn try_reuse_wasm_artifacts(
             input_digest: resolved.input_digest,
             artifacts,
             lock_wait,
-            shared_incremental_lock_wait,
+            shared_incremental: shared_incremental.clone(),
             input_resolution: resolved.timings,
             cargo_build: None,
             active_entry: &cache_entry,
@@ -1513,7 +1732,7 @@ fn build_wasm_cache_miss(
     spec: &WasmBuildSpec,
     resolved: ResolvedCargoBuildInputs,
     lock_wait: Duration,
-    shared_incremental_lock_wait: Option<Duration>,
+    shared_incremental: SharedIncrementalAcquisitionContext,
     cargo_target_dir: PathBuf,
     total_started: Instant,
     progress: &mut ProgressReporter<'_>,
@@ -1568,7 +1787,7 @@ fn build_wasm_cache_miss(
                 input_digest: resolved.input_digest,
                 artifacts,
                 lock_wait,
-                shared_incremental_lock_wait,
+                shared_incremental,
                 input_resolution,
                 cargo_build: Some(cargo_build),
                 active_entry: &cache_entry,
@@ -1601,7 +1820,7 @@ struct BuildRecordInput<'a> {
     input_digest: InputDigest,
     artifacts: Vec<PathBuf>,
     lock_wait: Duration,
-    shared_incremental_lock_wait: Option<Duration>,
+    shared_incremental: SharedIncrementalAcquisitionContext,
     input_resolution: WasmInputResolutionTimings,
     cargo_build: Option<Duration>,
     active_entry: &'a Path,
@@ -1626,13 +1845,14 @@ fn complete_build_record(
         artifacts: input.artifacts,
         timings: WasmBuildTimings {
             lock_wait: input.lock_wait,
-            shared_incremental_lock_wait: input.shared_incremental_lock_wait,
+            shared_incremental_lock_wait: input.shared_incremental.lock_wait,
             input_resolution: input.input_resolution,
             cargo_build: input.cargo_build,
             cache_maintenance,
             total: total_started.elapsed(),
         },
         maintenance,
+        shared_incremental_maintenance: input.shared_incremental.maintenance,
     }
 }
 
@@ -1775,6 +1995,18 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
     ) {
         return Err(WasmBuildError::InvalidSpec {
             message: "shared incremental Cargo target directory must not be empty".to_owned(),
+        });
+    }
+    if spec.shared_incremental_maintenance_config.is_some()
+        && !matches!(
+            spec.cache_mode,
+            WasmBuildCacheMode::SharedIncremental { .. }
+        )
+    {
+        return Err(WasmBuildError::InvalidSpec {
+            message:
+                "scheduled shared-target maintenance requires a shared incremental Cargo target"
+                    .to_owned(),
         });
     }
     Ok(())

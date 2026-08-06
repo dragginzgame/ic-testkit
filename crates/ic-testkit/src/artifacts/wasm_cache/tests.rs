@@ -151,6 +151,17 @@ fn build_spec_requires_at_least_one_package() {
         validate_spec(&spec),
         Err(WasmBuildError::InvalidSpec { .. })
     ));
+
+    let isolated_maintenance =
+        WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
+            .with_shared_incremental_target_maintenance_at_most_every(
+                SharedIncrementalTargetPrunePolicy::new(),
+                Duration::from_secs(60),
+            );
+    assert!(matches!(
+        validate_spec(&isolated_maintenance),
+        Err(WasmBuildError::InvalidSpec { message }) if message.contains("requires a shared")
+    ));
 }
 
 #[test]

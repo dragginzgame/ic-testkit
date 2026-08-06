@@ -602,7 +602,7 @@ retaining exact immutable final Wasm entries:
 ```rust,no_run
 use ic_testkit::artifacts::{
     SharedIncrementalTargetPrunePolicy, WasmBuildSpec, build_wasm_canisters_cached,
-    inspect_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
+    inspect_shared_incremental_target,
 };
 
 # let workspace = std::path::PathBuf::from(".");
@@ -614,18 +614,20 @@ let spec = WasmBuildSpec::new(
     &["counter_canister"],
     "debug",
 )
-.with_shared_incremental_target(&shared_incremental);
-
-let maintenance = maintain_shared_incremental_target_at_most_every(
-    &spec,
+.with_shared_incremental_target(&shared_incremental)
+.with_shared_incremental_target_maintenance_at_most_every(
     SharedIncrementalTargetPrunePolicy::new()
         .with_max_age(std::time::Duration::from_secs(7 * 24 * 60 * 60))
         .with_max_size_bytes(4 * 1024 * 1024 * 1024),
     std::time::Duration::from_secs(24 * 60 * 60),
-)?;
+);
 let outcome = build_wasm_canisters_cached(&spec)?;
 let shared_usage = inspect_shared_incremental_target(&spec)?
-    .expect("the shared target exists after a cache miss");
+    .expect("configured acquisition creates the shared target");
+let maintenance = outcome
+    .record()
+    .shared_incremental_maintenance()
+    .expect("shared maintenance was configured");
 eprintln!(
     "shared_bytes={} maintenance={} {}",
     shared_usage.logical_size_bytes(),
@@ -635,25 +637,30 @@ eprintln!(
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-An exact hit never acquires or mutates the shared target. On a miss, callers
-using that target serialize across processes; Cargo builds incrementally, then
-`ic-testkit` re-resolves every exact input and publishes only the final Wasm
-files. A source race rejects publication, while a failed build preserves the
-caller-owned incremental state. Retention owns only immutable output entries,
-not the shared Cargo target. `inspect_shared_incremental_target` takes the same
+Without integrated shared-target maintenance, an exact hit never acquires or
+mutates the shared target. On a miss, callers using that target serialize
+across processes; Cargo builds incrementally, then `ic-testkit` re-resolves
+every exact input and publishes only the final Wasm files. A source race
+rejects publication, while a failed build preserves the caller-owned
+incremental state. Retention owns only immutable output entries, not the
+shared Cargo target. `inspect_shared_incremental_target` takes the same
 cross-process lock and reports its canonical path, logical size, last recorded
 build use, and lock wait without removing caller-owned Cargo state.
 `maintain_shared_incremental_target` is an explicit whole-target operation: if
 an age or size threshold is exceeded it removes every other child while
 retaining the root, cache tag, and live coordination lock. Callers must not
-colocate unrelated data that needs to survive a clear. Exact Wasm acquisitions
-never invoke that maintenance automatically. Before clearing, the exact Cargo
-resolver rejects a target that overlaps source, configuration, or additional
-inputs. High-frequency callers should use
+colocate unrelated data that needs to survive a clear. Before clearing, the
+exact Cargo resolver rejects a target that overlaps source, configuration, or
+additional inputs. Independent high-frequency callers can use
 `maintain_shared_incremental_target_at_most_every`; matching recent passes
 coordinate through a small cross-process marker and skip both Cargo input
 resolution and whole-target traversal. Missing targets remain uncreated,
-policy changes are immediately due, and a zero interval always runs.
+policy changes are immediately due, and a zero interval always runs. When
+retention always accompanies a Wasm acquisition, configure
+`with_shared_incremental_target_maintenance_at_most_every` instead. It creates
+and coordinates the target even on exact hits, reuses the acquisition's input
+resolution for due maintenance, and reports the result through the build
+record and structured progress events.
 
 Long cold Cargo builds can expose synchronous structured progress without
 changing the existing silent API:

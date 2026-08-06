@@ -9,9 +9,12 @@ mod wait_support;
 use candid::Principal;
 use ic_testkit::{
     artifacts::{
-        ArtifactCacheError, ArtifactCachePreparation, ArtifactCacheSpec, WasmBuildCacheMaintenance,
-        WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
-        build_wasm_canisters_cached_batch, inspect_shared_incremental_target,
+        ArtifactCacheError, ArtifactCachePreparation, ArtifactCacheSpec,
+        SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
+        WasmBuildCacheMaintenance, WasmBuildCachePrunePolicy, WasmBuildOutcome,
+        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
+        build_wasm_canisters_cached, build_wasm_canisters_cached_batch,
+        build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
         prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
         wasm_path, workspace_root_for,
     },
@@ -25,6 +28,7 @@ use std::{
     fs,
     sync::{Arc, Barrier},
     thread,
+    time::Duration,
 };
 
 use support::unique_temp_directory as unique_temp_dir;
@@ -371,6 +375,111 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
 
     fs::remove_dir_all(target_dir).expect("clean shared-mode exact cache");
     fs::remove_dir_all(shared_target).expect("clean shared Cargo target");
+}
+
+#[test]
+fn scheduled_shared_target_maintenance_participates_in_wasm_acquisition() {
+    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    if !workspace
+        .join("canisters/test/perf_probe/Cargo.toml")
+        .is_file()
+    {
+        eprintln!("skipping integrated shared maintenance test: fixture is not packaged");
+        return;
+    }
+    let root = unique_temp_dir("ic-testkit-integrated-shared-maintenance");
+    let target_dir = root.join("exact");
+    let shared_target = root.join("shared");
+    assert!(!shared_target.exists());
+    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
+        .with_shared_incremental_target(&shared_target)
+        .with_shared_incremental_target_maintenance_at_most_every(
+            SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(u64::MAX),
+            Duration::from_secs(60 * 60),
+        );
+
+    let mut first_events = Vec::new();
+    let first = build_wasm_canisters_cached_with_progress(
+        &spec,
+        WasmBuildProgressConfig::new().without_heartbeats(),
+        |event| first_events.push(event),
+    )
+    .expect("build with integrated shared-target maintenance");
+    assert!(matches!(first, WasmBuildOutcome::Built(_)));
+    assert!(shared_target.is_dir());
+    assert!(matches!(
+        first.record().shared_incremental_maintenance(),
+        Some(SharedIncrementalTargetMaintenanceOutcome::Performed { .. })
+    ));
+    assert!(first.to_string().contains("shared_maintenance=("));
+    let maintenance_started = first_events
+        .iter()
+        .position(|event| {
+            matches!(
+                event,
+                WasmBuildProgressEvent::SharedTargetMaintenanceStarted { .. }
+            )
+        })
+        .expect("integrated maintenance start event");
+    let cargo_started = first_events
+        .iter()
+        .position(|event| matches!(event, WasmBuildProgressEvent::CargoStarted { .. }))
+        .expect("integrated Cargo start event");
+    assert!(maintenance_started < cargo_started);
+    assert_eq!(
+        first_events[..cargo_started]
+            .iter()
+            .filter(|event| matches!(event, WasmBuildProgressEvent::InputsResolved { .. }))
+            .count(),
+        1,
+        "due maintenance must reuse the acquisition's pre-build resolution",
+    );
+    assert!(first_events.iter().any(|event| matches!(
+        event,
+        WasmBuildProgressEvent::SharedTargetMaintenanceFinished {
+            outcome: SharedIncrementalTargetMaintenanceOutcome::Performed { .. }
+        }
+    )));
+
+    let mut reused_events = Vec::new();
+    let reused = build_wasm_canisters_cached_with_progress(
+        &spec,
+        WasmBuildProgressConfig::new().without_heartbeats(),
+        |event| reused_events.push(event),
+    )
+    .expect("reuse with integrated shared-target maintenance");
+    assert!(matches!(reused, WasmBuildOutcome::Reused(_)));
+    let reused_timings = reused.record().timings();
+    assert!(reused_timings.shared_incremental_lock_wait().is_some());
+    assert!(matches!(
+        reused.record().shared_incremental_maintenance(),
+        Some(SharedIncrementalTargetMaintenanceOutcome::Skipped { .. })
+    ));
+    assert_eq!(
+        reused_events
+            .iter()
+            .filter(|event| matches!(event, WasmBuildProgressEvent::InputsResolved { .. }))
+            .count(),
+        1,
+    );
+    assert!(reused_events.iter().any(|event| matches!(
+        event,
+        WasmBuildProgressEvent::SharedTargetMaintenanceFinished {
+            outcome: SharedIncrementalTargetMaintenanceOutcome::Skipped { .. }
+        }
+    )));
+
+    fs::remove_dir_all(&shared_target).expect("remove shared target before exact hit");
+    let recreated = build_wasm_canisters_cached(&spec)
+        .expect("exact hit must recreate configured shared maintenance target");
+    assert!(matches!(recreated, WasmBuildOutcome::Reused(_)));
+    assert!(shared_target.is_dir());
+    assert!(matches!(
+        recreated.record().shared_incremental_maintenance(),
+        Some(SharedIncrementalTargetMaintenanceOutcome::Performed { .. })
+    ));
+
+    fs::remove_dir_all(root).expect("clean integrated shared maintenance fixture");
 }
 
 #[test]
