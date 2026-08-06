@@ -327,7 +327,10 @@ mod tests {
         fs::write(&source, &contents).expect("write source");
 
         let (bytes, streamed) = digest_file("streaming-test-v1", &source).expect("digest file");
-        assert_eq!(bytes, u64::try_from(contents.len()).unwrap());
+        assert_eq!(
+            bytes,
+            u64::try_from(contents.len()).expect("fixture length must fit in u64")
+        );
         assert_eq!(streamed, digest_bytes("streaming-test-v1", &contents));
 
         write_atomic(&destination, b"old").expect("write original destination");
@@ -335,7 +338,10 @@ mod tests {
             copy_file_atomic(&source, &destination).expect("copy source atomically"),
             bytes
         );
-        assert_eq!(fs::read(&destination).unwrap(), contents);
+        assert_eq!(
+            fs::read(&destination).expect("read copied destination"),
+            contents
+        );
 
         let missing = root.join("missing");
         let error = copy_file_atomic(&missing, &destination).expect_err("missing source must fail");

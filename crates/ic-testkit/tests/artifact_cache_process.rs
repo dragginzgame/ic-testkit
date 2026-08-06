@@ -1,3 +1,7 @@
+mod support;
+#[path = "support/wait.rs"]
+mod wait_support;
+
 use ic_testkit::artifacts::{
     ArtifactCacheOutcome, ArtifactCachePreparation, ArtifactCacheSpec, prepare_artifact_cache,
 };
@@ -6,14 +10,14 @@ use std::{
     io::Write as _,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
+use support::unique_temp_directory;
+use wait_support::wait_for_path;
 
 const WORKER_ROOT_ENV: &str = "IC_TESTKIT_ARTIFACT_PROCESS_ROOT";
 const WORKER_ID_ENV: &str = "IC_TESTKIT_ARTIFACT_PROCESS_WORKER";
-static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn overlapping_processes_build_one_exact_artifact_set() {
@@ -37,7 +41,10 @@ fn overlapping_processes_build_one_exact_artifact_set() {
         builds, 1,
         "exactly one process should receive a build transaction"
     );
-    assert_eq!(fs::read(root.join("output")).unwrap(), b"built");
+    assert_eq!(
+        fs::read(root.join("output")).expect("read process-test output"),
+        b"built"
+    );
     fs::remove_dir_all(root).expect("remove process-lock test directory");
 }
 
@@ -57,7 +64,14 @@ fn artifact_cache_process_worker() {
         .with_output("output", &root.join("output"));
     match prepare_artifact_cache(&spec).expect("prepare process cache acquisition") {
         ArtifactCachePreparation::Reused(record) => {
-            assert_eq!(fs::read(record.artifacts()[0].path()).unwrap(), b"built");
+            let artifact = record
+                .artifacts()
+                .first()
+                .expect("reused process cache must contain its output");
+            assert_eq!(
+                fs::read(artifact.path()).expect("read reused process output"),
+                b"built"
+            );
         }
         ArtifactCachePreparation::Build(transaction) => {
             let mut builds = OpenOptions::new()
@@ -68,8 +82,13 @@ fn artifact_cache_process_worker() {
             writeln!(builds, "{}", std::process::id()).expect("record process build");
             builds.sync_all().expect("sync process build counter");
             thread::sleep(Duration::from_millis(250));
-            fs::write(transaction.output_path("output").unwrap(), b"built")
-                .expect("write process output");
+            fs::write(
+                transaction
+                    .output_path("output")
+                    .expect("resolve process output path"),
+                b"built",
+            )
+            .expect("write process output");
             assert!(matches!(
                 transaction.commit().expect("commit process output"),
                 ArtifactCacheOutcome::Built(_)
@@ -85,29 +104,4 @@ fn spawn_worker(executable: &Path, root: &Path, worker: &str) -> std::process::C
         .env(WORKER_ID_ENV, worker)
         .spawn()
         .expect("spawn artifact-cache process worker")
-}
-
-fn wait_for_path(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for {}",
-            path.display()
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn unique_temp_directory(label: &str) -> PathBuf {
-    let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "ic-testkit-{label}-{}-{sequence}",
-        std::process::id()
-    ));
-    if path.exists() {
-        fs::remove_dir_all(&path).expect("remove stale process-test directory");
-    }
-    fs::create_dir_all(&path).expect("create process-test directory");
-    path
 }

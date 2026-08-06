@@ -1,3 +1,11 @@
+#[cfg(unix)]
+#[path = "support/executable.rs"]
+mod executable_support;
+mod support;
+#[cfg(unix)]
+#[path = "support/wait.rs"]
+mod wait_support;
+
 use candid::Principal;
 use ic_testkit::{
     artifacts::{
@@ -15,15 +23,20 @@ use ic_testkit::{
 };
 use std::{
     fs,
-    path::PathBuf,
     sync::{Arc, Barrier},
     thread,
 };
 
+use support::unique_temp_directory as unique_temp_dir;
+
+#[cfg(unix)]
+use executable_support::write_executable_script;
 #[cfg(unix)]
 use ic_testkit::artifacts::WasmBuildError;
 #[cfg(unix)]
-use std::{ffi::OsString, os::unix::fs::PermissionsExt as _};
+use std::ffi::OsString;
+#[cfg(unix)]
+use wait_support::wait_for_path;
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
@@ -301,7 +314,9 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
         .expect("built shared Cargo target should exist");
     assert_eq!(
         inspection.target_dir(),
-        shared_target.canonicalize().unwrap()
+        shared_target
+            .canonicalize()
+            .expect("canonicalize shared Cargo target")
     );
     assert!(inspection.logical_size_bytes() > 0);
     let last_used = inspection.last_used();
@@ -328,8 +343,8 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
     );
     assert_eq!(
         inspect_shared_incremental_target(&spec)
-            .unwrap()
-            .unwrap()
+            .expect("reinspect shared Cargo target")
+            .expect("shared Cargo target must still exist")
             .last_used(),
         last_used,
         "an exact hit must not touch caller-owned shared Cargo state"
@@ -411,7 +426,9 @@ fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
         ArtifactCachePreparation::Reused(_) => panic!("new bridge fixture must miss"),
     };
     fs::write(
-        transaction.output_path("transformed.wasm").unwrap(),
+        transaction
+            .output_path("transformed.wasm")
+            .expect("resolve transformed output path"),
         b"transformed",
     )
     .expect("write transformed output");
@@ -437,7 +454,9 @@ fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
         ArtifactCachePreparation::Reused(_) => panic!("changed Cargo inputs must select a miss"),
     };
     fs::write(
-        transaction.output_path("transformed.wasm").unwrap(),
+        transaction
+            .output_path("transformed.wasm")
+            .expect("resolve refreshed transformed output path"),
         b"transformed-v2",
     )
     .expect("write refreshed transformed output");
@@ -539,7 +558,7 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
         .expect("resolve original race fingerprint")
         .fingerprint();
     let worker = thread::spawn(move || build_wasm_canisters_cached(&spec));
-    wait_for_test_path(&started);
+    wait_for_path(&started);
     fs::write(
         &source,
         "#[unsafe(no_mangle)]\npub extern \"C\" fn probe() -> u32 { 2 }\n",
@@ -566,18 +585,9 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
     fs::remove_dir_all(root).expect("clean shared input-race fixture");
 }
 
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
-    if root.exists() {
-        fs::remove_dir_all(&root).expect("remove stale temp dir");
-    }
-    fs::create_dir_all(&root).expect("create temp dir");
-    root
-}
-
 #[cfg(unix)]
 fn write_blocking_cargo_wrapper(path: &std::path::Path) {
-    fs::write(
+    write_executable_script(
         path,
         b"#!/bin/sh\n\
 if [ \"$1\" = \"build\" ]; then\n\
@@ -585,24 +595,7 @@ if [ \"$1\" = \"build\" ]; then\n\
   while [ ! -f \"$IC_TESTKIT_RELEASE_BUILD\" ]; do sleep 0.05; done\n\
 fi\n\
 exec \"$REAL_CARGO\" \"$@\"\n",
-    )
-    .expect("write blocking Cargo wrapper");
-    let mut permissions = fs::metadata(path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("make blocking Cargo wrapper executable");
-}
-
-#[cfg(unix)]
-fn wait_for_test_path(path: &std::path::Path) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !path.exists() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {}",
-            path.display()
-        );
-        thread::sleep(std::time::Duration::from_millis(10));
-    }
+    );
 }
 
 fn assert_cache_observability(outcome: &WasmBuildOutcome) {

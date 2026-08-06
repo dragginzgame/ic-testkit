@@ -1,23 +1,27 @@
 #![cfg(unix)]
 
+#[path = "support/executable.rs"]
+mod executable_support;
+mod support;
+#[path = "support/wait.rs"]
+mod wait_support;
+
+use executable_support::write_executable_script;
 use ic_testkit::artifacts::{
     WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached, workspace_root_for,
 };
 use std::{
     ffi::OsString,
     fs,
-    os::unix::fs::PermissionsExt as _,
     path::{Path, PathBuf},
     process::Command,
-    sync::atomic::{AtomicU64, Ordering},
-    thread,
-    time::{Duration, Instant},
 };
+use support::unique_temp_directory;
+use wait_support::wait_for_path;
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 const WORKER_ROOT_ENV: &str = "IC_TESTKIT_WASM_PROCESS_ROOT";
 const WORKER_ID_ENV: &str = "IC_TESTKIT_WASM_PROCESS_WORKER";
-static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn different_cache_roots_coordinate_one_shared_incremental_target_across_processes() {
@@ -101,7 +105,7 @@ fn shared_incremental_process_worker() {
 }
 
 fn write_cargo_wrapper(path: &Path) {
-    fs::write(
+    write_executable_script(
         path,
         b"#!/bin/sh\n\
 if [ \"$1\" = \"build\" ]; then\n\
@@ -116,11 +120,7 @@ if [ \"$1\" = \"build\" ]; then\n\
   : > \"$IC_TESTKIT_OVERLAP_FILE\"\n\
 fi\n\
 exec \"$REAL_CARGO\" \"$@\"\n",
-    )
-    .expect("write Cargo process-test wrapper");
-    let mut permissions = fs::metadata(path).unwrap().permissions();
-    permissions.set_mode(0o755);
-    fs::set_permissions(path, permissions).expect("make Cargo wrapper executable");
+    );
 }
 
 fn spawn_worker(executable: &Path, root: &Path, worker: &str) -> std::process::Child {
@@ -130,29 +130,4 @@ fn spawn_worker(executable: &Path, root: &Path, worker: &str) -> std::process::C
         .env(WORKER_ID_ENV, worker)
         .spawn()
         .expect("spawn shared-target process worker")
-}
-
-fn wait_for_path(path: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while !path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for {}",
-            path.display()
-        );
-        thread::sleep(Duration::from_millis(10));
-    }
-}
-
-fn unique_temp_directory(label: &str) -> PathBuf {
-    let sequence = TEMP_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "ic-testkit-{label}-{}-{sequence}",
-        std::process::id()
-    ));
-    if path.exists() {
-        fs::remove_dir_all(&path).expect("remove stale shared-target process directory");
-    }
-    fs::create_dir_all(&path).expect("create shared-target process directory");
-    path
 }

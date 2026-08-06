@@ -1,3 +1,5 @@
+mod support;
+
 use ic_testkit::benchmark::{
     BenchmarkAggregateReport, BenchmarkCounters, BenchmarkEventKind, BenchmarkEventSource,
     BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata, BenchmarkRunReport,
@@ -7,7 +9,8 @@ use ic_testkit::benchmark::{
     parse_benchmark_events_from_captured_output, parse_benchmark_events_from_source,
     read_benchmark_run_metadata, write_benchmark_report_dir,
 };
-use std::{fs, path::PathBuf};
+use std::fs;
+use support::unique_temp_directory as unique_temp_dir;
 
 #[test]
 fn parses_compact_markers_and_ignores_non_marker_lines() {
@@ -480,13 +483,4 @@ fn write_metadata(
     };
 
     write_benchmark_report_dir(&report, path).expect("write metadata fixture");
-}
-
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
-    if root.exists() {
-        fs::remove_dir_all(&root).expect("remove stale temp dir");
-    }
-    fs::create_dir_all(&root).expect("create temp dir");
-    root
 }

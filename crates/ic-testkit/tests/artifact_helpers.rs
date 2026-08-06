@@ -1,5 +1,8 @@
+mod support;
+
 use ic_testkit::artifacts::{test_target_dir, wasm_artifacts_ready, wasm_path, workspace_root_for};
 use std::{fs, path::PathBuf};
+use support::unique_temp_directory as unique_temp_dir;
 
 // Verify wasm artifact paths stay aligned with Cargo wasm target layout.
 #[test]
@@ -57,13 +60,4 @@ fn workspace_helpers_resolve_expected_paths() {
         test_target_dir(&workspace_root, "pic-wasm"),
         PathBuf::from("/workspace/target/pic-wasm")
     );
-}
-
-// Build a unique temp directory path for filesystem-only artifact tests.
-fn unique_temp_dir(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
-    if root.exists() {
-        fs::remove_dir_all(&root).expect("remove stale temp dir");
-    }
-    root
 }

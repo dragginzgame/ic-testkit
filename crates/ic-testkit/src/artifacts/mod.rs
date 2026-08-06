@@ -6,17 +6,16 @@
 mod cache_fs;
 mod digest;
 mod icp;
+mod tool;
 mod transaction;
+mod transaction_batch;
 mod wasm;
+mod wasm_batch;
 mod wasm_cache;
 mod workspace;
 
 #[cfg(test)]
 mod test_support;
-
-mod tool;
-mod transaction_batch;
-mod wasm_batch;
 
 pub use cache_fs::{ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport};
 pub use digest::InputDigest;

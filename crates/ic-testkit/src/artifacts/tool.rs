@@ -133,24 +133,26 @@ mod tests {
     use crate::artifacts::test_support::unique_temp_directory;
     use std::{ffi::OsStr, fs};
 
+    #[cfg(unix)]
+    use crate::artifacts::test_support::write_executable_script;
+
     #[test]
     #[cfg(unix)]
     fn path_resolution_returns_one_canonical_executable_file() {
-        use std::os::unix::fs::PermissionsExt as _;
-
         let root = unique_temp_directory("resolve-executable");
         let bin = root.join("bin");
         fs::create_dir_all(&bin).expect("create executable search directory");
         let tool = bin.join("optimizer");
-        fs::write(&tool, b"#!/bin/sh\nexit 0\n").expect("write executable fixture");
-        let mut permissions = fs::metadata(&tool).unwrap().permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&tool, permissions).expect("make fixture executable");
+        write_executable_script(&tool, b"#!/bin/sh\nexit 0\n");
 
         let resolved = resolve_executable_in(OsStr::new("optimizer"), bin.as_os_str(), &root)
             .expect("resolve executable from supplied PATH");
 
-        assert_eq!(resolved, tool.canonicalize().unwrap());
+        assert_eq!(
+            resolved,
+            tool.canonicalize()
+                .expect("canonicalize executable fixture")
+        );
         fs::remove_dir_all(root).expect("remove executable-resolution fixture");
     }
 }

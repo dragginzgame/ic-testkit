@@ -8,6 +8,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-06 - Artifact hygiene and test organization
+
+### Changed
+
+- Centralizes shared incremental-target existence and type validation across
+  inspection and maintenance, and documents every transactional batch-error
+  field without changing public behavior.
+- Consolidates temporary-directory allocation, path polling, and executable
+  script setup across artifact unit and integration tests, giving parallel
+  test binaries consistent collision-resistant fixtures and diagnostics.
+- Moves Wasm-cache and artifact-batch regressions out of production modules,
+  normalizes artifact-module ordering, and replaces bare test unwraps in the
+  touched paths with contextual failure messages.
+
 ## [0.7.0] - 2026-08-06 - Independent artifact orchestration
 
 ### Added
