@@ -239,6 +239,24 @@ pocket_ic.restore_controller_snapshots_with_funding(
 and any cleanup failures. Restore never adds cycles unless `TopUpTo` is
 explicitly selected.
 
+Mixed-controller topologies can avoid expected rejected fallback calls by
+selecting the exact sender for each canister:
+
+```rust,no_run
+use ic_testkit::pic::{CanisterSnapshotTarget, PocketIcSnapshotExt};
+
+let snapshots = pocket_ic.capture_snapshots_with_senders([
+    CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
+    CanisterSnapshotTarget::new(child_canister, None),
+])?;
+# let _ = snapshots;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The existing controller-based method remains useful when its ordered sender
+fallback is desired. `CachedPocketIcBaseline::capture_with_senders` exposes the
+same exact-sender policy for pooled baselines.
+
 `CachedPocketIcBaseline<T>` stores one owned instance, its snapshots, and
 caller metadata. `restore_or_rebuild_cached_pocket_ic_baseline` synchronizes
 only the supplied `Mutex` slot. On a cache hit it invokes the caller's restore
@@ -374,6 +392,9 @@ whether the lease was built, restored, or rebuilt and where acquisition time
 was spent. Failed acquisitions retain the partial or combined phase timings on
 `BaselinePoolError::timings`, including queue wait, failed preparation, stale
 teardown, and a failed rebuild attempt when applicable.
+Cache and pool outcomes and timing records implement compact single-line
+`Display`, so consumers can emit useful diagnostics without reformatting every
+phase themselves.
 
 Recipes that wrap PocketIC's currently unstructured transport failures can use
 `is_dead_pocket_ic_transport_error` in `classify_failure`, returning
@@ -510,6 +531,49 @@ failure should be returned directly.
 Cargo metadata, input discovery, and content hashing. The existing
 `input_resolution` accessor remains the aggregate for compatibility.
 
+Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
+retaining exact immutable final Wasm entries:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    WasmBuildSpec, build_wasm_canisters_cached, resolve_cargo_build_inputs,
+};
+
+# let workspace = std::path::PathBuf::from(".");
+let exact_cache = workspace.join("target/pic-wasm");
+let shared_incremental = workspace.join("target/pic-wasm-incremental");
+let spec = WasmBuildSpec::new(
+    &workspace,
+    &exact_cache,
+    &["counter_canister"],
+    "debug",
+)
+.with_shared_incremental_target(&shared_incremental);
+
+let inputs = resolve_cargo_build_inputs(&spec)?;
+let outcome = build_wasm_canisters_cached(&spec)?;
+eprintln!(
+    "{} inputs={} {}",
+    inputs.fingerprint(),
+    inputs.inputs().len(),
+    outcome,
+);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+An exact hit never acquires or mutates the shared target. On a miss, callers
+using that target serialize across processes; Cargo builds incrementally, then
+`ic-testkit` re-resolves every exact input and publishes only the final Wasm
+files. A source race rejects publication, while a failed build preserves the
+caller-owned incremental state. Retention owns only immutable output entries,
+not the shared Cargo target.
+
+`ResolvedCargoBuildInputs::is_current` provides the same before/after identity
+check for external Cargo-derived workflows. OS-native iterator builders ending
+in `_os` preserve dynamic and non-UTF-8 argument and environment bytes. Use
+`resolve_executable` to turn a bare `PATH` program into a canonical executable
+file before declaring it through `ArtifactCacheSpec::with_tool`.
+
 External deterministic tools use the transactional artifact-set cache. The
 caller declares exact inputs, tool bytes, arguments, relevant environment, and
 the complete output schema; `ic-testkit` owns cross-process locking, staging,
@@ -571,6 +635,9 @@ as one unit. Recipe identity is caller-owned and must change when undeclared
 pipeline semantics change. Namespace and recipe identifiers are hashed before
 being used on disk, environment values are never rendered in `Debug` or cache
 manifests, and public destination paths do not affect content identity.
+Prefer declaring pipeline implementation files, configuration, and wrappers as
+ordinary exact inputs. Reserve manual `recipe_id` bumps for semantic changes
+that cannot be represented by stable input bytes.
 
 Declared input and tool roots may contain the cache directory, which is
 excluded while recursively hashing that broader tree, but they must not be
@@ -590,6 +657,12 @@ terminated processes when the corresponding content-key lock proves that no
 transaction is active. `ArtifactCachePruneReport` reports those uncommitted
 directories separately from committed entry age/size eviction.
 
+No retention limit is automatic. As a starting point for developer caches,
+the examples use a 14-day age bound with a size appropriate to the entry type
+(larger for isolated Cargo targets, smaller for final artifact sets). CI should
+choose an explicit limit that fits its cache quota and expected fingerprint
+count rather than inheriting a machine-wide default.
+
 `WatchedInputSnapshot` likewise hashes file paths and contents instead of
 modification times. Generated artifacts become reusable only after
 `mark_artifact_fresh` atomically records the snapshot beside the successfully
@@ -598,6 +671,8 @@ built artifact; an unstamped artifact is conservatively stale.
 The cache intentionally contains no Binaryen, `icp build`, package-name, or
 PocketIC policy. Its complete contract is recorded in the
 [`0.5` transactional artifact-set design](docs/design/0.5-artifact-transactions/0.5-design.md).
+Shared Cargo-target ownership and exact-output guarantees are recorded in the
+[`0.6` shared-incremental Wasm design](docs/design/0.6-shared-incremental-wasm/0.6-design.md).
 
 ## Benchmark markers and reports
 

@@ -6,8 +6,8 @@ use std::{
 };
 
 use super::{
-    ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotRestoreFunding,
-    transport,
+    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
+    SnapshotRestoreFunding, transport,
 };
 
 /// One owned PocketIC instance with captured snapshots and caller metadata.
@@ -202,6 +202,26 @@ impl<T> CachedPocketIcBaseline<T> {
         I: IntoIterator<Item = Principal>,
     {
         let snapshots = pocket_ic.capture_controller_snapshots(controller_id, canister_ids)?;
+
+        Ok(Self {
+            pocket_ic,
+            snapshots,
+            metadata,
+        })
+    }
+
+    /// Capture one cached baseline with an explicit sender for every canister.
+    ///
+    /// This avoids fallback rejections in mixed-controller topologies.
+    pub fn capture_with_senders<I>(
+        pocket_ic: PocketIc,
+        targets: I,
+        metadata: T,
+    ) -> Result<Self, ControllerSnapshotError>
+    where
+        I: IntoIterator<Item = CanisterSnapshotTarget>,
+    {
+        let snapshots = pocket_ic.capture_snapshots_with_senders(targets)?;
 
         Ok(Self {
             pocket_ic,

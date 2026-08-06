@@ -485,6 +485,32 @@ impl StandaloneFixturePoolTimings {
     }
 }
 
+impl std::fmt::Display for StandaloneFixturePoolTimings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "total={:?} wait={:?} build={:?} restore={:?} stale_teardown={:?}",
+            self.total, self.wait, self.build, self.restore, self.stale_teardown,
+        )
+    }
+}
+
+impl std::fmt::Display for StandaloneFixturePoolOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Built { slot, timings } => write!(formatter, "built slot={slot} {timings}"),
+            Self::Restored { slot, timings } => {
+                write!(formatter, "restored slot={slot} {timings}")
+            }
+            Self::Rebuilt {
+                slot,
+                reason,
+                timings,
+            } => write!(formatter, "rebuilt slot={slot} reason={reason:?} {timings}"),
+        }
+    }
+}
+
 impl StandaloneFixturePoolError {
     /// Timings recorded before this acquisition failed.
     #[must_use]

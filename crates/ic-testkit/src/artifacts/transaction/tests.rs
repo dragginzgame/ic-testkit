@@ -7,6 +7,7 @@ use crate::artifacts::{
     ArtifactCacheMaintenance, ArtifactCachePrunePolicy, test_support::unique_temp_directory,
 };
 use std::{
+    ffi::OsString,
     fs,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
@@ -16,6 +17,52 @@ use std::{
     },
     thread,
 };
+
+#[test]
+fn os_native_argument_and_environment_builders_affect_identity() {
+    let root = unique_temp_directory("os-native-identity");
+    let input = root.join("input");
+    fs::write(&input, b"input").expect("write OS-native identity input");
+    let base = ArtifactCacheSpec::new(&root.join("cache"), "native", "recipe/v1")
+        .with_input("input", &input)
+        .with_output("output", &root.join("output"));
+    let arguments = base.clone().with_arguments_os([OsString::from("--exact")]);
+    let environment = base
+        .clone()
+        .with_environment_os([(OsString::from("MODE"), OsString::from("exact"))]);
+    let unset = base
+        .clone()
+        .with_unset_environment_os([OsString::from("MODE")]);
+
+    let base_key = resolve_key(&base).unwrap().key;
+    assert_ne!(base_key, resolve_key(&arguments).unwrap().key);
+    assert_ne!(base_key, resolve_key(&environment).unwrap().key);
+    assert_ne!(base_key, resolve_key(&unset).unwrap().key);
+    fs::remove_dir_all(root).expect("remove OS-native identity test directory");
+}
+
+#[test]
+#[cfg(unix)]
+fn non_utf8_argument_bytes_affect_artifact_identity_exactly() {
+    use std::os::unix::ffi::OsStringExt as _;
+
+    let root = unique_temp_directory("non-utf8-identity");
+    let input = root.join("input");
+    fs::write(&input, b"input").expect("write non-UTF-8 identity input");
+    let base = ArtifactCacheSpec::new(&root.join("cache"), "native", "recipe/v1")
+        .with_input("input", &input)
+        .with_output("output", &root.join("output"));
+    let first = base
+        .clone()
+        .with_arguments_os([OsString::from_vec(vec![b'a', 0xff])]);
+    let second = base.with_arguments_os([OsString::from_vec(vec![b'a', 0xfe])]);
+
+    assert_ne!(
+        resolve_key(&first).unwrap().key,
+        resolve_key(&second).unwrap().key
+    );
+    fs::remove_dir_all(root).expect("remove non-UTF-8 identity test directory");
+}
 
 #[test]
 fn one_output_is_built_materialized_repaired_and_reused() {

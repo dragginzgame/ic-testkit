@@ -55,7 +55,21 @@ pub struct WasmBuildSpec {
     target: String,
     cargo_program: OsString,
     rustc_program: OsString,
+    cache_mode: WasmBuildCacheMode,
     prune_policy: Option<WasmBuildCachePrunePolicy>,
+}
+
+/// Cargo-target ownership mode for one exact cached Wasm build.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WasmBuildCacheMode {
+    /// Build each exact fingerprint in its own content-addressed Cargo target.
+    Isolated,
+    /// Build misses in caller-owned shared Cargo incremental state, then cache final Wasm files.
+    SharedIncremental {
+        /// Mutable Cargo target directory shared across source fingerprints.
+        target_dir: PathBuf,
+    },
 }
 
 /// Whether a cacheable Wasm build ran Cargo or reused exact matching artifacts.
@@ -81,6 +95,7 @@ pub struct WasmBuildRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WasmBuildTimings {
     lock_wait: Duration,
+    shared_incremental_lock_wait: Option<Duration>,
     input_resolution: WasmInputResolutionTimings,
     cargo_build: Option<Duration>,
     cache_maintenance: Option<Duration>,
@@ -95,6 +110,26 @@ pub struct WasmInputResolutionTimings {
     input_discovery: Duration,
     content_hashing: Duration,
     total: Duration,
+}
+
+/// One exact local Cargo source or configuration input under a stable logical label.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CargoBuildInput {
+    label: PathBuf,
+    path: PathBuf,
+}
+
+/// Resolved exact inputs and identity for one [`WasmBuildSpec`].
+///
+/// The snapshot can be resolved again after an external operation to detect
+/// source, configuration, toolchain, argument, or environment changes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedCargoBuildInputs {
+    fingerprint: InputDigest,
+    input_digest: InputDigest,
+    inputs: Vec<CargoBuildInput>,
+    exclusions: Vec<PathBuf>,
+    timings: WasmInputResolutionTimings,
 }
 
 /// Wasm-cache compatibility name for generic artifact-cache retention limits.
@@ -191,6 +226,7 @@ impl WasmBuildSpec {
             target: DEFAULT_TARGET.to_owned(),
             cargo_program: std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()),
             rustc_program: std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()),
+            cache_mode: WasmBuildCacheMode::Isolated,
             prune_policy: None,
         }
     }
@@ -202,12 +238,38 @@ impl WasmBuildSpec {
         self
     }
 
+    /// Set OS-native Cargo profile and feature arguments used for the build and fingerprint.
+    #[must_use]
+    pub fn with_cargo_profile_args_os<I, S>(mut self, arguments: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.cargo_profile_args = arguments.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Set deterministic child-process environment overrides.
     #[must_use]
     pub fn with_extra_env(mut self, environment: &[(&str, &str)]) -> Self {
         self.extra_env = environment
             .iter()
             .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+            .collect();
+        self
+    }
+
+    /// Set OS-native deterministic child-process environment overrides.
+    #[must_use]
+    pub fn with_extra_env_os<I, K, V>(mut self, environment: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.extra_env = environment
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
             .collect();
         self
     }
@@ -222,6 +284,17 @@ impl WasmBuildSpec {
         self
     }
 
+    /// Add OS-native ambient environment names whose current values affect the build.
+    #[must_use]
+    pub fn with_inherited_env_os<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.inherited_env.extend(names.into_iter().map(Into::into));
+        self
+    }
+
     /// Add files or directories not discoverable through Cargo's local dependency graph.
     ///
     /// Relative paths are resolved from the workspace root. Use this for build
@@ -230,6 +303,18 @@ impl WasmBuildSpec {
     pub fn with_additional_inputs(mut self, paths: &[&str]) -> Self {
         self.additional_inputs
             .extend(paths.iter().map(PathBuf::from));
+        self
+    }
+
+    /// Add path-native files or directories outside Cargo's local dependency graph.
+    #[must_use]
+    pub fn with_additional_input_paths<I, P>(mut self, paths: I) -> Self
+    where
+        I: IntoIterator<Item = P>,
+        P: Into<PathBuf>,
+    {
+        self.additional_inputs
+            .extend(paths.into_iter().map(Into::into));
         self
     }
 
@@ -251,6 +336,19 @@ impl WasmBuildSpec {
     #[must_use]
     pub fn with_rustc_program(mut self, program: impl Into<OsString>) -> Self {
         self.rustc_program = program.into();
+        self
+    }
+
+    /// Build cache misses in one caller-owned shared Cargo incremental target.
+    ///
+    /// Exact final Wasm artifacts still live in the content-addressed cache.
+    /// The shared target is coordinated across processes but is never pruned
+    /// or removed by `ic-testkit` after a failed build.
+    #[must_use]
+    pub fn with_shared_incremental_target(mut self, target_dir: impl Into<PathBuf>) -> Self {
+        self.cache_mode = WasmBuildCacheMode::SharedIncremental {
+            target_dir: target_dir.into(),
+        };
         self
     }
 
@@ -281,6 +379,12 @@ impl WasmBuildSpec {
     #[must_use]
     pub fn packages(&self) -> &[String] {
         &self.packages
+    }
+
+    /// Cargo-target ownership mode used for cache misses.
+    #[must_use]
+    pub const fn cache_mode(&self) -> &WasmBuildCacheMode {
+        &self.cache_mode
     }
 }
 
@@ -337,6 +441,12 @@ impl WasmBuildTimings {
     #[must_use]
     pub const fn lock_wait(self) -> Duration {
         self.lock_wait
+    }
+
+    /// Time spent waiting for a shared incremental-target lock, when configured.
+    #[must_use]
+    pub const fn shared_incremental_lock_wait(self) -> Option<Duration> {
+        self.shared_incremental_lock_wait
     }
 
     /// Time spent resolving toolchain identity, Cargo metadata, and exact inputs.
@@ -410,6 +520,99 @@ impl WasmInputResolutionTimings {
     }
 }
 
+impl CargoBuildInput {
+    /// Stable checkout-independent label used while hashing this input.
+    #[must_use]
+    pub fn label(&self) -> &Path {
+        &self.label
+    }
+
+    /// Resolved file or directory read by the Cargo build.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl ResolvedCargoBuildInputs {
+    /// Exact build fingerprint including Cargo inputs, tools, arguments, and environment.
+    #[must_use]
+    pub const fn fingerprint(&self) -> InputDigest {
+        self.fingerprint
+    }
+
+    /// Exact digest of local source and configuration contents.
+    #[must_use]
+    pub const fn input_digest(&self) -> InputDigest {
+        self.input_digest
+    }
+
+    /// Stable logical labels and resolved local input paths.
+    #[must_use]
+    pub fn inputs(&self) -> &[CargoBuildInput] {
+        &self.inputs
+    }
+
+    /// Generated-state roots excluded while recursively hashing local inputs.
+    ///
+    /// These exclusions are derived by `ic-testkit`; callers cannot add
+    /// arbitrary exclusions through this snapshot.
+    #[must_use]
+    pub fn exclusions(&self) -> &[PathBuf] {
+        &self.exclusions
+    }
+
+    /// Timings for tool identity, metadata, discovery, and content hashing.
+    #[must_use]
+    pub const fn timings(&self) -> WasmInputResolutionTimings {
+        self.timings
+    }
+
+    /// Resolve `spec` again and report whether its exact identity is unchanged.
+    pub fn is_current(&self, spec: &WasmBuildSpec) -> Result<bool, WasmBuildError> {
+        resolve_cargo_build_inputs(spec).map(|current| current.fingerprint == self.fingerprint)
+    }
+}
+
+impl std::fmt::Display for WasmBuildTimings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "total={:?} lock={:?} shared_lock={:?} inputs={:?} cargo={:?} maintenance={:?}",
+            self.total,
+            self.lock_wait,
+            self.shared_incremental_lock_wait,
+            self.input_resolution.total,
+            self.cargo_build,
+            self.cache_maintenance,
+        )
+    }
+}
+
+impl std::fmt::Display for WasmBuildOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = if self.is_reused() { "reused" } else { "built" };
+        write!(
+            formatter,
+            "{state} fingerprint={} artifacts={} {}",
+            self.record().fingerprint,
+            self.record().artifacts.len(),
+            self.record().timings,
+        )
+    }
+}
+
+/// Resolve the exact Cargo source, configuration, toolchain, argument, and environment identity.
+///
+/// This performs the same resolution used before and after cached Wasm builds
+/// without running `cargo build`.
+pub fn resolve_cargo_build_inputs(
+    spec: &WasmBuildSpec,
+) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
+    validate_spec(spec)?;
+    build_fingerprint(spec)
+}
+
 /// Build or reuse one exact set of Cargo Wasm artifacts.
 ///
 /// The operation takes an exclusive process lock scoped to `target_dir`, then
@@ -421,65 +624,136 @@ pub fn build_wasm_canisters_cached(
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
     let total_started = Instant::now();
     validate_spec(spec)?;
-    let (_lock_file, lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
+    let (cache_lock, first_lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
 
     let resolved = build_fingerprint(spec)?;
-    let mut input_resolution = resolved.timings;
+    if let Some(outcome) =
+        try_reuse_wasm_artifacts(spec, &resolved, first_lock_wait, None, total_started)?
+    {
+        return Ok(outcome);
+    }
+
+    match &spec.cache_mode {
+        WasmBuildCacheMode::Isolated => {
+            let cache_entry = cache_entry_directory(spec, resolved.fingerprint);
+            build_wasm_cache_miss(
+                spec,
+                resolved,
+                first_lock_wait,
+                None,
+                cache_entry,
+                total_started,
+            )
+        }
+        WasmBuildCacheMode::SharedIncremental { .. } => {
+            drop(cache_lock);
+            let (shared_lock, shared_lock_wait, shared_target) =
+                lock_shared_incremental_target(spec)?;
+            let (_cache_lock, second_lock_wait) = lock_wasm_build_cache(&spec.target_dir)?;
+            ensure_cache_directory_tag(&spec.target_dir)?;
+
+            let mut current = build_fingerprint(spec)?;
+            current.timings.include(resolved.timings);
+            let lock_wait = first_lock_wait.saturating_add(second_lock_wait);
+            if let Some(outcome) = try_reuse_wasm_artifacts(
+                spec,
+                &current,
+                lock_wait,
+                Some(shared_lock_wait),
+                total_started,
+            )? {
+                return Ok(outcome);
+            }
+
+            let outcome = build_wasm_cache_miss(
+                spec,
+                current,
+                lock_wait,
+                Some(shared_lock_wait),
+                shared_target,
+                total_started,
+            );
+            drop(shared_lock);
+            outcome
+        }
+    }
+}
+
+fn try_reuse_wasm_artifacts(
+    spec: &WasmBuildSpec,
+    resolved: &ResolvedCargoBuildInputs,
+    lock_wait: Duration,
+    shared_incremental_lock_wait: Option<Duration>,
+    total_started: Instant,
+) -> Result<Option<WasmBuildOutcome>, WasmBuildError> {
     let fingerprint = resolved.fingerprint;
     let artifacts = expected_artifacts(spec, &spec.target_dir);
-    let build_target_dir = spec
-        .target_dir
-        .join(".ic-testkit/wasm-targets")
-        .join(fingerprint.to_hex());
-
+    let cache_entry = cache_entry_directory(spec, fingerprint);
     if artifact_set_matches(&artifacts, fingerprint) {
-        record_cache_entry_use_if_present(&build_target_dir)?;
-        return Ok(WasmBuildOutcome::Reused(complete_build_record(
+        record_cache_entry_use_if_present(&cache_entry)?;
+        return Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
             spec,
             BuildRecordInput {
                 fingerprint,
                 input_digest: resolved.input_digest,
                 artifacts,
                 lock_wait,
-                input_resolution,
+                shared_incremental_lock_wait,
+                input_resolution: resolved.timings,
                 cargo_build: None,
-                active_entry: &build_target_dir,
+                active_entry: &cache_entry,
             },
             total_started,
-        )));
+        ))));
     }
 
-    let cached_artifacts = expected_artifacts(spec, &build_target_dir);
-    if artifact_set_matches(&cached_artifacts, fingerprint) {
-        materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
-        record_cache_entry_use(&build_target_dir)?;
-        return Ok(WasmBuildOutcome::Reused(complete_build_record(
-            spec,
-            BuildRecordInput {
-                fingerprint,
-                input_digest: resolved.input_digest,
-                artifacts,
-                lock_wait,
-                input_resolution,
-                cargo_build: None,
-                active_entry: &build_target_dir,
-            },
-            total_started,
-        )));
+    let cached_artifacts = expected_artifacts(spec, &cache_entry);
+    if !artifact_set_matches(&cached_artifacts, fingerprint) {
+        return Ok(None);
     }
+    materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
+    record_cache_entry_use(&cache_entry)?;
+    Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
+        spec,
+        BuildRecordInput {
+            fingerprint,
+            input_digest: resolved.input_digest,
+            artifacts,
+            lock_wait,
+            shared_incremental_lock_wait,
+            input_resolution: resolved.timings,
+            cargo_build: None,
+            active_entry: &cache_entry,
+        },
+        total_started,
+    ))))
+}
 
-    remove_directory_if_present(&build_target_dir)?;
+fn build_wasm_cache_miss(
+    spec: &WasmBuildSpec,
+    resolved: ResolvedCargoBuildInputs,
+    lock_wait: Duration,
+    shared_incremental_lock_wait: Option<Duration>,
+    cargo_target_dir: PathBuf,
+    total_started: Instant,
+) -> Result<WasmBuildOutcome, WasmBuildError> {
+    let fingerprint = resolved.fingerprint;
+    let mut input_resolution = resolved.timings;
+    let artifacts = expected_artifacts(spec, &spec.target_dir);
+    let cache_entry = cache_entry_directory(spec, fingerprint);
+    remove_directory_if_present(&cache_entry)?;
     create_dir_all(
-        &build_target_dir,
+        &cache_entry,
         "create content-addressed Cargo target directory",
     )?;
-    let incomplete_directory = IncompleteBuildDirectory::new(build_target_dir.clone());
+    let incomplete_directory = IncompleteBuildDirectory::new(cache_entry.clone());
     let build_result = (|| {
         let build_started = Instant::now();
-        run_cargo_build(spec, &build_target_dir)?;
+        run_cargo_build(spec, &cargo_target_dir)?;
         let cargo_build = build_started.elapsed();
-        let missing = missing_artifacts(&cached_artifacts);
+        let built_artifacts = expected_artifacts(spec, &cargo_target_dir);
+        let missing = missing_artifacts(&built_artifacts);
         if !missing.is_empty() {
             return Err(WasmBuildError::MissingArtifacts { paths: missing });
         }
@@ -493,9 +767,13 @@ pub fn build_wasm_canisters_cached(
             });
         }
 
+        let cached_artifacts = expected_artifacts(spec, &cache_entry);
+        if cargo_target_dir != cache_entry {
+            copy_wasm_artifacts(&built_artifacts, &cached_artifacts)?;
+        }
         publish_artifact_stamps(&cached_artifacts, fingerprint)?;
         materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
-        record_cache_entry_use(&build_target_dir)?;
+        record_cache_entry_use(&cache_entry)?;
 
         Ok(WasmBuildOutcome::Built(complete_build_record(
             spec,
@@ -504,9 +782,10 @@ pub fn build_wasm_canisters_cached(
                 input_digest: resolved.input_digest,
                 artifacts,
                 lock_wait,
+                shared_incremental_lock_wait,
                 input_resolution,
                 cargo_build: Some(cargo_build),
-                active_entry: &build_target_dir,
+                active_entry: &cache_entry,
             },
             total_started,
         )))
@@ -536,6 +815,7 @@ struct BuildRecordInput<'a> {
     input_digest: InputDigest,
     artifacts: Vec<PathBuf>,
     lock_wait: Duration,
+    shared_incremental_lock_wait: Option<Duration>,
     input_resolution: WasmInputResolutionTimings,
     cargo_build: Option<Duration>,
     active_entry: &'a Path,
@@ -565,6 +845,7 @@ fn complete_build_record(
         artifacts: input.artifacts,
         timings: WasmBuildTimings {
             lock_wait: input.lock_wait,
+            shared_incremental_lock_wait: input.shared_incremental_lock_wait,
             input_resolution: input.input_resolution,
             cargo_build: input.cargo_build,
             cache_maintenance,
@@ -644,6 +925,30 @@ fn lock_wasm_build_cache(target_dir: &Path) -> Result<(File, Duration), WasmBuil
     lock_cache_file(&lock_path).map_err(wasm_cache_fs_error)
 }
 
+fn lock_shared_incremental_target(
+    spec: &WasmBuildSpec,
+) -> Result<(File, Duration, PathBuf), WasmBuildError> {
+    let target_dir =
+        shared_incremental_target(spec).ok_or_else(|| WasmBuildError::InvalidSpec {
+            message: "shared incremental target is not configured".to_owned(),
+        })?;
+    create_dir_all(
+        &target_dir,
+        "create shared incremental Cargo target directory",
+    )?;
+    ensure_cache_tag(&target_dir).map_err(wasm_cache_fs_error)?;
+    let canonical = target_dir
+        .canonicalize()
+        .map_err(|source| WasmBuildError::Io {
+            operation: "resolve shared incremental Cargo target directory",
+            path: target_dir.clone(),
+            source,
+        })?;
+    let lock_path = canonical.join(".ic-testkit/wasm-incremental.lock");
+    let (lock, wait) = lock_cache_file(&lock_path).map_err(wasm_cache_fs_error)?;
+    Ok((lock, wait, canonical))
+}
+
 fn ensure_cache_directory_tag(target_dir: &Path) -> Result<(), WasmBuildError> {
     ensure_cache_tag(target_dir).map_err(wasm_cache_fs_error)
 }
@@ -683,16 +988,18 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "Cargo compilation target must not be empty".to_owned(),
         });
     }
+    if matches!(
+        &spec.cache_mode,
+        WasmBuildCacheMode::SharedIncremental { target_dir } if target_dir.as_os_str().is_empty()
+    ) {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "shared incremental Cargo target directory must not be empty".to_owned(),
+        });
+    }
     Ok(())
 }
 
-struct ResolvedFingerprint {
-    fingerprint: InputDigest,
-    input_digest: InputDigest,
-    timings: WasmInputResolutionTimings,
-}
-
-fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedFingerprint, WasmBuildError> {
+fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
     let total_started = Instant::now();
     let tool_started = Instant::now();
     let cargo_identity = command_identity(
@@ -715,6 +1022,7 @@ fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedFingerprint, WasmBu
 
     let discovery_started = Instant::now();
     let inputs = resolve_local_inputs(spec, &metadata)?;
+    validate_shared_incremental_target_boundary(spec, &inputs)?;
     let exclusions = source_exclusions(spec, &inputs);
     let input_discovery = discovery_started.elapsed();
 
@@ -750,9 +1058,14 @@ fn build_fingerprint(spec: &WasmBuildSpec) -> Result<ResolvedFingerprint, WasmBu
     hasher.field("cargo-identity", &cargo_identity);
     hasher.field("rustc-identity", &rustc_identity);
     hasher.field("source-input-digest", input_digest.as_bytes());
-    Ok(ResolvedFingerprint {
+    Ok(ResolvedCargoBuildInputs {
         fingerprint: hasher.finish(),
         input_digest,
+        inputs: inputs
+            .into_iter()
+            .map(|(label, path)| CargoBuildInput { label, path })
+            .collect(),
+        exclusions,
         timings: WasmInputResolutionTimings {
             tool_identity,
             cargo_metadata,
@@ -1239,6 +1552,9 @@ fn source_exclusions(spec: &WasmBuildSpec, inputs: &[(PathBuf, PathBuf)]) -> Vec
         spec.workspace_root.join("target"),
         spec.workspace_root.join(".git"),
     ];
+    if let Some(shared_target) = shared_incremental_target(spec) {
+        exclusions.push(shared_target);
+    }
     for (_, path) in inputs {
         if path.is_dir() {
             exclusions.push(path.join("target"));
@@ -1246,6 +1562,98 @@ fn source_exclusions(spec: &WasmBuildSpec, inputs: &[(PathBuf, PathBuf)]) -> Vec
         }
     }
     exclusions
+}
+
+fn validate_shared_incremental_target_boundary(
+    spec: &WasmBuildSpec,
+    inputs: &[(PathBuf, PathBuf)],
+) -> Result<(), WasmBuildError> {
+    let Some(shared_target) = shared_incremental_target(spec) else {
+        return Ok(());
+    };
+    let shared_target =
+        canonicalize_allow_missing(&shared_target).map_err(|source| WasmBuildError::Io {
+            operation: "resolve shared incremental Cargo target boundary",
+            path: shared_target.clone(),
+            source,
+        })?;
+    let safe_generated_roots = std::iter::once(spec.target_dir.clone())
+        .chain(std::iter::once(spec.workspace_root.join("target")))
+        .chain(
+            inputs
+                .iter()
+                .filter(|(_, path)| path.is_dir())
+                .map(|(_, path)| path.join("target")),
+        )
+        .filter_map(|path| canonicalize_allow_missing(&path).ok())
+        .collect::<Vec<_>>();
+    if safe_generated_roots
+        .iter()
+        .any(|root| shared_target.starts_with(root))
+    {
+        return Ok(());
+    }
+
+    for (_, input) in inputs {
+        let input = input.canonicalize().map_err(|source| WasmBuildError::Io {
+            operation: "resolve Cargo input boundary",
+            path: input.clone(),
+            source,
+        })?;
+        let metadata = fs::metadata(&input).map_err(|source| WasmBuildError::Io {
+            operation: "inspect Cargo input boundary",
+            path: input.clone(),
+            source,
+        })?;
+        if shared_target == input || (metadata.is_dir() && shared_target.starts_with(&input)) {
+            return Err(WasmBuildError::InvalidSpec {
+                message: format!(
+                    "shared incremental target {} must be outside exact Cargo inputs or inside a generated target directory",
+                    shared_target.display()
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn canonicalize_allow_missing(path: &Path) -> io::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut unresolved = Vec::<OsString>::new();
+    let mut existing = absolute.as_path();
+    loop {
+        match existing.canonicalize() {
+            Ok(mut canonical) => {
+                for component in unresolved.into_iter().rev() {
+                    canonical.push(component);
+                }
+                return Ok(canonical);
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(name) = existing.file_name() else {
+                    return Err(error);
+                };
+                unresolved.push(name.to_owned());
+                existing = existing.parent().ok_or(error)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn shared_incremental_target(spec: &WasmBuildSpec) -> Option<PathBuf> {
+    let WasmBuildCacheMode::SharedIncremental { target_dir } = &spec.cache_mode else {
+        return None;
+    };
+    Some(if target_dir.is_absolute() {
+        target_dir.clone()
+    } else {
+        spec.workspace_root.join(target_dir)
+    })
 }
 
 fn effective_environment(spec: &WasmBuildSpec) -> BTreeMap<OsString, Option<OsString>> {
@@ -1323,6 +1731,12 @@ fn expected_artifacts(spec: &WasmBuildSpec, target_dir: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+fn cache_entry_directory(spec: &WasmBuildSpec, fingerprint: InputDigest) -> PathBuf {
+    spec.target_dir
+        .join(".ic-testkit/wasm-targets")
+        .join(fingerprint.to_hex())
+}
+
 fn artifact_set_matches(artifacts: &[PathBuf], fingerprint: InputDigest) -> bool {
     artifacts.iter().all(|path| {
         fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
@@ -1398,6 +1812,20 @@ fn materialize_artifacts(
         })?;
     }
     publish_artifact_stamps(artifacts, fingerprint)
+}
+
+fn copy_wasm_artifacts(
+    source_artifacts: &[PathBuf],
+    cached_artifacts: &[PathBuf],
+) -> Result<(), WasmBuildError> {
+    for (source, cached) in source_artifacts.iter().zip(cached_artifacts) {
+        copy_file_atomic(source, cached).map_err(|source_error| WasmBuildError::Io {
+            operation: "cache shared-incremental Wasm artifact",
+            path: cached.clone(),
+            source: source_error,
+        })?;
+    }
+    Ok(())
 }
 
 fn remove_directory_if_present(path: &Path) -> Result<(), WasmBuildError> {
@@ -1531,7 +1959,7 @@ mod tests {
         IncompleteBuildDirectory, WasmBuildCachePrunePolicy, WasmBuildError, WasmBuildOutcome,
         WasmBuildSpec, append_cargo_configuration_inputs, ensure_cache_directory_tag,
         finish_fingerprint_build, metadata_arguments, prune_wasm_build_cache,
-        prune_wasm_build_cache_locked, validate_spec,
+        prune_wasm_build_cache_locked, resolve_cargo_build_inputs, validate_spec,
     };
     use crate::artifacts::cache_fs::{
         CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size, write_last_used,
@@ -1560,6 +1988,68 @@ mod tests {
                 OsString::from("--features=alpha,beta"),
             ]
         );
+    }
+
+    #[test]
+    fn os_native_builders_preserve_dynamic_values() {
+        let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
+            .with_cargo_profile_args_os([OsString::from("--locked")])
+            .with_extra_env_os([(OsString::from("MODE"), OsString::from("exact"))])
+            .with_inherited_env_os([OsString::from("RUSTFLAGS")])
+            .with_additional_input_paths([PathBuf::from("schema")]);
+
+        assert_eq!(spec.cargo_profile_args, [OsString::from("--locked")]);
+        assert_eq!(
+            spec.extra_env.get(&OsString::from("MODE")),
+            Some(&OsString::from("exact"))
+        );
+        assert!(spec.inherited_env.contains(&OsString::from("RUSTFLAGS")));
+        assert_eq!(spec.additional_inputs, [PathBuf::from("schema")]);
+    }
+
+    #[test]
+    fn public_cargo_input_snapshot_detects_local_source_changes() {
+        let root = unique_temp_directory("resolved-cargo-inputs");
+        let package = root.join("fixture");
+        fs::create_dir_all(package.join("src")).expect("create Cargo input fixture");
+        fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+        )
+        .expect("write fixture workspace manifest");
+        fs::write(
+            package.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write fixture package manifest");
+        fs::write(package.join("src/lib.rs"), "pub fn value() -> u8 { 1 }\n")
+            .expect("write fixture source");
+        let spec = WasmBuildSpec::new(&root, &root.join("target"), &["fixture"], "debug");
+
+        let snapshot = resolve_cargo_build_inputs(&spec).expect("resolve Cargo input snapshot");
+        assert!(
+            snapshot
+                .is_current(&spec)
+                .expect("revalidate unchanged inputs")
+        );
+        assert!(
+            snapshot
+                .inputs()
+                .iter()
+                .any(|input| input.path() == package)
+        );
+
+        fs::write(package.join("src/lib.rs"), "pub fn value() -> u8 { 2 }\n")
+            .expect("change fixture source");
+        assert!(!snapshot.is_current(&spec).expect("detect changed input"));
+
+        let unsafe_target =
+            spec.with_shared_incremental_target(package.join("src/generated-target"));
+        assert!(matches!(
+            resolve_cargo_build_inputs(&unsafe_target),
+            Err(WasmBuildError::InvalidSpec { .. })
+        ));
+        fs::remove_dir_all(root).expect("remove Cargo input fixture");
     }
 
     #[test]

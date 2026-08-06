@@ -14,11 +14,14 @@ mod workspace;
 #[cfg(test)]
 mod test_support;
 
+mod tool;
+
 pub use cache_fs::{ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport};
 pub use digest::InputDigest;
 pub use icp::{
     WatchedInputSnapshot, icp_artifact_ready_for_build, icp_artifact_ready_with_snapshot,
 };
+pub use tool::resolve_executable;
 pub use transaction::{
     ArtifactBuildTransaction, ArtifactCacheArtifact, ArtifactCacheError, ArtifactCacheOutcome,
     ArtifactCachePreparation, ArtifactCacheRecord, ArtifactCacheSpec, ArtifactCacheTimings,
@@ -26,9 +29,9 @@ pub use transaction::{
 };
 pub use wasm::{build_wasm_canisters, read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_cache::{
-    WasmBuildCacheMaintenance, WasmBuildCachePrunePolicy, WasmBuildCachePruneReport,
-    WasmBuildError, WasmBuildOutcome, WasmBuildPhase, WasmBuildRecord, WasmBuildSpec,
-    WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached,
-    prune_wasm_build_cache,
+    CargoBuildInput, ResolvedCargoBuildInputs, WasmBuildCacheMaintenance, WasmBuildCacheMode,
+    WasmBuildCachePrunePolicy, WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome,
+    WasmBuildPhase, WasmBuildRecord, WasmBuildSpec, WasmBuildTimings, WasmInputResolutionTimings,
+    build_wasm_canisters_cached, prune_wasm_build_cache, resolve_cargo_build_inputs,
 };
 pub use workspace::{test_target_dir, workspace_root_for};

@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Adds an opt-in shared-incremental mode to `WasmBuildSpec`. Cargo misses build
+  under a cross-process caller-owned target lock, while only revalidated final
+  Wasm files enter immutable fingerprint entries. Exact hits bypass the shared
+  target, failures preserve incremental state, and retention never owns it.
+- Exposes `resolve_cargo_build_inputs`, `ResolvedCargoBuildInputs`, and stable
+  labeled Cargo inputs, exclusions, exact digests, revalidation, and phase
+  timings without requiring downstream Cargo metadata adapters.
+- Adds OS-native iterator builders for Wasm and transactional cache arguments,
+  environment, inherited environment, and additional paths, plus an explicit
+  `resolve_executable` helper for canonical `PATH` tool fingerprinting.
+- Adds `CanisterSnapshotTarget` and exact per-canister sender capture for
+  mixed-controller topologies, including a matching cached-baseline capture
+  constructor. Existing controller fallback behavior remains available.
+- Adds compact single-line `Display` implementations for Wasm, transactional,
+  standalone-fixture, and multi-canister pool outcomes and timings.
+
+### Changed
+
+- Documents safe pipeline invalidation through declared implementation inputs,
+  explicit bounded-retention starting points, shared-incremental ownership,
+  and mixed-controller snapshot capture. No cache limit becomes automatic.
+
+### Testing
+
+- Adds real Cargo coverage for shared incremental reuse, immutable compact
+  output entries, exact old-fingerprint restoration, failed-build preservation,
+  input races, and retention boundaries.
+- Adds a two-process regression proving different exact-cache roots serialize
+  Cargo builds that share one mutable incremental target, plus mixed-controller,
+  public input-resolution, executable-resolution, and OS-native identity tests.
+
 ## [0.5.2] - 2026-08-06 - Transactional cache maintenance
 
 ### Changed

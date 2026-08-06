@@ -1,7 +1,44 @@
 use candid::Principal;
 use ic_testkit::pic::{
-    ControllerSnapshotError, PocketIc, PocketIcSnapshotExt, SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, PocketIc, PocketIcSnapshotExt,
+    SnapshotRestoreFunding,
 };
+use pocket_ic::CanisterSettings;
+
+#[test]
+fn explicit_snapshot_senders_support_mixed_controller_sets_without_fallback() {
+    let pocket_ic = PocketIc::new();
+    let explicit_controller = Principal::from_slice(&[42]);
+    let anonymous_canister = pocket_ic.create_canister();
+    let explicit_canister = pocket_ic.create_canister_with_settings(
+        None,
+        Some(CanisterSettings {
+            controllers: Some(vec![explicit_controller]),
+            ..CanisterSettings::default()
+        }),
+    );
+    for (canister_id, sender) in [
+        (anonymous_canister, None),
+        (explicit_canister, Some(explicit_controller)),
+    ] {
+        pocket_ic.install_canister(canister_id, b"\0asm\x01\0\0\0".to_vec(), vec![], sender);
+        pocket_ic
+            .stop_canister(canister_id, sender)
+            .expect("stop mixed-controller canister before snapshot capture");
+    }
+
+    let snapshots = pocket_ic
+        .capture_snapshots_with_senders([
+            CanisterSnapshotTarget::new(anonymous_canister, None),
+            CanisterSnapshotTarget::new(explicit_canister, Some(explicit_controller)),
+        ])
+        .expect("capture mixed-controller snapshots with exact senders");
+
+    assert_eq!(snapshots.len(), 2);
+    let mut expected = vec![anonymous_canister, explicit_canister];
+    expected.sort();
+    assert_eq!(snapshots.canister_ids().collect::<Vec<_>>(), expected);
+}
 
 #[test]
 fn failed_snapshot_set_capture_cleans_up_earlier_snapshots() {

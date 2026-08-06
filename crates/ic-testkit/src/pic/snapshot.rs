@@ -14,9 +14,16 @@ struct ControllerSnapshot {
     sender: Option<Principal>,
 }
 
-/// Deterministically ordered snapshots captured with one controller policy.
+/// Deterministically ordered snapshots retaining each successful capture sender.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ControllerSnapshots(BTreeMap<Principal, ControllerSnapshot>);
+
+/// One canister and exact management-call sender used for snapshot capture.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CanisterSnapshotTarget {
+    canister_id: Principal,
+    sender: Option<Principal>,
+}
 
 /// One rejected sender attempt for a snapshot operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -97,6 +104,18 @@ enum SnapshotCaptureFailure {
 
 /// Controller-aware capture and restore of related canister snapshots.
 pub trait PocketIcSnapshotExt {
+    /// Capture snapshots with one explicit sender per canister.
+    ///
+    /// Unlike [`Self::capture_controller_snapshots`], this performs no
+    /// rejected-sender fallback attempts. Input is duplicate-checked and
+    /// captured in deterministic canister-id order.
+    fn capture_snapshots_with_senders<I>(
+        &self,
+        targets: I,
+    ) -> Result<ControllerSnapshots, ControllerSnapshotError>
+    where
+        I: IntoIterator<Item = CanisterSnapshotTarget>;
+
     /// Capture one restorable snapshot per unique canister.
     ///
     /// Input is validated before capture begins. If a later capture fails,
@@ -133,6 +152,25 @@ pub trait PocketIcSnapshotExt {
 }
 
 impl PocketIcSnapshotExt for PocketIc {
+    fn capture_snapshots_with_senders<I>(
+        &self,
+        targets: I,
+    ) -> Result<ControllerSnapshots, ControllerSnapshotError>
+    where
+        I: IntoIterator<Item = CanisterSnapshotTarget>,
+    {
+        let targets = ordered_unique_snapshot_targets(targets)?;
+        capture_snapshot_set(
+            self,
+            targets.into_iter().map(|target| {
+                (
+                    target.canister_id,
+                    std::iter::once(target.sender).collect::<Vec<_>>(),
+                )
+            }),
+        )
+    }
+
     fn capture_controller_snapshots<I>(
         &self,
         controller_id: Principal,
@@ -142,33 +180,15 @@ impl PocketIcSnapshotExt for PocketIc {
         I: IntoIterator<Item = Principal>,
     {
         let canister_ids = ordered_unique_canister_ids(canister_ids)?;
-        let mut snapshots = BTreeMap::new();
-
-        for canister_id in canister_ids {
-            match try_take_controller_snapshot(self, controller_id, canister_id) {
-                Ok(snapshot) => {
-                    snapshots.insert(canister_id, snapshot);
-                }
-                Err(SnapshotCaptureFailure::Rejected(attempts)) => {
-                    let cleanup_failures = cleanup_captured_snapshots(self, &snapshots);
-                    return Err(ControllerSnapshotError::CaptureFailed {
-                        canister_id,
-                        attempts,
-                        cleanup_failures,
-                    });
-                }
-                Err(SnapshotCaptureFailure::Panicked(message)) => {
-                    let cleanup_failures = cleanup_captured_snapshots(self, &snapshots);
-                    return Err(ControllerSnapshotError::CapturePanicked {
-                        canister_id,
-                        message,
-                        cleanup_failures,
-                    });
-                }
-            }
-        }
-
-        Ok(ControllerSnapshots(snapshots))
+        capture_snapshot_set(
+            self,
+            canister_ids.into_iter().map(|canister_id| {
+                (
+                    canister_id,
+                    controller_sender_candidates(controller_id, canister_id).to_vec(),
+                )
+            }),
+        )
     }
 
     fn restore_controller_snapshots(
@@ -201,6 +221,63 @@ impl PocketIcSnapshotExt for PocketIc {
         }
         Ok(())
     }
+}
+
+impl CanisterSnapshotTarget {
+    /// Select one canister and exact sender for snapshot capture.
+    #[must_use]
+    pub const fn new(canister_id: Principal, sender: Option<Principal>) -> Self {
+        Self {
+            canister_id,
+            sender,
+        }
+    }
+
+    /// Canister whose snapshot will be captured.
+    #[must_use]
+    pub const fn canister_id(self) -> Principal {
+        self.canister_id
+    }
+
+    /// Exact management-call sender, including `None` for the default sender.
+    #[must_use]
+    pub const fn sender(self) -> Option<Principal> {
+        self.sender
+    }
+}
+
+fn capture_snapshot_set<I>(
+    pocket_ic: &PocketIc,
+    targets: I,
+) -> Result<ControllerSnapshots, ControllerSnapshotError>
+where
+    I: IntoIterator<Item = (Principal, Vec<Option<Principal>>)>,
+{
+    let mut snapshots = BTreeMap::new();
+    for (canister_id, senders) in targets {
+        match try_take_snapshot(pocket_ic, canister_id, senders) {
+            Ok(snapshot) => {
+                snapshots.insert(canister_id, snapshot);
+            }
+            Err(SnapshotCaptureFailure::Rejected(attempts)) => {
+                let cleanup_failures = cleanup_captured_snapshots(pocket_ic, &snapshots);
+                return Err(ControllerSnapshotError::CaptureFailed {
+                    canister_id,
+                    attempts,
+                    cleanup_failures,
+                });
+            }
+            Err(SnapshotCaptureFailure::Panicked(message)) => {
+                let cleanup_failures = cleanup_captured_snapshots(pocket_ic, &snapshots);
+                return Err(ControllerSnapshotError::CapturePanicked {
+                    canister_id,
+                    message,
+                    cleanup_failures,
+                });
+            }
+        }
+    }
+    Ok(ControllerSnapshots(snapshots))
 }
 
 impl ControllerSnapshots {
@@ -330,12 +407,28 @@ where
     Ok(unique.into_iter().collect())
 }
 
-fn try_take_controller_snapshot(
+fn ordered_unique_snapshot_targets<I>(
+    targets: I,
+) -> Result<Vec<CanisterSnapshotTarget>, ControllerSnapshotError>
+where
+    I: IntoIterator<Item = CanisterSnapshotTarget>,
+{
+    let mut unique = BTreeMap::new();
+    for target in targets {
+        if unique.insert(target.canister_id, target).is_some() {
+            return Err(ControllerSnapshotError::DuplicateCanisterId {
+                canister_id: target.canister_id,
+            });
+        }
+    }
+    Ok(unique.into_values().collect())
+}
+
+fn try_take_snapshot(
     pocket_ic: &PocketIc,
-    controller_id: Principal,
     canister_id: Principal,
+    candidates: impl IntoIterator<Item = Option<Principal>>,
 ) -> Result<ControllerSnapshot, SnapshotCaptureFailure> {
-    let candidates = controller_sender_candidates(controller_id, canister_id);
     let mut attempts = Vec::new();
 
     for sender in candidates {

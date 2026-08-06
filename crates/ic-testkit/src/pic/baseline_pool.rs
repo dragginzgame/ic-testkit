@@ -781,6 +781,39 @@ impl BaselinePoolOutcome {
     }
 }
 
+impl std::fmt::Display for BaselinePoolTimings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "total={:?} wait={:?} build={:?} restore={:?} reset={:?} readiness={:?} validation={:?} stale_teardown={:?}",
+            self.total,
+            self.wait,
+            self.build,
+            self.restore,
+            self.reset,
+            self.readiness,
+            self.validation,
+            self.stale_teardown,
+        )
+    }
+}
+
+impl std::fmt::Display for BaselinePoolOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Built { slot, timings } => write!(formatter, "built slot={slot} {timings}"),
+            Self::Restored { slot, timings } => {
+                write!(formatter, "restored slot={slot} {timings}")
+            }
+            Self::Rebuilt {
+                slot,
+                reason,
+                timings,
+            } => write!(formatter, "rebuilt slot={slot} reason={reason:?} {timings}"),
+        }
+    }
+}
+
 impl<E> BaselinePoolError<E> {
     /// Timings recorded before this acquisition failed.
     #[must_use]

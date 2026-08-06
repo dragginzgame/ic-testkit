@@ -242,6 +242,17 @@ impl ArtifactCacheSpec {
         self
     }
 
+    /// Set OS-native ordered command arguments that contribute to the content key.
+    #[must_use]
+    pub fn with_arguments_os<I, S>(mut self, arguments: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.arguments = arguments.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Set environment values that contribute to the content key.
     #[must_use]
     pub fn with_environment(mut self, environment: &[(&str, &str)]) -> Self {
@@ -253,11 +264,39 @@ impl ArtifactCacheSpec {
         self
     }
 
+    /// Set OS-native environment values that contribute to the content key.
+    #[must_use]
+    pub fn with_environment_os<I, K, V>(mut self, environment: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        self.environment.extend(
+            environment
+                .into_iter()
+                .map(|(name, value)| (name.into(), Some(value.into()))),
+        );
+        self
+    }
+
     /// Record environment variables whose unset state contributes to the content key.
     #[must_use]
     pub fn with_unset_environment(mut self, names: &[&str]) -> Self {
         self.environment
             .extend(names.iter().map(|name| (OsString::from(name), None)));
+        self
+    }
+
+    /// Record OS-native environment names whose unset state contributes to the content key.
+    #[must_use]
+    pub fn with_unset_environment_os<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.environment
+            .extend(names.into_iter().map(|name| (name.into(), None)));
         self
     }
 
@@ -488,6 +527,39 @@ impl ArtifactCacheTimings {
     #[must_use]
     pub const fn total(self) -> Duration {
         self.total
+    }
+}
+
+impl std::fmt::Display for ArtifactCacheTimings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "total={:?} coordination_lock={:?} content_lock={:?} namespace_lock={:?} inputs={:?} lookup={:?} build={:?} validation={:?} publication={:?} materialization={:?} maintenance={:?}",
+            self.total,
+            self.coordination_lock_wait,
+            self.content_lock_wait,
+            self.namespace_lock_wait,
+            self.input_capture,
+            self.cache_lookup,
+            self.caller_build,
+            self.output_validation,
+            self.publication,
+            self.materialization,
+            self.maintenance,
+        )
+    }
+}
+
+impl std::fmt::Display for ArtifactCacheOutcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = if self.is_reused() { "reused" } else { "built" };
+        write!(
+            formatter,
+            "{state} key={} artifacts={} {}",
+            self.record().key,
+            self.record().artifacts.len(),
+            self.record().timings,
+        )
     }
 }
 

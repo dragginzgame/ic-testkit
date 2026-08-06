@@ -47,8 +47,8 @@ pub use errors::{
 };
 pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
 pub use snapshot::{
-    ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotAttemptFailure,
-    SnapshotCleanupFailure, SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
+    SnapshotAttemptFailure, SnapshotCleanupFailure, SnapshotRestoreFunding,
 };
 pub use standalone::StandaloneCanisterFixture;
 pub use standalone_pool::{

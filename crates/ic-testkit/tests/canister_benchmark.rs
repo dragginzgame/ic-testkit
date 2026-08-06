@@ -2,7 +2,8 @@ use candid::Principal;
 use ic_testkit::{
     artifacts::{
         WasmBuildCacheMaintenance, WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
-        build_wasm_canisters_cached, read_wasm, wasm_path, workspace_root_for,
+        build_wasm_canisters_cached, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
+        wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -16,6 +17,11 @@ use std::{
     sync::{Arc, Barrier},
     thread,
 };
+
+#[cfg(unix)]
+use ic_testkit::artifacts::WasmBuildError;
+#[cfg(unix)]
+use std::{ffi::OsString, os::unix::fs::PermissionsExt as _};
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
@@ -174,6 +180,200 @@ fn exact_wasm_cache_coordinates_overlapping_builds() {
     fs::remove_dir_all(target_dir).expect("clean overlapping cache target dir");
 }
 
+#[test]
+fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries() {
+    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    if !workspace
+        .join("canisters/test/perf_probe/Cargo.toml")
+        .is_file()
+    {
+        eprintln!("skipping shared-incremental Wasm cache test: fixture is not packaged");
+        return;
+    }
+    let target_dir = unique_temp_dir("ic-testkit-shared-incremental-cache");
+    let shared_target = unique_temp_dir("ic-testkit-shared-incremental-cargo-target");
+    let marker = shared_target.join("caller-owned-marker");
+    fs::write(&marker, b"preserve").expect("write caller-owned shared-target marker");
+    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
+        .with_shared_incremental_target(&shared_target);
+
+    let resolved = resolve_cargo_build_inputs(&spec).expect("resolve exact Cargo inputs");
+    assert!(!resolved.inputs().is_empty());
+    assert!(resolved.is_current(&spec).expect("revalidate Cargo inputs"));
+
+    let first = build_wasm_canisters_cached(&spec).expect("build through shared Cargo target");
+    assert!(matches!(first, WasmBuildOutcome::Built(_)));
+    assert!(
+        first
+            .record()
+            .timings()
+            .shared_incremental_lock_wait()
+            .is_some()
+    );
+    assert!(shared_target.join("wasm32-unknown-unknown").is_dir());
+    assert!(marker.is_file());
+
+    let cache_entry = target_dir
+        .join(".ic-testkit/wasm-targets")
+        .join(first.record().fingerprint().to_hex());
+    assert!(cache_entry.is_dir());
+    assert!(
+        !cache_entry
+            .join("wasm32-unknown-unknown/debug/incremental")
+            .exists()
+    );
+
+    let reused = build_wasm_canisters_cached(&spec).expect("reuse exact shared-mode output");
+    assert!(matches!(reused, WasmBuildOutcome::Reused(_)));
+    assert!(
+        reused
+            .record()
+            .timings()
+            .shared_incremental_lock_wait()
+            .is_none(),
+        "an immediate exact hit should not acquire the shared-target lock"
+    );
+
+    let changed = spec
+        .clone()
+        .with_extra_env(&[("IC_TESTKIT_SHARED_INCREMENTAL_PROBE", "changed")]);
+    let rebuilt = build_wasm_canisters_cached(&changed).expect("build changed exact identity");
+    assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
+    assert_ne!(first.record().fingerprint(), rebuilt.record().fingerprint());
+    assert!(marker.is_file());
+
+    let restored = build_wasm_canisters_cached(&spec).expect("restore original exact output");
+    assert!(matches!(restored, WasmBuildOutcome::Reused(_)));
+    assert!(restored.record().timings().cargo_build().is_none());
+
+    prune_wasm_build_cache(
+        &target_dir,
+        WasmBuildCachePrunePolicy::new().with_max_size_bytes(0),
+    )
+    .expect("prune exact output entries");
+    assert!(marker.is_file(), "retention must not own the shared target");
+
+    fs::remove_dir_all(target_dir).expect("clean shared-mode exact cache");
+    fs::remove_dir_all(shared_target).expect("clean shared Cargo target");
+}
+
+#[test]
+fn failed_shared_incremental_build_preserves_cargo_state_without_publishing_an_entry() {
+    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    if !workspace
+        .join("canisters/test/perf_probe/Cargo.toml")
+        .is_file()
+    {
+        eprintln!("skipping failed shared-incremental test: fixture is not packaged");
+        return;
+    }
+    let target_dir = unique_temp_dir("ic-testkit-failed-shared-cache");
+    let shared_target = unique_temp_dir("ic-testkit-failed-shared-cargo-target");
+    let marker = shared_target.join("caller-owned-marker");
+    fs::write(&marker, b"preserve").expect("write failed-build marker");
+    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
+        .with_shared_incremental_target(&shared_target)
+        .with_cargo_profile_args(&["--definitely-not-a-cargo-build-option"]);
+    let fingerprint = resolve_cargo_build_inputs(&spec)
+        .expect("resolve failing build identity")
+        .fingerprint();
+
+    let error = build_wasm_canisters_cached(&spec).expect_err("invalid Cargo option must fail");
+
+    assert!(error.to_string().contains("cargo build failed"));
+    assert!(marker.is_file());
+    assert!(shared_target.is_dir());
+    assert!(
+        !target_dir
+            .join(".ic-testkit/wasm-targets")
+            .join(fingerprint.to_hex())
+            .exists(),
+        "failed build must not publish an exact entry"
+    );
+
+    fs::remove_dir_all(target_dir).expect("clean failed shared-mode exact cache");
+    fs::remove_dir_all(shared_target).expect("clean failed shared Cargo target");
+}
+
+#[test]
+#[cfg(unix)]
+fn source_changes_during_shared_incremental_build_reject_exact_publication() {
+    let root = unique_temp_dir("ic-testkit-shared-input-race");
+    let workspace = root.join("workspace");
+    let package = workspace.join("race_probe");
+    fs::create_dir_all(package.join("src")).expect("create race fixture source directory");
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"race_probe\"]\nresolver = \"2\"\n",
+    )
+    .expect("write race workspace manifest");
+    fs::write(
+        package.join("Cargo.toml"),
+        "[package]\nname = \"race_probe\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\
+         [lib]\ncrate-type = [\"cdylib\"]\n",
+    )
+    .expect("write race package manifest");
+    let source = package.join("src/lib.rs");
+    fs::write(
+        &source,
+        "#[unsafe(no_mangle)]\npub extern \"C\" fn probe() -> u32 { 1 }\n",
+    )
+    .expect("write original race source");
+    let wrapper = root.join("cargo-wrapper.sh");
+    let started = root.join("build-started");
+    let release = root.join("release-build");
+    write_blocking_cargo_wrapper(&wrapper);
+    let real_cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let spec = WasmBuildSpec::new(
+        &workspace,
+        &root.join("exact-cache"),
+        &["race_probe"],
+        "debug",
+    )
+    .with_shared_incremental_target(root.join("shared-target"))
+    .with_cargo_program(&wrapper)
+    .with_extra_env_os([
+        (OsString::from("REAL_CARGO"), real_cargo),
+        (
+            OsString::from("IC_TESTKIT_BUILD_STARTED"),
+            started.clone().into_os_string(),
+        ),
+        (
+            OsString::from("IC_TESTKIT_RELEASE_BUILD"),
+            release.clone().into_os_string(),
+        ),
+    ]);
+    let fingerprint = resolve_cargo_build_inputs(&spec)
+        .expect("resolve original race fingerprint")
+        .fingerprint();
+    let worker = thread::spawn(move || build_wasm_canisters_cached(&spec));
+    wait_for_test_path(&started);
+    fs::write(
+        &source,
+        "#[unsafe(no_mangle)]\npub extern \"C\" fn probe() -> u32 { 2 }\n",
+    )
+    .expect("change source during blocked Cargo build");
+    fs::write(&release, b"go").expect("release blocked Cargo build");
+
+    let error = worker
+        .join()
+        .expect("shared input-race worker must not panic")
+        .expect_err("changed source must reject exact publication");
+
+    assert!(matches!(
+        error,
+        WasmBuildError::InputsChangedDuringBuild { .. }
+    ));
+    assert!(root.join("shared-target").is_dir());
+    assert!(
+        !root
+            .join("exact-cache/.ic-testkit/wasm-targets")
+            .join(fingerprint.to_hex())
+            .exists()
+    );
+    fs::remove_dir_all(root).expect("clean shared input-race fixture");
+}
+
 fn unique_temp_dir(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
     if root.exists() {
@@ -181,6 +381,36 @@ fn unique_temp_dir(name: &str) -> PathBuf {
     }
     fs::create_dir_all(&root).expect("create temp dir");
     root
+}
+
+#[cfg(unix)]
+fn write_blocking_cargo_wrapper(path: &std::path::Path) {
+    fs::write(
+        path,
+        b"#!/bin/sh\n\
+if [ \"$1\" = \"build\" ]; then\n\
+  : > \"$IC_TESTKIT_BUILD_STARTED\"\n\
+  while [ ! -f \"$IC_TESTKIT_RELEASE_BUILD\" ]; do sleep 0.05; done\n\
+fi\n\
+exec \"$REAL_CARGO\" \"$@\"\n",
+    )
+    .expect("write blocking Cargo wrapper");
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).expect("make blocking Cargo wrapper executable");
+}
+
+#[cfg(unix)]
+fn wait_for_test_path(path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !path.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {}",
+            path.display()
+        );
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 fn assert_cache_observability(outcome: &WasmBuildOutcome) {
