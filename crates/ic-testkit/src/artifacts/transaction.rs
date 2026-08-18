@@ -156,9 +156,9 @@ pub enum ArtifactCacheError {
     CargoBuildInputsChanged {
         /// Caller-selected logical input-set label.
         label: String,
-        /// Exact Cargo fingerprint or source digest captured by the resolver.
+        /// Semantic Cargo fingerprint or conservative validation digest captured.
         before: InputDigest,
-        /// Exact fingerprint or source digest observed during revalidation.
+        /// Semantic fingerprint or conservative validation digest revalidated.
         after: InputDigest,
     },
     /// Rehashing a resolved Cargo input set failed.
@@ -323,10 +323,10 @@ impl ArtifactCacheSpec {
 
     /// Add one exact Cargo input snapshot as transactional cache identity and guard.
     ///
-    /// The resolved fingerprint keys toolchain, arguments, environment and the
-    /// dependency closure. Its Cargo-aware source/configuration paths and
-    /// exclusions are rehashed automatically during preparation, cache-hit
-    /// materialization and transaction commit.
+    /// The semantic resolved fingerprint keys toolchain, arguments,
+    /// environment and the selected dependency closure. Its conservative
+    /// Cargo-aware validation paths and exclusions are rehashed automatically
+    /// during preparation, cache-hit materialization and transaction commit.
     #[must_use]
     pub fn with_cargo_build_inputs(
         mut self,
@@ -925,6 +925,15 @@ fn revalidate_cargo_build_input_fingerprints(
                 source,
             }
         })?;
+        let before_validation = cargo_input.resolved.validation_digest();
+        let after_validation = current.validation_digest();
+        if after_validation != before_validation {
+            return Err(ArtifactCacheError::CargoBuildInputsChanged {
+                label: cargo_input.label.clone(),
+                before: before_validation,
+                after: after_validation,
+            });
+        }
         let before = cargo_input.resolved.fingerprint();
         let after = current.fingerprint();
         if after != before {
@@ -1313,12 +1322,12 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
         for cargo_input in cargo_inputs {
             let current = cargo_input
                 .resolved
-                .current_input_digest()
+                .current_validation_digest()
                 .map_err(|source| ArtifactCacheError::CargoBuildInputRevalidation {
                     label: cargo_input.label.clone(),
                     source,
                 })?;
-            let before = cargo_input.resolved.input_digest();
+            let before = cargo_input.resolved.validation_digest();
             if current != before {
                 return Err(ArtifactCacheError::CargoBuildInputsChanged {
                     label: cargo_input.label.clone(),
@@ -1331,7 +1340,10 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
                 "cargo-build-fingerprint",
                 cargo_input.resolved.fingerprint().as_bytes(),
             );
-            inputs.field("cargo-input-digest", current.as_bytes());
+            inputs.field(
+                "cargo-input-digest",
+                cargo_input.resolved.input_digest().as_bytes(),
+            );
         }
         inputs.finish()
     };

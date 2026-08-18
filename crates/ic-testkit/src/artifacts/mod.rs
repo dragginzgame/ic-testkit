@@ -3,7 +3,6 @@
 //! These functions keep integration-test artifacts in caller-selected target
 //! directories and contain no application-specific package or profile policy.
 
-mod batch;
 mod cache_fs;
 mod digest;
 mod icp;
@@ -37,9 +36,10 @@ pub use transaction_batch::{
 };
 pub use wasm::{read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_batch::{
-    WasmBuildBatchConfig, WasmBuildBatchFailure, WasmBuildBatchMetrics,
-    WasmBuildBatchProgressEvent, WasmBuildBatchReport, build_wasm_canisters_cached_batch,
-    build_wasm_canisters_cached_batch_with_config,
+    LabeledWasmBuildSpec, WasmBuildBatchConfig, WasmBuildBatchContractError, WasmBuildBatchEntry,
+    WasmBuildBatchFailure, WasmBuildBatchMaintenanceEntry, WasmBuildBatchMetrics,
+    WasmBuildBatchOutcomeEntry, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
+    build_wasm_canisters_cached_batch, build_wasm_canisters_cached_batch_with_config,
     build_wasm_canisters_cached_batch_with_config_and_progress,
     build_wasm_canisters_cached_batch_with_progress,
 };

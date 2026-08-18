@@ -75,9 +75,11 @@ recipes that build Cargo packages. It should:
 1. resolve the selected local dependency closure with Cargo metadata;
 2. retain stable labels and per-file content digests in addition to the
    aggregate `InputDigest`;
-3. include workspace manifests, the lockfile, toolchain files, and Cargo
-   configuration Cargo can read from the workspace directory, its ancestors,
-   and the effective Cargo home;
+3. include a selected Cargo graph/workspace semantic projection in cache
+   identity while retaining complete workspace manifests and the lockfile for
+   mutation validation, plus toolchain files and Cargo configuration Cargo can
+   read from the workspace directory, its ancestors, and the effective Cargo
+   home;
 4. include the effective Cargo-home identity when relative configuration values
    make the configuration base path semantic;
 5. include relevant `CARGO_*`, rustc, wrapper, and rustflags environment while
@@ -86,9 +88,10 @@ recipes that build Cargo packages. It should:
    hatch for build-script and external-tool inputs;
 7. produce a structured change set for diagnostics and timing reports.
 
-The resolver should remain conservative on a cold build. A later optimization
-may use Cargo/rustc dependency information from a successful prior build, but
-only with a safe cold fallback and post-build revalidation.
+The implemented resolver remains conservative without depending on prior build
+state: it projects the selected graph directly from Cargo metadata, retains a
+complete raw validation digest, and falls back to broad identity for package
+roots that cannot be safely normalized.
 
 ## One transactional artifact-cache core
 

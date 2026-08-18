@@ -44,10 +44,11 @@ const AUTOMATIC_ENVIRONMENT: &[&str] = &[
 
 /// Complete caller-owned description of one cacheable Cargo Wasm build.
 ///
-/// The package dependency closure, workspace manifest, lockfile, Cargo
+/// The selected package graph, sources, semantic workspace projection, Cargo
 /// configuration, Rust toolchain files, target, profile arguments, explicit
 /// child environment, selected inherited environment, and additional watched
-/// inputs all contribute to the build fingerprint.
+/// inputs contribute to the build fingerprint. The complete workspace
+/// manifest and lockfile remain conservative mutation-validation inputs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WasmBuildSpec {
     workspace_root: PathBuf,
@@ -155,6 +156,7 @@ pub struct CargoBuildInput {
 pub struct ResolvedCargoBuildInputs {
     fingerprint: InputDigest,
     input_digest: InputDigest,
+    validation_digest: InputDigest,
     inputs: Vec<CargoBuildInput>,
     exclusions: Vec<PathBuf>,
     timings: WasmInputResolutionTimings,
@@ -170,6 +172,19 @@ pub(super) struct WasmBuildBatchInputResolver<'a> {
 
 struct BatchResolutionGroup {
     indexes: Vec<usize>,
+}
+
+struct ResolvedLocalInputs {
+    validation_inputs: Vec<(PathBuf, PathBuf)>,
+    fingerprint: LocalInputFingerprint,
+}
+
+enum LocalInputFingerprint {
+    Conservative,
+    Projected {
+        inputs: Vec<(PathBuf, PathBuf)>,
+        workspace: InputDigest,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -320,7 +335,7 @@ pub enum WasmBuildProgressEvent {
     InputsResolved {
         /// Complete exact build fingerprint.
         fingerprint: InputDigest,
-        /// Source/configuration-only digest.
+        /// Semantic selected-source/configuration digest.
         input_digest: InputDigest,
         /// Time spent on this resolution pass.
         elapsed: Duration,
@@ -857,7 +872,7 @@ impl WasmBuildRecord {
         self.fingerprint
     }
 
-    /// Exact digest of package sources, lockfile, and configuration inputs.
+    /// Semantic digest of selected package sources and configuration inputs.
     #[must_use]
     pub const fn input_digest(&self) -> InputDigest {
         self.input_digest
@@ -1018,13 +1033,25 @@ impl ResolvedCargoBuildInputs {
         self.fingerprint
     }
 
-    /// Exact digest of local source and configuration contents.
+    /// Semantic digest of selected Cargo sources and workspace configuration.
+    ///
+    /// Unlike [`Self::validation_digest`], this may remain unchanged after an
+    /// unrelated host-only workspace manifest or lockfile update.
     #[must_use]
     pub const fn input_digest(&self) -> InputDigest {
         self.input_digest
     }
 
-    /// Stable logical labels and resolved local input paths.
+    /// Conservative digest of every raw source and configuration input.
+    ///
+    /// This digest is used for mutation guards. It may change while
+    /// [`Self::input_digest`] and [`Self::fingerprint`] remain unchanged.
+    #[must_use]
+    pub const fn validation_digest(&self) -> InputDigest {
+        self.validation_digest
+    }
+
+    /// Stable logical labels and conservative resolved validation paths.
     #[must_use]
     pub fn inputs(&self) -> &[CargoBuildInput] {
         &self.inputs
@@ -1057,11 +1084,11 @@ impl ResolvedCargoBuildInputs {
     /// new snapshot to observe tool, argument, environment, or dependency-graph
     /// identity changes between separate acquisitions.
     pub fn is_content_current(&self) -> Result<bool, WasmBuildError> {
-        self.current_input_digest()
-            .map(|current| current == self.input_digest)
+        self.current_validation_digest()
+            .map(|current| current == self.validation_digest)
     }
 
-    pub(super) fn current_input_digest(&self) -> Result<InputDigest, WasmBuildError> {
+    pub(super) fn current_validation_digest(&self) -> Result<InputDigest, WasmBuildError> {
         let inputs = self
             .inputs
             .iter()
@@ -1159,8 +1186,8 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
             let spec = &self.specs[index];
             let result = (|| {
                 let inputs = resolve_local_inputs(spec, &metadata)?;
-                validate_shared_incremental_target_boundary(spec, &inputs)?;
-                let exclusions = source_exclusions(spec, &inputs);
+                validate_shared_incremental_target_boundary(spec, &inputs.validation_inputs)?;
+                let exclusions = source_exclusions(spec, &inputs.validation_inputs);
                 Ok::<_, WasmBuildError>((inputs, exclusions))
             })();
             match result {
@@ -1176,18 +1203,21 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
             discovered
                 .into_iter()
                 .map(|(index, inputs, exclusions)| {
-                    let input_digest = digest_labeled_paths_composable(
-                        "wasm-source-inputs-v1",
+                    let (input_digest, validation_digest) = digest_resolved_local_inputs(
                         &inputs,
                         &exclusions,
                         &mut cache,
-                    )
-                    .map_err(|source| WasmBuildError::Io {
-                        operation: "hash batched Wasm build inputs",
-                        path: active.workspace_root.clone(),
-                        source,
-                    })?;
-                    Ok::<_, WasmBuildError>((index, inputs, exclusions, input_digest))
+                        &active.workspace_root,
+                        "hash batched Wasm build inputs",
+                        "hash batched semantic Wasm build inputs",
+                    )?;
+                    Ok::<_, WasmBuildError>((
+                        index,
+                        inputs.validation_inputs,
+                        exclusions,
+                        input_digest,
+                        validation_digest,
+                    ))
                 })
                 .collect::<Result<Vec<_>, _>>()
         })?;
@@ -1209,7 +1239,7 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
             .any(|(index, ..)| *index == active_index)
             .then_some(active_index)
             .or_else(|| resolved_inputs.first().map(|(index, ..)| *index));
-        for (index, inputs, exclusions, input_digest) in resolved_inputs {
+        for (index, inputs, exclusions, input_digest, validation_digest) in resolved_inputs {
             let spec = &self.specs[index];
             self.resolved[index] = Some(Ok(ResolvedCargoBuildInputs {
                 fingerprint: finish_build_fingerprint(
@@ -1219,6 +1249,7 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
                     input_digest,
                 ),
                 input_digest,
+                validation_digest,
                 inputs: inputs
                     .into_iter()
                     .map(|(label, path)| CargoBuildInput { label, path })
@@ -2321,6 +2352,12 @@ fn build_wasm_cache_miss(
 
         let verified = resolve_inputs_with_progress(spec, progress)?;
         input_resolution.include(verified.timings);
+        if resolved.validation_digest != verified.validation_digest {
+            return Err(WasmBuildError::InputsChangedDuringBuild {
+                before: resolved.validation_digest,
+                after: verified.validation_digest,
+            });
+        }
         if fingerprint != verified.fingerprint {
             return Err(WasmBuildError::InputsChangedDuringBuild {
                 before: fingerprint,
@@ -2654,26 +2691,25 @@ fn build_fingerprint_with_progress(
     let (inputs, exclusions) =
         progress.run_phase(WasmBuildProgressPhase::InputDiscovery, || {
             let inputs = resolve_local_inputs(spec, &metadata)?;
-            validate_shared_incremental_target_boundary(spec, &inputs)?;
-            let exclusions = source_exclusions(spec, &inputs);
+            validate_shared_incremental_target_boundary(spec, &inputs.validation_inputs)?;
+            let exclusions = source_exclusions(spec, &inputs.validation_inputs);
             Ok::<_, WasmBuildError>((inputs, exclusions))
         })?;
     let input_discovery = discovery_started.elapsed();
 
     let hashing_started = Instant::now();
-    let input_digest = progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
-        digest_labeled_paths_composable(
-            "wasm-source-inputs-v1",
-            &inputs,
-            &exclusions,
-            &mut LabeledPathDigestCache::default(),
-        )
-        .map_err(|source| WasmBuildError::Io {
-            operation: "hash Wasm build inputs",
-            path: spec.workspace_root.clone(),
-            source,
-        })
-    })?;
+    let (input_digest, validation_digest) =
+        progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
+            let mut cache = LabeledPathDigestCache::default();
+            digest_resolved_local_inputs(
+                &inputs,
+                &exclusions,
+                &mut cache,
+                &spec.workspace_root,
+                "hash Wasm build inputs",
+                "hash semantic Wasm build inputs",
+            )
+        })?;
     let content_hashing = hashing_started.elapsed();
 
     let fingerprint =
@@ -2681,7 +2717,9 @@ fn build_fingerprint_with_progress(
     Ok(ResolvedCargoBuildInputs {
         fingerprint,
         input_digest,
+        validation_digest,
         inputs: inputs
+            .validation_inputs
             .into_iter()
             .map(|(label, path)| CargoBuildInput { label, path })
             .collect(),
@@ -2806,12 +2844,39 @@ struct MetadataPackage {
     version: String,
     manifest_path: PathBuf,
     is_local: bool,
+    source: Option<String>,
+    semantic_fields: Vec<(&'static str, Option<String>)>,
+}
+
+const SEMANTIC_PACKAGE_FIELDS: &[&str] = &[
+    "authors",
+    "default_run",
+    "description",
+    "documentation",
+    "edition",
+    "homepage",
+    "license",
+    "license_file",
+    "links",
+    "metadata",
+    "name",
+    "readme",
+    "repository",
+    "rust_version",
+    "version",
+];
+
+struct LockedPackageIdentity {
+    name: String,
+    version: String,
+    source: String,
+    checksum: Option<String>,
 }
 
 fn resolve_local_inputs(
     spec: &WasmBuildSpec,
     metadata: &Value,
-) -> Result<Vec<(PathBuf, PathBuf)>, WasmBuildError> {
+) -> Result<ResolvedLocalInputs, WasmBuildError> {
     let packages = metadata_packages(metadata)?;
     let mut selected_ids = selected_package_ids(spec, metadata, &packages)?;
     let dependencies = metadata_dependencies(metadata)?;
@@ -2829,10 +2894,24 @@ fn resolve_local_inputs(
         .get("workspace_root")
         .and_then(Value::as_str)
         .map_or_else(|| spec.workspace_root.clone(), PathBuf::from);
-    let mut inputs = workspace_configuration_inputs(spec, &workspace_root)?;
-    append_package_inputs(&mut inputs, &packages, closure, &workspace_root)?;
-    append_additional_inputs(&mut inputs, spec, &workspace_root);
-    Ok(inputs)
+    let projection = semantic_workspace_projection(metadata, &packages, &closure, &workspace_root)?;
+    let mut validation_inputs = workspace_configuration_inputs(spec, &workspace_root)?;
+    append_package_inputs(&mut validation_inputs, &packages, closure, &workspace_root)?;
+    append_additional_inputs(&mut validation_inputs, spec, &workspace_root);
+    let fingerprint = projection.map_or(LocalInputFingerprint::Conservative, |workspace| {
+        LocalInputFingerprint::Projected {
+            inputs: validation_inputs
+                .iter()
+                .filter(|(label, _)| !is_broad_workspace_input(label))
+                .cloned()
+                .collect(),
+            workspace,
+        }
+    });
+    Ok(ResolvedLocalInputs {
+        validation_inputs,
+        fingerprint,
+    })
 }
 
 fn metadata_packages(metadata: &Value) -> Result<HashMap<String, MetadataPackage>, WasmBuildError> {
@@ -2842,12 +2921,18 @@ fn metadata_packages(metadata: &Value) -> Result<HashMap<String, MetadataPackage
         .ok_or_else(|| invalid_metadata("Cargo metadata has no package array"))?;
     let mut packages = HashMap::new();
     for value in packages_value {
+        let source = optional_string(value, "source")?;
         let package = MetadataPackage {
             id: required_string(value, "id")?,
             name: required_string(value, "name")?,
             version: required_string(value, "version")?,
             manifest_path: PathBuf::from(required_string(value, "manifest_path")?),
             is_local: value.get("source").is_some_and(Value::is_null),
+            source,
+            semantic_fields: SEMANTIC_PACKAGE_FIELDS
+                .iter()
+                .map(|field| (*field, value.get(*field).map(Value::to_string)))
+                .collect(),
         };
         packages.insert(package.id.clone(), package);
     }
@@ -2910,6 +2995,336 @@ fn metadata_dependencies(metadata: &Value) -> Result<HashMap<String, Vec<String>
         dependencies.insert(id, deps);
     }
     Ok(dependencies)
+}
+
+fn semantic_workspace_projection(
+    metadata: &Value,
+    packages: &HashMap<String, MetadataPackage>,
+    closure: &BTreeSet<String>,
+    workspace_root: &Path,
+) -> Result<Option<InputDigest>, WasmBuildError> {
+    // A workspace-root or external local package cannot be separated from the
+    // broad root safely; `None` keeps the complete-input fingerprint.
+    let locked_packages = locked_package_identities(workspace_root)?;
+    let mut identities = HashMap::new();
+    for id in closure {
+        let package = packages
+            .get(id)
+            .ok_or_else(|| invalid_metadata(&format!("resolved package `{id}` is missing")))?;
+        let Some(identity) = semantic_package_identity(package, workspace_root, &locked_packages)
+        else {
+            return Ok(None);
+        };
+        identities.insert(id.as_str(), identity);
+    }
+
+    let nodes = metadata
+        .pointer("/resolve/nodes")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_metadata("Cargo metadata has no resolved dependency nodes"))?;
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| Ok((required_string(node, "id")?, node)))
+        .collect::<Result<HashMap<_, _>, WasmBuildError>>()?;
+    let mut projected_packages = closure
+        .iter()
+        .map(|id| {
+            let package = packages
+                .get(id)
+                .expect("selected package closure was validated above");
+            let identity = identities[id.as_str()];
+            let node = nodes_by_id.get(id).copied().ok_or_else(|| {
+                invalid_metadata(&format!("resolved package `{id}` has no dependency node"))
+            })?;
+            let projection = semantic_package_projection(package, node, &identities)?;
+            Ok::<_, WasmBuildError>((identity, projection))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    projected_packages.sort_by_key(|(identity, _)| *identity);
+
+    let root_manifest = workspace_root.join("Cargo.toml");
+    let root_contents =
+        fs::read_to_string(&root_manifest).map_err(|source| WasmBuildError::Io {
+            operation: "read workspace manifest for semantic projection",
+            path: root_manifest.clone(),
+            source,
+        })?;
+    let root = toml::from_str::<TomlValue>(&root_contents).map_err(|error| {
+        invalid_metadata(&format!(
+            "workspace manifest could not be projected as TOML: {error}"
+        ))
+    })?;
+
+    let mut hasher = InputHasher::new("wasm-semantic-workspace-projection-v1");
+    for (identity, projection) in projected_packages {
+        hasher.field("package-identity", identity.as_bytes());
+        hasher.field("package-projection", projection.as_bytes());
+    }
+    hash_toml_setting(&mut hasher, "cargo-features", root.get("cargo-features"));
+    hash_toml_setting(&mut hasher, "profile", root.get("profile"));
+    let workspace = root.get("workspace").and_then(TomlValue::as_table);
+    hash_toml_setting(
+        &mut hasher,
+        "workspace-resolver",
+        workspace.and_then(|table| table.get("resolver")),
+    );
+    hash_toml_setting(
+        &mut hasher,
+        "workspace-lints",
+        workspace.and_then(|table| table.get("lints")),
+    );
+    Ok(Some(hasher.finish()))
+}
+
+fn locked_package_identities(
+    workspace_root: &Path,
+) -> Result<Vec<LockedPackageIdentity>, WasmBuildError> {
+    let lockfile = workspace_root.join("Cargo.lock");
+    let contents = match fs::read_to_string(&lockfile) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(WasmBuildError::Io {
+                operation: "read Cargo lockfile for semantic projection",
+                path: lockfile,
+                source,
+            });
+        }
+    };
+    let lock = toml::from_str::<TomlValue>(&contents).map_err(|error| {
+        invalid_metadata(&format!(
+            "Cargo lockfile could not be projected as TOML: {error}"
+        ))
+    })?;
+    let Some(packages) = lock.get("package").and_then(TomlValue::as_array) else {
+        return Ok(Vec::new());
+    };
+    packages
+        .iter()
+        .filter_map(|package| {
+            let Some(table) = package.as_table() else {
+                return Some(Err(invalid_metadata(
+                    "Cargo lockfile package entry is not a table",
+                )));
+            };
+            let source = table.get("source")?.as_str().map(str::to_owned);
+            Some(
+                source
+                    .ok_or_else(|| {
+                        invalid_metadata("Cargo lockfile package source is not a string")
+                    })
+                    .and_then(|source| {
+                        Ok(LockedPackageIdentity {
+                            name: required_toml_string(table, "name", "Cargo lockfile package")?,
+                            version: required_toml_string(
+                                table,
+                                "version",
+                                "Cargo lockfile package",
+                            )?,
+                            source,
+                            checksum: optional_toml_string(
+                                table,
+                                "checksum",
+                                "Cargo lockfile package",
+                            )?,
+                        })
+                    }),
+            )
+        })
+        .collect()
+}
+
+fn required_toml_string(
+    table: &toml::Table,
+    field: &str,
+    context: &str,
+) -> Result<String, WasmBuildError> {
+    table
+        .get(field)
+        .and_then(TomlValue::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| invalid_metadata(&format!("{context} `{field}` is missing or not a string")))
+}
+
+fn optional_toml_string(
+    table: &toml::Table,
+    field: &str,
+    context: &str,
+) -> Result<Option<String>, WasmBuildError> {
+    match table.get(field) {
+        None => Ok(None),
+        Some(TomlValue::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(invalid_metadata(&format!(
+            "{context} `{field}` is not a string"
+        ))),
+    }
+}
+
+fn semantic_package_identity(
+    package: &MetadataPackage,
+    workspace_root: &Path,
+    locked_packages: &[LockedPackageIdentity],
+) -> Option<InputDigest> {
+    let mut hasher = InputHasher::new("wasm-semantic-package-identity-v1");
+    hasher.field("name", package.name.as_bytes());
+    hasher.field("version", package.version.as_bytes());
+    if package.is_local {
+        let manifest = package.manifest_path.strip_prefix(workspace_root).ok()?;
+        let package_root = package.manifest_path.parent()?;
+        if package_root == workspace_root {
+            return None;
+        }
+        hasher.field("local-manifest", &os_bytes(manifest.as_os_str()));
+    } else {
+        let metadata_source = package.source.as_deref()?;
+        let locked = locked_packages.iter().find(|locked| {
+            locked.name == package.name
+                && locked.version == package.version
+                && locked.source == metadata_source
+        })?;
+        match locked.source.as_str() {
+            source if source.starts_with("registry+") && locked.checksum.is_some() => {}
+            source if source.starts_with("git+") && source.contains('#') => {}
+            _ => return None,
+        }
+        hasher.field("external-package-id", package.id.as_bytes());
+        hasher.field("external-source", locked.source.as_bytes());
+        hasher.field(
+            "external-checksum",
+            locked.checksum.as_deref().unwrap_or_default().as_bytes(),
+        );
+    }
+    Some(hasher.finish())
+}
+
+fn semantic_package_projection(
+    package: &MetadataPackage,
+    node: &Value,
+    identities: &HashMap<&str, InputDigest>,
+) -> Result<InputDigest, WasmBuildError> {
+    // These are the effective package values Cargo can expose to compilation
+    // through CARGO_PKG_* variables. Local manifests and external checksums
+    // cover the remaining package definition.
+    let mut hasher = InputHasher::new("wasm-semantic-package-projection-v1");
+    for (field, value) in &package.semantic_fields {
+        hasher.field("package-field-name", field.as_bytes());
+        match value {
+            Some(value) => hasher.field("package-field-value", value.as_bytes()),
+            None => hasher.field("package-field-missing", b""),
+        }
+    }
+
+    let mut features = node
+        .get("features")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_metadata("Cargo metadata dependency node has no features array"))?
+        .iter()
+        .map(|feature| {
+            feature.as_str().map(str::to_owned).ok_or_else(|| {
+                invalid_metadata("Cargo metadata dependency feature is not a string")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    features.sort();
+    for feature in features {
+        hasher.field("enabled-feature", feature.as_bytes());
+    }
+
+    let mut dependencies = node
+        .get("deps")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid_metadata("Cargo metadata dependency node has no deps array"))?
+        .iter()
+        .map(|dependency| {
+            let name = required_string(dependency, "name")?;
+            let package_id = required_string(dependency, "pkg")?;
+            let identity = identities
+                .get(package_id.as_str())
+                .copied()
+                .ok_or_else(|| {
+                    invalid_metadata(&format!(
+                        "dependency `{package_id}` is outside the selected package closure"
+                    ))
+                })?;
+            let kinds = dependency
+                .get("dep_kinds")
+                .ok_or_else(|| invalid_metadata("Cargo metadata dependency has no kind array"))?
+                .to_string();
+            Ok::<_, WasmBuildError>((name, identity, kinds))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    dependencies.sort();
+    for (name, identity, kinds) in dependencies {
+        hasher.field("dependency-name", name.as_bytes());
+        hasher.field("dependency-identity", identity.as_bytes());
+        hasher.field("dependency-kinds", kinds.as_bytes());
+    }
+    Ok(hasher.finish())
+}
+
+fn hash_toml_setting(hasher: &mut InputHasher, label: &str, value: Option<&TomlValue>) {
+    hasher.field("workspace-setting-name", label.as_bytes());
+    match value {
+        Some(value) => hasher.field("workspace-setting-value", value.to_string().as_bytes()),
+        None => hasher.field("workspace-setting-missing", b""),
+    }
+}
+
+fn is_broad_workspace_input(label: &Path) -> bool {
+    label == Path::new("workspace/Cargo.toml") || label == Path::new("workspace/Cargo.lock")
+}
+
+fn digest_resolved_local_inputs(
+    inputs: &ResolvedLocalInputs,
+    exclusions: &[PathBuf],
+    cache: &mut LabeledPathDigestCache,
+    error_path: &Path,
+    validation_operation: &'static str,
+    semantic_operation: &'static str,
+) -> Result<(InputDigest, InputDigest), WasmBuildError> {
+    let validation_digest = digest_labeled_paths_composable(
+        "wasm-source-inputs-v1",
+        &inputs.validation_inputs,
+        exclusions,
+        cache,
+    )
+    .map_err(|source| WasmBuildError::Io {
+        operation: validation_operation,
+        path: error_path.to_owned(),
+        source,
+    })?;
+    let input_digest = semantic_input_digest(inputs, validation_digest, exclusions, cache)
+        .map_err(|source| WasmBuildError::Io {
+            operation: semantic_operation,
+            path: error_path.to_owned(),
+            source,
+        })?;
+    Ok((input_digest, validation_digest))
+}
+
+fn semantic_input_digest(
+    inputs: &ResolvedLocalInputs,
+    validation_digest: InputDigest,
+    exclusions: &[PathBuf],
+    cache: &mut LabeledPathDigestCache,
+) -> io::Result<InputDigest> {
+    let LocalInputFingerprint::Projected {
+        inputs: fingerprint_inputs,
+        workspace,
+    } = &inputs.fingerprint
+    else {
+        return Ok(validation_digest);
+    };
+    let path_digest = digest_labeled_paths_composable(
+        "wasm-source-inputs-v1",
+        fingerprint_inputs,
+        exclusions,
+        cache,
+    )?;
+    let mut hasher = InputHasher::new("wasm-semantic-source-inputs-v1");
+    hasher.field("path-input-digest", path_digest.as_bytes());
+    hasher.field("workspace-projection", workspace.as_bytes());
+    Ok(hasher.finish())
 }
 
 fn workspace_configuration_inputs(
@@ -3745,6 +4160,16 @@ fn required_string(value: &Value, field: &str) -> Result<String, WasmBuildError>
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| invalid_metadata(&format!("Cargo metadata field `{field}` is missing")))
+}
+
+fn optional_string(value: &Value, field: &str) -> Result<Option<String>, WasmBuildError> {
+    match value.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(invalid_metadata(&format!(
+            "Cargo metadata field `{field}` is not a string or null"
+        ))),
+    }
 }
 
 fn invalid_metadata(message: &str) -> WasmBuildError {

@@ -29,13 +29,15 @@ fn diagnostics_use_independent_exact_senders_and_preserve_both_outcomes() {
     assert!(compact.contains("status=ok(state="));
     assert!(compact.contains("logs=<empty>"));
 
-    let batch = pocket_ic.collect_canister_diagnostics_batch(&[
-        LabeledCanisterDiagnosticsRequest::new(
-            "denied",
-            CanisterDiagnosticsRequest::new(canister_id, outsider, outsider),
-        ),
-        LabeledCanisterDiagnosticsRequest::new("controller", request),
-    ]);
+    let batch = pocket_ic
+        .collect_canister_diagnostics_batch(&[
+            LabeledCanisterDiagnosticsRequest::new(
+                "denied",
+                CanisterDiagnosticsRequest::new(canister_id, outsider, outsider),
+            ),
+            LabeledCanisterDiagnosticsRequest::new("controller", request),
+        ])
+        .expect("valid labeled diagnostics batch");
     assert_eq!(batch.entries().len(), 2);
     assert_eq!(batch.entries()[0].label(), "denied");
     assert_eq!(batch.entries()[1].label(), "controller");

@@ -12,9 +12,9 @@ use std::{
 use candid::Principal;
 use ic_testkit::pic::{
     CachedPocketIcBaseline, CachedStandaloneCanisterFixturePool, InstallSpec, PocketIc,
-    PocketIcBuilder, StandaloneCanisterFixture, StandaloneFixturePoolError,
-    StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason, StandaloneFixturePoolStage,
-    prelude::*, restore_or_rebuild_cached_pocket_ic_baseline,
+    PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupError, StandaloneCanisterFixture,
+    StandaloneFixturePoolError, StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason,
+    StandaloneFixturePoolStage, prelude::*, restore_or_rebuild_cached_pocket_ic_baseline,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -73,20 +73,19 @@ fn builder_extension_returns_a_typed_startup_error() {
         "ic-testkit-missing-pocket-ic-{}",
         std::process::id()
     ));
-    let result = PocketIcBuilder::new()
-        .with_server_binary(missing_binary)
-        .with_application_subnet()
-        .try_build();
+    let result =
+        PocketIcBuilder::new()
+            .with_application_subnet()
+            .try_build(PocketIcStartupConfig::spawn(
+                &missing_binary,
+                Duration::from_secs(1),
+            ));
 
-    let Err(error) = result else {
-        panic!("an explicitly missing PocketIC binary should fail startup");
-    };
-    assert!(
-        error
-            .message()
-            .contains("Failed to validate PocketIC server binary"),
-        "unexpected startup error: {error}"
-    );
+    assert!(matches!(
+        result,
+        Err(PocketIcStartupError::ServerSpawn { server_binary, .. })
+            if server_binary == missing_binary
+    ));
 }
 
 #[test]

@@ -8,6 +8,74 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-08-18 - Semantic Wasm identity and bounded PocketIC startup
+
+### Added
+
+- Adds `ResolvedCargoBuildInputs::validation_digest` as the conservative raw
+  workspace/source/configuration mutation guard alongside semantic
+  `input_digest` cache identity.
+- Adds required `LabeledWasmBuildSpec` inputs and retains each stable caller
+  label in canonical batch entries, successful outcomes, failures, progress
+  events, and shared-target maintenance outcomes.
+- Adds `CanisterDiagnosticsBatchContractError` for preflight rejection of
+  empty or duplicate diagnostic labels before any target is contacted.
+- Adds explicit `PocketIcStartupConfig::spawn` and `connect` policies plus
+  structured startup errors for spawn, child exit, port readiness, invalid
+  ports, builder panics, and complete-deadline expiry. Managed child output is
+  retained as bounded lossy UTF-8.
+
+### Changed
+
+- Hard-cuts exact Cargo Wasm identity to a validated semantic workspace
+  projection of the selected resolve graph, enabled features, external
+  source/checksum/revision identities, effective package fields, profiles,
+  resolver/lints, selected source roots, tools, configuration, and declared
+  inputs. Unrelated host-only workspace dependency and lockfile changes no
+  longer invalidate the selected Wasm key.
+- Keeps the complete workspace manifest and lockfile in the raw validation
+  digest and compares it around Cargo builds and attached artifact
+  transactions. Publication still aborts on any mid-operation mutation, even
+  when semantic identity is unchanged.
+- Uses a conservative complete-input fallback for workspace-root packages and
+  local package paths that cannot be normalized beneath the workspace. No
+  global cache or cross-call immutable-source session is added.
+- Changes the existing `v1` digest semantics in place. Projected workspaces
+  receive new exact keys once; there is no legacy-key reader, compatibility
+  alias, or dual old/new cache path.
+- Hard-cuts every Wasm batch entry point to labeled specifications and a
+  batch-contract `Result`. Reports now own one canonical labeled entry
+  collection instead of parallel results and elapsed-time slices; structured
+  iterators retain the label alongside the index and outcome or error.
+- Hard-cuts diagnostics batches to validate label structure and return a
+  batch-contract `Result`. Valid batches remain sequential and collect-all.
+- Hard-cuts `PocketIcBuilderExt::try_build` to require an explicit bounded
+  startup configuration. The managed path monitors the exact caller-resolved
+  server child while awaiting both readiness and instance construction,
+  terminates it at the deadline, and never enters PocketIC's implicit
+  unbounded server-start path.
+- Removes no-longer-used index-only batch iteration internals. No compatibility
+  overloads, label sidecars, deprecated methods, anonymous fallback, or
+  zero-argument startup alias are retained.
+
+### Documentation
+
+- Documents semantic cache identity versus conservative mutation validation,
+  the projection boundary, fallback cases, and the existing requirement to
+  declare build-script or tool inputs outside Cargo's graph.
+- Documents the labeled Wasm migration and the caller-owned binary resolution,
+  compatibility, provenance, and deadline obligations for bounded PocketIC
+  startup.
+
+### Testing
+
+- Covers reuse after an unrelated host-only workspace dependency/lockfile
+  change and invalidation after selected dependency or workspace profile
+  changes.
+- Covers Wasm label validation and propagation, diagnostic preflight without
+  work, structured managed-server exit output, and readiness-timeout child
+  termination.
+
 ## [0.8.5] - 2026-08-18 - Labeled artifact batches and failure phases
 
 ### Added

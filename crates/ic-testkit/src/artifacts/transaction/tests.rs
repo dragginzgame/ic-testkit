@@ -4,7 +4,8 @@ use super::{
     prune_artifact_cache, resolve_key,
 };
 use crate::artifacts::{
-    ArtifactCacheMaintenance, ArtifactCachePrunePolicy, test_support::unique_temp_directory,
+    ArtifactCacheMaintenance, ArtifactCachePrunePolicy, WasmBuildSpec, resolve_cargo_build_inputs,
+    test_support::unique_temp_directory,
 };
 use std::{
     ffi::OsString,
@@ -40,6 +41,67 @@ fn os_native_argument_and_environment_builders_affect_identity() {
     assert_ne!(base_key, resolve_key(&environment).unwrap().key);
     assert_ne!(base_key, resolve_key(&unset).unwrap().key);
     fs::remove_dir_all(root).expect("remove OS-native identity test directory");
+}
+
+#[test]
+fn cargo_snapshot_keys_semantic_identity_and_guards_raw_workspace_inputs() {
+    let root = unique_temp_directory("transaction-semantic-cargo-input");
+    for (package, dependency) in [
+        ("canister", ""),
+        (
+            "host",
+            "\n[dependencies]\nhost_dep = { workspace = true }\n",
+        ),
+        ("host_dep_a", ""),
+        ("host_dep_b", ""),
+    ] {
+        let directory = root.join(package);
+        fs::create_dir_all(directory.join("src")).expect("create Cargo snapshot package");
+        fs::write(
+            directory.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{dependency}"
+            ),
+        )
+        .expect("write Cargo snapshot package manifest");
+        fs::write(directory.join("src/lib.rs"), "pub fn value() {}\n")
+            .expect("write Cargo snapshot package source");
+    }
+    let workspace_manifest = root.join("Cargo.toml");
+    let write_workspace = |dependency: &str| {
+        fs::write(
+            &workspace_manifest,
+            format!(
+                "[workspace]\nmembers = [\"canister\", \"host\"]\nexclude = [\"host_dep_a\", \"host_dep_b\"]\nresolver = \"2\"\n\n[workspace.dependencies]\nhost_dep = {{ package = \"{dependency}\", path = \"{dependency}\" }}\n"
+            ),
+        )
+        .expect("write Cargo snapshot workspace manifest");
+    };
+    write_workspace("host_dep_a");
+    let build_spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "debug");
+    let before = resolve_cargo_build_inputs(&build_spec).expect("resolve first Cargo snapshot");
+    let artifact_spec = |resolved| {
+        ArtifactCacheSpec::new(&root.join("cache"), "post-link", "recipe/v1")
+            .with_cargo_build_inputs("canister", &build_spec, resolved)
+            .with_output("output", &root.join("output"))
+    };
+    let before_spec = artifact_spec(&before);
+    let before_key = resolve_key(&before_spec)
+        .expect("resolve first artifact key")
+        .key;
+
+    write_workspace("host_dep_b");
+    assert!(matches!(
+        resolve_key(&before_spec),
+        Err(ArtifactCacheError::CargoBuildInputsChanged { .. })
+    ));
+    let after = resolve_cargo_build_inputs(&build_spec).expect("resolve second Cargo snapshot");
+    assert_eq!(before.fingerprint(), after.fingerprint());
+    let after_key = resolve_key(&artifact_spec(&after))
+        .expect("resolve second artifact key")
+        .key;
+    assert_eq!(before_key, after_key);
+    fs::remove_dir_all(root).expect("remove semantic Cargo transaction fixture");
 }
 
 #[test]

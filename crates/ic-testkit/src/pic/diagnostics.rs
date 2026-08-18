@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt,
     panic::{AssertUnwindSafe, catch_unwind},
     time::{Duration, Instant},
@@ -117,6 +118,26 @@ impl CanisterDiagnosticsRequest {
 pub struct LabeledCanisterDiagnosticsRequest {
     label: String,
     request: CanisterDiagnosticsRequest,
+}
+
+/// Structural error that prevents a diagnostics batch from starting.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CanisterDiagnosticsBatchContractError {
+    /// An entry label was empty.
+    EmptyLabel {
+        /// Zero-based position of the invalid entry.
+        index: usize,
+    },
+    /// Two entries used the same label.
+    DuplicateLabel {
+        /// Duplicated caller label.
+        label: String,
+        /// Position where the label first appeared.
+        first_index: usize,
+        /// Position where the label was repeated.
+        duplicate_index: usize,
+    },
 }
 
 impl LabeledCanisterDiagnosticsRequest {
@@ -516,7 +537,8 @@ pub trait PocketIcDiagnosticsExt {
     fn collect_canister_diagnostics_batch(
         &self,
         requests: &[LabeledCanisterDiagnosticsRequest],
-    ) -> CanisterDiagnosticsBatchReport {
+    ) -> Result<CanisterDiagnosticsBatchReport, CanisterDiagnosticsBatchContractError> {
+        validate_diagnostics_batch_labels(requests)?;
         let started = Instant::now();
         let entries = requests
             .iter()
@@ -541,12 +563,55 @@ pub trait PocketIcDiagnosticsExt {
                 }
             })
             .collect();
-        CanisterDiagnosticsBatchReport {
+        Ok(CanisterDiagnosticsBatchReport {
             entries,
             total: started.elapsed(),
+        })
+    }
+}
+
+fn validate_diagnostics_batch_labels(
+    requests: &[LabeledCanisterDiagnosticsRequest],
+) -> Result<(), CanisterDiagnosticsBatchContractError> {
+    let mut labels = HashMap::with_capacity(requests.len());
+    for (index, labeled) in requests.iter().enumerate() {
+        if labeled.label.is_empty() {
+            return Err(CanisterDiagnosticsBatchContractError::EmptyLabel { index });
+        }
+        if let Some(first_index) = labels.get(labeled.label.as_str()) {
+            return Err(CanisterDiagnosticsBatchContractError::DuplicateLabel {
+                label: labeled.label.clone(),
+                first_index: *first_index,
+                duplicate_index: index,
+            });
+        }
+        labels.insert(labeled.label.as_str(), index);
+    }
+    Ok(())
+}
+
+impl fmt::Display for CanisterDiagnosticsBatchContractError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyLabel { index } => {
+                write!(
+                    formatter,
+                    "diagnostics batch label at index {index} is empty"
+                )
+            }
+            Self::DuplicateLabel {
+                label,
+                first_index,
+                duplicate_index,
+            } => write!(
+                formatter,
+                "diagnostics batch label {label:?} at index {duplicate_index} duplicates index {first_index}",
+            ),
         }
     }
 }
+
+impl std::error::Error for CanisterDiagnosticsBatchContractError {}
 
 impl PocketIcDiagnosticsExt for PocketIc {
     fn collect_canister_diagnostics(
@@ -642,9 +707,9 @@ mod tests {
     use pocket_ic::CanisterLogRecord;
 
     use super::{
-        CanisterDiagnosticFailure, CanisterDiagnosticsReport, CanisterDiagnosticsRequest,
-        CanisterLogRenderLimits, LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt,
-        render_log_records,
+        CanisterDiagnosticFailure, CanisterDiagnosticsBatchContractError,
+        CanisterDiagnosticsReport, CanisterDiagnosticsRequest, CanisterLogRenderLimits,
+        LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt, render_log_records,
     };
 
     struct PanickingThenReporting {
@@ -686,10 +751,12 @@ mod tests {
             Principal::from_slice(&[5]),
             Principal::from_slice(&[6]),
         );
-        let report = collector.collect_canister_diagnostics_batch(&[
-            LabeledCanisterDiagnosticsRequest::new("root", first),
-            LabeledCanisterDiagnosticsRequest::new("worker", second),
-        ]);
+        let report = collector
+            .collect_canister_diagnostics_batch(&[
+                LabeledCanisterDiagnosticsRequest::new("root", first),
+                LabeledCanisterDiagnosticsRequest::new("worker", second),
+            ])
+            .expect("valid labeled diagnostics batch");
 
         assert_eq!(collector.calls.get(), 2);
         assert_eq!(report.entries().len(), 2);
@@ -709,6 +776,44 @@ mod tests {
         assert!(compact.contains("label=\"root\""));
         assert!(compact.contains("label=\"worker\""));
         assert!(compact.contains("synthetic first-entry diagnostic panic"));
+    }
+
+    #[test]
+    fn diagnostic_batch_rejects_invalid_labels_before_collection() {
+        let collector = PanickingThenReporting {
+            calls: Cell::new(0),
+        };
+        let request = CanisterDiagnosticsRequest::new(
+            Principal::from_slice(&[1]),
+            Principal::from_slice(&[2]),
+            Principal::from_slice(&[3]),
+        );
+        let empty = collector
+            .collect_canister_diagnostics_batch(&[LabeledCanisterDiagnosticsRequest::new(
+                "", request,
+            )])
+            .expect_err("empty label must reject diagnostics batch");
+        assert_eq!(
+            empty,
+            CanisterDiagnosticsBatchContractError::EmptyLabel { index: 0 }
+        );
+        assert_eq!(collector.calls.get(), 0);
+
+        let duplicate = collector
+            .collect_canister_diagnostics_batch(&[
+                LabeledCanisterDiagnosticsRequest::new("same", request),
+                LabeledCanisterDiagnosticsRequest::new("same", request),
+            ])
+            .expect_err("duplicate labels must reject diagnostics batch");
+        assert_eq!(
+            duplicate,
+            CanisterDiagnosticsBatchContractError::DuplicateLabel {
+                label: "same".to_owned(),
+                first_index: 0,
+                duplicate_index: 1,
+            }
+        );
+        assert_eq!(collector.calls.get(), 0);
     }
 
     #[test]

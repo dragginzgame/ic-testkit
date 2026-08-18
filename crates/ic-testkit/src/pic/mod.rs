@@ -43,9 +43,10 @@ pub use baseline_pool::{
 pub use calls::CandidCallExt;
 pub use diagnostics::{
     CanisterDiagnosticFailure, CanisterDiagnosticLogRecord, CanisterDiagnosticLogs,
-    CanisterDiagnosticsBatchEntry, CanisterDiagnosticsBatchReport, CanisterDiagnosticsReport,
-    CanisterDiagnosticsRequest, CanisterLogRenderLimits, DEFAULT_CANISTER_LOG_BYTE_LIMIT,
-    DEFAULT_CANISTER_LOG_RECORD_LIMIT, LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt,
+    CanisterDiagnosticsBatchContractError, CanisterDiagnosticsBatchEntry,
+    CanisterDiagnosticsBatchReport, CanisterDiagnosticsReport, CanisterDiagnosticsRequest,
+    CanisterLogRenderLimits, DEFAULT_CANISTER_LOG_BYTE_LIMIT, DEFAULT_CANISTER_LOG_RECORD_LIMIT,
+    LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt,
 };
 pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
@@ -62,7 +63,7 @@ pub use standalone_pool::{
     StandaloneFixturePoolError, StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason,
     StandaloneFixturePoolStage, StandaloneFixturePoolTimings,
 };
-pub use startup::{PocketIcBuilderExt, PocketIcStartupError};
+pub use startup::{PocketIcBuilderExt, PocketIcStartupConfig, PocketIcStartupError};
 pub use time::PocketIcTimeExt;
 pub use transport::is_dead_pocket_ic_transport_error;
 

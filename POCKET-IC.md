@@ -24,8 +24,12 @@ upstream.
 
 ### Server Binary Resolution
 
-PocketIC owns server-binary discovery, downloading, validation, and caching.
-ic-testkit deliberately has no duplicate runtime manager.
+PocketIC owns its default server-binary discovery, downloading, validation,
+and caching. The bounded ic-testkit startup path deliberately bypasses that
+implicit path: the caller supplies one already-resolved compatible executable,
+and ic-testkit only owns that process long enough to observe readiness and keep
+its child handle reaped. It has no duplicate downloader, resolver, or binary
+cache.
 
 It would be useful if upstream provided a first-class, non-panicking server
 binary resolver with:
@@ -37,22 +41,32 @@ binary resolver with:
 - typed errors with setup guidance;
 - support for offline CI environments.
 
-That would let downstream test harnesses use one trusted, upstream-owned
-startup path without recreating binary management.
+That would let downstream test harnesses combine one trusted upstream-owned
+resolution path with bounded process startup instead of resolving the exact
+binary before calling `PocketIcStartupConfig::spawn`.
 
 ### Typed Startup Errors
 
 Some PocketIC startup failures currently surface as panics or stringly typed
-messages. ic-testkit provides a narrow `PocketIcBuilderExt::try_build`
-boundary for downstream bounded retry. It preserves the panic message in a
-typed error but deliberately does not classify that text. Callers still
-configure the upstream builder directly before passing the resulting
-`PocketIc` to a fixture.
+messages. More importantly, the upstream implicit server path waits for a
+port-file newline without inspecting whether the spawned child has already
+exited and without a readiness deadline. A server that fails before binding
+can therefore leave construction blocked indefinitely.
+
+ic-testkit provides a narrow `PocketIcBuilderExt::try_build` boundary requiring
+an explicit `PocketIcStartupConfig`. Managed mode spawns the exact
+caller-resolved binary itself, observes child exit while awaiting both the port
+file and instance construction, captures bounded stdout/stderr, and terminates
+the child when the complete deadline expires. Connect mode bounds construction
+against an existing caller-owned server. Upstream panics remain unclassified
+structured errors.
 
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
-structured startup error. Once that exists, ic-testkit should delegate to it or
-remove its panic-catching extension.
+structured startup error, while `start_server` could accept a readiness
+deadline, poll `Child::try_wait`, retain bounded output, and terminate/reap on
+failure. Once those cover the same lifecycle, ic-testkit should delegate or
+remove its process-owning extension.
 
 ### Fallible Lifecycle and Transport APIs
 
@@ -149,10 +163,9 @@ built instance does not expose the resolved binary path or its digest, so
 ic-testkit cannot truthfully forward those values.
 
 Until upstream exposes that provenance, reproducible benchmark suites should
-require a caller-provided `POCKET_IC_BIN` (or the equivalent explicit
-`with_server_binary` path), resolve and hash the file before construction, and
-record those values themselves. ic-testkit should not recreate PocketIC's
-binary resolver to infer it.
+resolve and hash a compatible binary themselves, pass that exact path to
+`PocketIcStartupConfig::spawn`, and record those values. ic-testkit should not
+recreate PocketIC's binary resolver to infer them.
 
 Useful additional upstream APIs are:
 

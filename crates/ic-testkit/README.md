@@ -8,10 +8,12 @@ provides:
 - direct re-exports of `PocketIc` and `PocketIcBuilder`
 - typed Candid query/update helpers with contextual, structured errors
 - canister install and retry helpers
+- explicit bounded PocketIC startup with structured child/readiness failures
 - cached single- and multi-canister PocketIC baseline pools
 - deterministic fake principals and account-like values
 - transactional external artifact sets and content-addressed Wasm builds with
-  bounded cache retention
+  caller-labeled sequential batches and bounded cache retention
+- controller-aware, caller-labeled collect-all diagnostics
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
 

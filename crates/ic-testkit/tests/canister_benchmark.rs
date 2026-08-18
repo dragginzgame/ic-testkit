@@ -10,9 +10,10 @@ use candid::Principal;
 use ic_testkit::{
     artifacts::{
         ArtifactCacheError, ArtifactCacheMaintenance, ArtifactCachePreparation,
-        ArtifactCachePrunePolicy, ArtifactCacheSpec, SharedIncrementalTargetMaintenanceOutcome,
-        SharedIncrementalTargetPrunePolicy, WasmBuildBatchFailure, WasmBuildBatchMetrics,
-        WasmBuildOutcome, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
+        ArtifactCachePrunePolicy, ArtifactCacheSpec, LabeledWasmBuildSpec,
+        SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
+        WasmBuildBatchMetrics, WasmBuildBatchOutcomeEntry, WasmBuildOutcome,
+        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
         build_wasm_canisters_cached, build_wasm_canisters_cached_batch,
         build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
         prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
@@ -26,6 +27,7 @@ use ic_testkit::{
 };
 use std::{
     fs,
+    path::Path,
     sync::{Arc, Barrier},
     thread,
     time::Duration,
@@ -48,6 +50,86 @@ const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 fn independent_wasm_batch_preserves_standalone_feature_resolution() {
     let root = unique_temp_dir("ic-testkit-independent-feature-batch");
     let workspace = root.join("workspace");
+    write_independent_feature_workspace(&workspace);
+    let target = root.join("exact-target");
+    let specs = [
+        LabeledWasmBuildSpec::new(
+            "feature-a",
+            WasmBuildSpec::new(&workspace, &target, &["feature_a"], "debug"),
+        ),
+        LabeledWasmBuildSpec::new(
+            "feature-b",
+            WasmBuildSpec::new(&workspace, &target, &["feature_b"], "debug"),
+        ),
+    ];
+
+    let batch = build_wasm_canisters_cached_batch(&specs).expect("valid labeled Wasm batch");
+
+    assert!(batch.is_success());
+    assert_cold_batch_metrics(batch.metrics());
+    assert_eq!(batch.outcomes().count(), 2);
+    assert_eq!(
+        batch
+            .outcomes()
+            .map(WasmBuildBatchOutcomeEntry::label)
+            .collect::<Vec<_>>(),
+        ["feature-a", "feature-b"]
+    );
+    assert!(
+        batch
+            .outcomes()
+            .all(|entry| matches!(entry.outcome(), WasmBuildOutcome::Built(_)))
+    );
+    assert!(wasm_path(&target, "feature_a", "debug").is_file());
+    assert!(wasm_path(&target, "feature_b", "debug").is_file());
+    assert!(
+        batch
+            .outcomes()
+            .all(|entry| entry.outcome().record().exact_cache_path().is_dir())
+    );
+    let first_exact_cache = batch
+        .outcomes()
+        .next()
+        .expect("first batch outcome")
+        .outcome()
+        .record()
+        .exact_cache_path()
+        .to_owned();
+    fs::remove_dir_all(&first_exact_cache).expect("remove exact entry reconstruction fixture");
+
+    let with_invalid_middle = [
+        specs[0].clone(),
+        LabeledWasmBuildSpec::new(
+            "invalid",
+            WasmBuildSpec::new(&workspace, &target, &[], "debug"),
+        ),
+        specs[1].clone(),
+    ];
+    let with_failure = build_wasm_canisters_cached_batch(&with_invalid_middle)
+        .expect("valid labeled failure batch");
+    assert!(!with_failure.is_success());
+    assert_reused_batch_metrics_with_failure(with_failure.metrics());
+    assert_eq!(with_failure.outcomes().count(), 2);
+    assert!(
+        with_failure
+            .outcomes()
+            .all(|entry| entry.outcome().is_reused())
+    );
+    assert_eq!(
+        with_failure
+            .failures()
+            .map(|failure| (failure.index(), failure.label()))
+            .collect::<Vec<_>>(),
+        [(1, "invalid")]
+    );
+    assert!(
+        first_exact_cache.is_dir(),
+        "a validated caller-facing hit must recreate its immutable cache directory"
+    );
+    fs::remove_dir_all(root).expect("remove independent feature fixture");
+}
+
+fn write_independent_feature_workspace(workspace: &Path) {
     for package in ["shared", "feature_a", "feature_b"] {
         fs::create_dir_all(workspace.join(package).join("src"))
             .expect("create feature fixture package");
@@ -86,65 +168,6 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         )
         .expect("write feature canister source");
     }
-    let target = root.join("exact-target");
-    let specs = [
-        WasmBuildSpec::new(&workspace, &target, &["feature_a"], "debug"),
-        WasmBuildSpec::new(&workspace, &target, &["feature_b"], "debug"),
-    ];
-
-    let batch = build_wasm_canisters_cached_batch(&specs);
-
-    assert!(batch.is_success());
-    assert_cold_batch_metrics(batch.metrics());
-    assert_eq!(batch.outcomes().count(), 2);
-    assert!(
-        batch
-            .outcomes()
-            .all(|(_index, outcome)| matches!(outcome, WasmBuildOutcome::Built(_)))
-    );
-    assert!(wasm_path(&target, "feature_a", "debug").is_file());
-    assert!(wasm_path(&target, "feature_b", "debug").is_file());
-    assert!(
-        batch
-            .outcomes()
-            .all(|(_index, outcome)| outcome.record().exact_cache_path().is_dir())
-    );
-    let first_exact_cache = batch
-        .outcomes()
-        .next()
-        .expect("first batch outcome")
-        .1
-        .record()
-        .exact_cache_path()
-        .to_owned();
-    fs::remove_dir_all(&first_exact_cache).expect("remove exact entry reconstruction fixture");
-
-    let with_invalid_middle = [
-        specs[0].clone(),
-        WasmBuildSpec::new(&workspace, &target, &[], "debug"),
-        specs[1].clone(),
-    ];
-    let with_failure = build_wasm_canisters_cached_batch(&with_invalid_middle);
-    assert!(!with_failure.is_success());
-    assert_reused_batch_metrics_with_failure(with_failure.metrics());
-    assert_eq!(with_failure.outcomes().count(), 2);
-    assert!(
-        with_failure
-            .outcomes()
-            .all(|(_index, outcome)| outcome.is_reused())
-    );
-    assert_eq!(
-        with_failure
-            .failures()
-            .map(WasmBuildBatchFailure::index)
-            .collect::<Vec<_>>(),
-        [1]
-    );
-    assert!(
-        first_exact_cache.is_dir(),
-        "a validated caller-facing hit must recreate its immutable cache directory"
-    );
-    fs::remove_dir_all(root).expect("remove independent feature fixture");
 }
 
 fn assert_cold_batch_metrics(metrics: WasmBuildBatchMetrics) {

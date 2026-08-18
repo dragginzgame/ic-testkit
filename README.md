@@ -103,7 +103,7 @@ restored or validated.
 | Area | Main surface | Value added by ic-testkit |
 | --- | --- | --- |
 | PocketIC runtime | `PocketIc`, `PocketIcBuilder` | Direct upstream re-exports; no wrapper |
-| Startup | `PocketIcBuilderExt` | Converts the currently panicking builder boundary into a typed result |
+| Startup | `PocketIcBuilderExt`, `PocketIcStartupConfig` | Explicit bounded spawn/connect policy with structured child, readiness, and builder failures |
 | Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
 | Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
 | Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
@@ -184,34 +184,44 @@ A canister rejection is not a transport failure. Inspect it through
 
 ## Startup and runtime provenance
 
-Configure topology and binary selection on the upstream builder:
+Configure topology on the upstream builder and make the startup source and
+deadline explicit:
 
 ```rust,no_run
-use ic_testkit::pic::{PocketIc, PocketIcBuilder, PocketIcBuilderExt};
+use ic_testkit::pic::{
+    PocketIc, PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig,
+};
+use std::{path::Path, time::Duration};
 
-fn build_test_ic() -> Result<PocketIc, ic_testkit::pic::PocketIcStartupError> {
+fn build_test_ic(server_binary: &Path) -> Result<PocketIc, ic_testkit::pic::PocketIcStartupError> {
     PocketIcBuilder::new()
         .with_application_subnet()
         .with_ii_subnet()
-        .try_build()
+        .try_build(PocketIcStartupConfig::spawn(
+            server_binary,
+            Duration::from_secs(30),
+        ))
 }
 ```
 
-`try_build()` catches PocketIC's current builder panic and returns
-`PocketIcStartupError`. It deliberately preserves the message without parsing
-it into guessed categories. The upstream panic hook may still print before the
-panic is caught. Recreate the consumed builder for each bounded retry attempt.
+`PocketIcStartupConfig::spawn` launches one exact, caller-resolved executable,
+monitors it while waiting for its port file and while PocketIC creates the
+instance, and terminates it if the complete deadline expires. A child exit,
+readiness timeout, invalid port, spawn failure, builder panic, and instance
+creation timeout remain distinct `PocketIcStartupError` variants. Captured
+server output is bounded and lossy UTF-8. The default managed-server hard TTL
+is ten minutes and can be changed explicitly with `with_server_hard_ttl`.
 
-PocketIC remains responsible for `POCKET_IC_BIN`, downloads, validation, and
-its cache. ic-testkit never mutates the process environment and does not
-maintain a parallel binary resolver.
+Use `PocketIcStartupConfig::connect(url, timeout)` for a caller-owned existing
+server. Both modes set the server URL on the builder, preventing its implicit,
+unbounded child-startup path. There is no zero-argument `try_build`, implicit
+binary fallback, or hidden retry.
 
-For reproducible benchmarks, require an explicit `POCKET_IC_BIN` or pass an
-explicit path to `PocketIcBuilder::with_server_binary`. Resolve and hash that
-caller-owned file before construction and record it with the report.
-`LATEST_SERVER_VERSION` exposes the version expected by the client, and
-`PocketIc::get_server_url()` exposes the active endpoint. PocketIC 15 does not
-expose the resolved binary path or digest from a built instance.
+ic-testkit does not discover, download, cache, or validate server binaries.
+Resolve the exact compatible executable before `spawn`, hash it when runtime
+provenance matters, and record it with the report. `LATEST_SERVER_VERSION`
+exposes the version expected by the client, and `PocketIc::get_server_url()`
+exposes the active endpoint.
 
 ## Canister installation and fixtures
 
@@ -515,17 +525,19 @@ let requests = [
         CanisterDiagnosticsRequest::new(worker_id, worker_status_sender, worker_log_sender),
     ),
 ];
-let batch = pocket_ic.collect_canister_diagnostics_batch(&requests);
+let batch = pocket_ic.collect_canister_diagnostics_batch(&requests)?;
 if !batch.is_success() {
     eprintln!("{}", batch.render_compact());
 }
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 The ordered batch retains every label and structured single-canister report.
 Each entry retains its collection wall time and the report retains total
 sequential batch time. An earlier rejection, transport failure, or panic does
 not prevent later requests from being attempted, and no operation retries
-anonymously.
+anonymously. Empty or duplicate labels return
+`CanisterDiagnosticsBatchContractError` before any diagnostic call starts.
 
 Fetched log content is retained as bounded lossy UTF-8 rather than raw byte
 arrays. `CanisterLogRenderLimits` controls the record and aggregate byte bounds;
@@ -604,19 +616,31 @@ if let Some(pruned) = outcome
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The fingerprint covers the selected package set and local dependency sources,
-workspace manifest, lockfile, Cargo configuration, Rust toolchain files,
-target and profile arguments, Cargo and rustc identities, explicit child
-environment, selected inherited environment, and caller-declared additional
-inputs. Cargo configuration discovery follows the configuration files Cargo can
-read from the invocation directory and its ancestors plus the effective Cargo
-home. The extensionless `.cargo/config` takes precedence when both supported
-names exist, and recursive required or optional `include` entries are part of
-the fingerprint. Build scripts that read application-specific environment
-variables or files outside Cargo's package graph must still declare them on the
-spec. Package inputs are content-hashed exactly but conservatively; exact
-hashing does not promise that every file in the package closure is semantically
-relevant to a build.
+The fingerprint covers the selected package set and resolved dependency nodes,
+enabled features, exact external source/checksum/revision identities, local
+dependency sources, relevant inherited package fields, workspace profiles,
+resolver and lint settings, Cargo configuration, Rust toolchain files, target
+and profile arguments, Cargo and rustc identities, explicit child environment,
+selected inherited environment, and caller-declared additional inputs. This
+validated semantic workspace projection lets an unrelated host-only workspace
+dependency or lockfile change retain the same exact Wasm key.
+
+The complete workspace manifest and lockfile remain part of a separate,
+conservative validation digest. They are rehashed around builds and attached
+external artifact transactions, so any raw workspace mutation during an
+acquisition is rejected even when its semantic projection is unchanged.
+`ResolvedCargoBuildInputs` exposes both `input_digest` (semantic cache identity)
+and `validation_digest` (mutation guard). Projection falls back to the complete
+manifest/lockfile identity when a selected local package is rooted at or cannot
+be normalized beneath the workspace root. Cargo configuration discovery follows
+the files Cargo can read from the invocation directory and its ancestors plus
+the effective Cargo home. The extensionless `.cargo/config` takes precedence
+when both supported names exist, and recursive required or optional `include`
+entries are exact inputs. Build scripts that read application-specific
+environment variables or files outside Cargo's package graph must still declare
+them on the spec. Package inputs are content-hashed exactly but conservatively;
+exact hashing does not promise that every file in the package closure is
+semantically relevant to a build.
 
 Calls sharing a target directory coordinate through one process lock. A cache
 hit requires every expected nonempty Wasm artifact to carry the exact atomic
@@ -792,19 +816,28 @@ Suites that require standalone feature resolution for several variants can
 batch independent specs without changing Cargo feature semantics:
 
 ```rust,no_run
-use ic_testkit::artifacts::{WasmBuildSpec, build_wasm_canisters_cached_batch};
+use ic_testkit::artifacts::{
+    LabeledWasmBuildSpec, WasmBuildSpec, build_wasm_canisters_cached_batch,
+};
 
 # let workspace = std::path::PathBuf::from(".");
 # let target = workspace.join("target/pic-wasm");
 let specs = [
-    WasmBuildSpec::new(&workspace, &target, &["role_a"], "debug"),
-    WasmBuildSpec::new(&workspace, &target, &["role_b"], "debug"),
+    LabeledWasmBuildSpec::new(
+        "role-a",
+        WasmBuildSpec::new(&workspace, &target, &["role_a"], "debug"),
+    ),
+    LabeledWasmBuildSpec::new(
+        "role-b",
+        WasmBuildSpec::new(&workspace, &target, &["role_b"], "debug"),
+    ),
 ];
-let batch = build_wasm_canisters_cached_batch(&specs);
+let batch = build_wasm_canisters_cached_batch(&specs)?;
 eprintln!("{batch}");
 for failure in batch.failures() {
     eprintln!(
-        "build {} failed after {:?}: {}",
+        "build {} ({}) failed after {:?}: {}",
+        failure.label(),
         failure.index(),
         failure.entry_elapsed(),
         failure.error(),
@@ -813,11 +846,16 @@ for failure in batch.failures() {
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The batch is sequential and collect-all. Its `WasmBuildBatchReport` retains one
-ordered `Result` per specification and provides indexed `outcomes` and
-`failures` iterators. Every entry uses the ordinary single-spec implementation
-and its own exact identity, locks, policy, and Cargo command; packages are never
-collapsed into one invocation that could unify shared dependency features.
+The batch is sequential and collect-all. Every `LabeledWasmBuildSpec` label
+must be nonempty and unique; invalid structure returns
+`WasmBuildBatchContractError` before resolution, progress, or build work. Its
+`WasmBuildBatchReport` retains canonical ordered entries and provides
+structured labeled `outcomes` and `failures` iterators. Labels are reporting
+identity only and never affect exact cache keys. Progress and integrated
+maintenance entries carry the same label. Every entry uses the ordinary
+single-spec implementation and its own exact identity, locks, policy, and
+Cargo command; packages are never collapsed into one invocation that could
+unify shared dependency features.
 When several packages are intentionally built together with Cargo's normal
 shared feature resolution, keep them in one multi-package `WasmBuildSpec`;
 splitting that build into per-package batch entries would repeat Cargo work and
@@ -836,8 +874,8 @@ successful acquisition timings. The structured input-resolution total makes
 distinct feature-resolution costs visible while reused snapshots remain
 counted explicitly. `entry_elapsed` retains wall time for every ordered entry,
 including failures; `failures` returns structured entries that bundle the
-index, error, and elapsed time. Successful entries continue to expose detailed
-phase timings through their build records.
+label, index, error, and elapsed time. Successful entries continue to expose
+detailed phase timings through their build records.
 
 Compatible input reuse is deliberately scoped to one batch call. `0.8.x` has no
 silent process-global cache or cross-call build session: safely retaining source
@@ -857,6 +895,7 @@ removes the caller convention of modifying the first spec:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
+    LabeledWasmBuildSpec,
     SharedIncrementalTargetMaintenanceConfig,
     SharedIncrementalTargetMaintenanceFailureMode,
     SharedIncrementalTargetPrunePolicy, WasmBuildBatchConfig,
@@ -864,7 +903,7 @@ use ic_testkit::artifacts::{
 };
 use std::time::Duration;
 
-# let specs: Vec<ic_testkit::artifacts::WasmBuildSpec> = Vec::new();
+# let specs: Vec<LabeledWasmBuildSpec> = Vec::new();
 let maintenance = SharedIncrementalTargetMaintenanceConfig::new(
     SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(4 * 1024 * 1024 * 1024),
     Duration::from_secs(24 * 60 * 60),
@@ -873,31 +912,32 @@ let maintenance = SharedIncrementalTargetMaintenanceConfig::new(
 let batch = build_wasm_canisters_cached_batch_with_config(
     &specs,
     WasmBuildBatchConfig::new().with_shared_incremental_target_maintenance(maintenance),
-);
-for (index, outcome) in batch.shared_incremental_maintenance_outcomes() {
-    eprintln!("build {index}: {outcome}");
+)?;
+for entry in batch.shared_incremental_maintenance_outcomes() {
+    eprintln!("build {} ({}): {}", entry.label(), entry.index(), entry.outcome());
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 Maintenance is attached to the first specification for each distinct
 configured shared-target path. Isolated specs are unaffected. A specification
-that also configures per-spec integrated maintenance receives an indexed error,
-and later entries still run.
+that also configures per-spec integrated maintenance receives a labeled,
+indexed error, and later entries still run.
 
-`ResolvedCargoBuildInputs::is_current` provides the same before/after identity
-check for external Cargo-derived workflows. The generic builders preserve
-dynamic and non-UTF-8 argument and environment bytes. Use
+`ResolvedCargoBuildInputs::is_current` resolves the semantic fingerprint again,
+while `is_content_current` cheaply rehashes the conservative validation paths.
+The generic builders preserve dynamic and non-UTF-8 argument and environment
+bytes. Use
 `resolve_executable` to turn a bare `PATH` program into a canonical executable
 file before declaring it through `ArtifactCacheSpec::with_tool`.
 
 External transforms derived from a Cargo package closure can pass both the
 build spec and its resolved snapshot to
-`ArtifactCacheSpec::with_cargo_build_inputs`. The complete Cargo fingerprint
-becomes transactional identity, and the exact Cargo-aware input paths and
-generated-state exclusions are revalidated during preparation, hit
+`ArtifactCacheSpec::with_cargo_build_inputs`. The semantic Cargo fingerprint
+becomes transactional identity, while the conservative Cargo-aware input paths
+and generated-state exclusions are revalidated during preparation, hit
 materialization, and commit. This avoids duplicating Cargo discovery as broad
-workspace scans while still rejecting source or toolchain races.
+workspace scans while still rejecting source, workspace, or toolchain races.
 
 External deterministic tools use the transactional artifact-set cache. The
 caller declares exact inputs, tool bytes, arguments, relevant environment, and

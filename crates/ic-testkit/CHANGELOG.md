@@ -4,6 +4,72 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.6
+
+Wasm batches now require `LabeledWasmBuildSpec`. Labels must be nonempty and
+unique and are retained in canonical report entries, successful outcomes,
+failures, progress events, and shared-target maintenance outcomes. Label
+preflight completes before metadata resolution, progress, or build work;
+labels do not alter exact Wasm fingerprints. Valid entries remain sequential
+and collect-all.
+
+Diagnostic batch labels now follow the same contract. Empty or duplicate
+labels return `CanisterDiagnosticsBatchContractError` before any status or log
+call starts. Valid targets retain their exact controllers and continue after
+independent failures as before.
+
+`PocketIcBuilderExt::try_build` now requires an explicit
+`PocketIcStartupConfig`. `spawn` launches one exact caller-resolved binary,
+detects child exit while waiting for readiness or instance construction,
+terminates the child at the complete startup deadline, and returns structured
+errors with bounded lossy stdout/stderr. `connect` applies the same construction
+deadline to a caller-owned existing server. Both policies force an explicit
+server URL onto the upstream builder, so it cannot spawn an unobservable child.
+ic-testkit does not discover, download, cache, or compatibility-check server
+binaries.
+
+Exact Cargo Wasm identity now uses a validated semantic workspace projection.
+The projection retains selected resolve nodes, enabled features, exact external
+source/checksum/revision identity, effective package fields, workspace
+profiles/resolver/lints, selected local sources, tools, Cargo configuration,
+and declared inputs. An unrelated host-only workspace dependency or lockfile
+update can therefore reuse the same selected Wasm entry.
+
+The complete workspace manifest and lockfile remain conservative validation
+inputs. `ResolvedCargoBuildInputs::validation_digest` exposes that raw mutation
+guard; `input_digest` is now semantic cache identity. Cargo builds and attached
+artifact transactions reject any raw input change during their operation.
+Workspace-root packages and local packages outside the normalizable workspace
+boundary fall back to the complete input identity.
+
+### Hard-cut migration
+
+| 0.8.5 API | 0.8.6 API |
+| --- | --- |
+| Wasm batch functions accept `&[WasmBuildSpec]` and return `WasmBuildBatchReport` | Wrap every spec with `LabeledWasmBuildSpec`; handle `Result<WasmBuildBatchReport, WasmBuildBatchContractError>` |
+| `results()`, `into_results()`, and parallel `entry_elapsed()` access | Use canonical `entries()` or `into_entries()`; each `WasmBuildBatchEntry` owns index, label, result, and elapsed time |
+| Wasm `outcomes()` and shared maintenance yield indexed tuples; failures have no label | Use the structured entry accessors `index()`, `label()`, `outcome()` or `error()`, and `entry_elapsed()` where available |
+| Batch progress variants contain only an index | Match the required `label` field as well, or use `..` when the label is intentionally ignored |
+| Diagnostics batch returns `CanisterDiagnosticsBatchReport` directly | Handle `Result<CanisterDiagnosticsBatchReport, CanisterDiagnosticsBatchContractError>`; labels must be nonempty and unique |
+| Configure `with_server_binary`/`with_server_url`, then call `try_build()` | Call `try_build(PocketIcStartupConfig::spawn(path, timeout))` or `try_build(PocketIcStartupConfig::connect(url, timeout))` |
+| Read `PocketIcStartupError::message()` | Match the structured `PocketIcStartupError` variants and their public fields |
+
+No index-only overloads, parallel label slices, deprecated report accessors,
+zero-argument `try_build`, implicit binary fallback, or compatibility aliases
+are retained.
+
+### Semantic identity migration
+
+- Treat `ResolvedCargoBuildInputs::input_digest` and
+  `WasmBuildRecord::input_digest` as semantic selected-build identity. Use the
+  new `validation_digest` when retaining or comparing a conservative raw input
+  snapshot.
+- Expect one new exact key for workspaces eligible for projection. Repository
+  digest domains and cache formats remain `v1`; no legacy key lookup, shim,
+  alias, or dual reader is retained.
+- Continue declaring build-script, procedural-macro, source-include, or tool
+  inputs that live outside Cargo's selected package graph.
+
 ## 0.8.5
 
 `0.8.5` hard-cuts generic artifact batches to caller-labeled specifications.

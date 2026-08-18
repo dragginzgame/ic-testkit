@@ -1,18 +1,15 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     time::{Duration, Instant},
 };
 
-use super::{
-    batch::{indexed_failures, indexed_outcomes},
-    wasm_cache::{
-        SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
-        SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputMetrics,
-        WasmBuildBatchInputResolver, WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome,
-        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec, WasmBuildTimings,
-        build_wasm_canisters_cached_in_batch, build_wasm_canisters_cached_in_batch_with_progress,
-    },
+use super::wasm_cache::{
+    SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputMetrics, WasmBuildBatchInputResolver,
+    WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome, WasmBuildProgressConfig,
+    WasmBuildProgressEvent, WasmBuildSpec, WasmBuildTimings, build_wasm_canisters_cached_in_batch,
+    build_wasm_canisters_cached_in_batch_with_progress,
 };
 
 /// Orchestration shared by every entry in one independent Wasm build batch.
@@ -21,21 +18,187 @@ pub struct WasmBuildBatchConfig {
     shared_incremental_maintenance: Option<SharedIncrementalTargetMaintenanceConfig>,
 }
 
+/// Caller-labeled specification for one exact Wasm batch entry.
+///
+/// The label is report and progress identity only; it does not alter the
+/// underlying exact Wasm fingerprint or cache key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LabeledWasmBuildSpec {
+    label: String,
+    spec: WasmBuildSpec,
+}
+
 /// Ordered outcomes and failures from a collect-all Wasm build batch.
 #[derive(Debug)]
 pub struct WasmBuildBatchReport {
-    results: Vec<Result<WasmBuildOutcome, WasmBuildError>>,
-    entry_elapsed: Vec<Duration>,
+    entries: Vec<WasmBuildBatchEntry>,
     input_resolution: WasmBuildBatchInputMetrics,
     total: Duration,
+}
+
+/// One ordered caller-labeled result from a Wasm build batch.
+#[derive(Debug)]
+pub struct WasmBuildBatchEntry {
+    index: usize,
+    label: String,
+    result: Result<WasmBuildOutcome, WasmBuildError>,
+    entry_elapsed: Duration,
+}
+
+/// One successful Wasm batch entry.
+#[derive(Clone, Copy, Debug)]
+pub struct WasmBuildBatchOutcomeEntry<'a> {
+    index: usize,
+    label: &'a str,
+    outcome: &'a WasmBuildOutcome,
+    entry_elapsed: Duration,
 }
 
 /// One failed Wasm batch entry with its retained wall-clock time.
 #[derive(Clone, Copy, Debug)]
 pub struct WasmBuildBatchFailure<'a> {
     index: usize,
+    label: &'a str,
     error: &'a WasmBuildError,
     entry_elapsed: Duration,
+}
+
+/// One integrated shared-target maintenance outcome from a Wasm batch.
+#[derive(Clone, Copy, Debug)]
+pub struct WasmBuildBatchMaintenanceEntry<'a> {
+    index: usize,
+    label: &'a str,
+    outcome: &'a SharedIncrementalTargetMaintenanceOutcome,
+}
+
+/// Structural error that prevents a labeled Wasm batch from starting.
+#[non_exhaustive]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WasmBuildBatchContractError {
+    /// An entry label was empty.
+    EmptyLabel {
+        /// Zero-based position of the invalid entry.
+        index: usize,
+    },
+    /// Two entries used the same label.
+    DuplicateLabel {
+        /// Duplicated caller label.
+        label: String,
+        /// Position where the label first appeared.
+        first_index: usize,
+        /// Position where the label was repeated.
+        duplicate_index: usize,
+    },
+}
+
+impl LabeledWasmBuildSpec {
+    /// Attach a caller-owned stable label to one Wasm build specification.
+    #[must_use]
+    pub fn new(label: impl Into<String>, spec: WasmBuildSpec) -> Self {
+        Self {
+            label: label.into(),
+            spec,
+        }
+    }
+
+    /// Caller-owned report and progress label.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Underlying exact Wasm build specification.
+    #[must_use]
+    pub const fn spec(&self) -> &WasmBuildSpec {
+        &self.spec
+    }
+
+    /// Consume the entry into its label and Wasm build specification.
+    #[must_use]
+    pub fn into_parts(self) -> (String, WasmBuildSpec) {
+        (self.label, self.spec)
+    }
+}
+
+impl WasmBuildBatchEntry {
+    /// Zero-based position in the supplied labeled specification slice.
+    #[must_use]
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Caller-owned stable label.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Structured success or failure for this entry.
+    pub const fn result(&self) -> Result<&WasmBuildOutcome, &WasmBuildError> {
+        self.result.as_ref()
+    }
+
+    /// Successful Wasm outcome, when this entry succeeded.
+    #[must_use]
+    pub fn outcome(&self) -> Option<&WasmBuildOutcome> {
+        self.result.as_ref().ok()
+    }
+
+    /// Structured build failure, when this entry failed.
+    #[must_use]
+    pub fn error(&self) -> Option<&WasmBuildError> {
+        self.result.as_ref().err()
+    }
+
+    /// Complete wall-clock time retained for this entry.
+    #[must_use]
+    pub const fn entry_elapsed(&self) -> Duration {
+        self.entry_elapsed
+    }
+
+    /// Whether this entry completed successfully.
+    #[must_use]
+    pub const fn is_success(&self) -> bool {
+        self.result.is_ok()
+    }
+
+    /// Consume the entry into its ordered identity, result, and wall time.
+    pub fn into_parts(
+        self,
+    ) -> (
+        usize,
+        String,
+        Result<WasmBuildOutcome, WasmBuildError>,
+        Duration,
+    ) {
+        (self.index, self.label, self.result, self.entry_elapsed)
+    }
+}
+
+impl<'a> WasmBuildBatchOutcomeEntry<'a> {
+    /// Zero-based position in the supplied labeled specification slice.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.index
+    }
+
+    /// Caller-owned stable label.
+    #[must_use]
+    pub const fn label(self) -> &'a str {
+        self.label
+    }
+
+    /// Successful Wasm build outcome.
+    #[must_use]
+    pub const fn outcome(self) -> &'a WasmBuildOutcome {
+        self.outcome
+    }
+
+    /// Complete wall-clock time retained for this successful entry.
+    #[must_use]
+    pub const fn entry_elapsed(self) -> Duration {
+        self.entry_elapsed
+    }
 }
 
 impl<'a> WasmBuildBatchFailure<'a> {
@@ -43,6 +206,12 @@ impl<'a> WasmBuildBatchFailure<'a> {
     #[must_use]
     pub const fn index(self) -> usize {
         self.index
+    }
+
+    /// Caller-owned stable label.
+    #[must_use]
+    pub const fn label(self) -> &'a str {
+        self.label
     }
 
     /// Structured acquisition failure.
@@ -55,6 +224,26 @@ impl<'a> WasmBuildBatchFailure<'a> {
     #[must_use]
     pub const fn entry_elapsed(self) -> Duration {
         self.entry_elapsed
+    }
+}
+
+impl<'a> WasmBuildBatchMaintenanceEntry<'a> {
+    /// Zero-based position in the supplied labeled specification slice.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.index
+    }
+
+    /// Caller-owned stable label.
+    #[must_use]
+    pub const fn label(self) -> &'a str {
+        self.label
+    }
+
+    /// Structured shared-target maintenance outcome.
+    #[must_use]
+    pub const fn outcome(self) -> &'a SharedIncrementalTargetMaintenanceOutcome {
+        self.outcome
     }
 }
 
@@ -80,6 +269,8 @@ pub enum WasmBuildBatchProgressEvent {
     BuildStarted {
         /// Zero-based position in the supplied specification slice.
         index: usize,
+        /// Caller-owned stable label.
+        label: String,
         /// Total number of supplied specifications.
         total: usize,
     },
@@ -87,6 +278,8 @@ pub enum WasmBuildBatchProgressEvent {
     BuildProgress {
         /// Zero-based position in the supplied specification slice.
         index: usize,
+        /// Caller-owned stable label.
+        label: String,
         /// Event emitted by that build.
         event: WasmBuildProgressEvent,
     },
@@ -94,61 +287,72 @@ pub enum WasmBuildBatchProgressEvent {
     BuildFinished {
         /// Zero-based position in the supplied specification slice.
         index: usize,
+        /// Caller-owned stable label.
+        label: String,
     },
     /// One independent build failed.
     BuildFailed {
         /// Zero-based position in the supplied specification slice.
         index: usize,
+        /// Caller-owned stable label.
+        label: String,
     },
 }
 
 impl WasmBuildBatchReport {
-    /// Per-specification results in the supplied order.
-    pub fn results(&self) -> &[Result<WasmBuildOutcome, WasmBuildError>] {
-        &self.results
-    }
-
-    /// Wall-clock time retained for every entry, including failed entries.
-    ///
-    /// Values use the supplied specification order and include batch-owned
-    /// validation plus the complete acquisition attempt for that entry.
+    /// Ordered labeled entries.
     #[must_use]
-    pub fn entry_elapsed(&self) -> &[Duration] {
-        &self.entry_elapsed
+    pub fn entries(&self) -> &[WasmBuildBatchEntry] {
+        &self.entries
     }
 
-    /// Consume the report and return its ordered per-specification results.
+    /// Consume the report into its ordered labeled entries.
     #[must_use]
-    pub fn into_results(self) -> Vec<Result<WasmBuildOutcome, WasmBuildError>> {
-        self.results
+    pub fn into_entries(self) -> Vec<WasmBuildBatchEntry> {
+        self.entries
     }
 
-    /// Successful outcomes with their specification indexes.
-    pub fn outcomes(&self) -> impl Iterator<Item = (usize, &WasmBuildOutcome)> {
-        indexed_outcomes(&self.results)
-    }
-
-    /// Structured failed entries with indexes, errors, and wall-clock times.
-    pub fn failures(&self) -> impl Iterator<Item = WasmBuildBatchFailure<'_>> {
-        indexed_failures(&self.results).map(|(index, error)| WasmBuildBatchFailure {
-            index,
-            error,
-            entry_elapsed: self.entry_elapsed[index],
+    /// Structured successful entries with labels and wall-clock times.
+    pub fn outcomes(&self) -> impl Iterator<Item = WasmBuildBatchOutcomeEntry<'_>> {
+        self.entries.iter().filter_map(|entry| {
+            entry.outcome().map(|outcome| WasmBuildBatchOutcomeEntry {
+                index: entry.index,
+                label: &entry.label,
+                outcome,
+                entry_elapsed: entry.entry_elapsed,
+            })
         })
     }
 
-    /// Integrated shared-target maintenance outcomes with their build indexes.
+    /// Structured failed entries with labels and wall-clock times.
+    pub fn failures(&self) -> impl Iterator<Item = WasmBuildBatchFailure<'_>> {
+        self.entries.iter().filter_map(|entry| {
+            entry.error().map(|error| WasmBuildBatchFailure {
+                index: entry.index,
+                label: &entry.label,
+                error,
+                entry_elapsed: entry.entry_elapsed,
+            })
+        })
+    }
+
+    /// Labeled integrated shared-target maintenance outcomes.
     ///
     /// Batch-owned maintenance contributes at most one outcome for each
     /// distinct configured shared-target path.
     pub fn shared_incremental_maintenance_outcomes(
         &self,
-    ) -> impl Iterator<Item = (usize, &SharedIncrementalTargetMaintenanceOutcome)> {
-        self.outcomes().filter_map(|(index, outcome)| {
-            outcome
+    ) -> impl Iterator<Item = WasmBuildBatchMaintenanceEntry<'_>> {
+        self.outcomes().filter_map(|entry| {
+            entry
+                .outcome
                 .record()
                 .shared_incremental_maintenance()
-                .map(|maintenance| (index, maintenance))
+                .map(|outcome| WasmBuildBatchMaintenanceEntry {
+                    index: entry.index,
+                    label: entry.label,
+                    outcome,
+                })
         })
     }
 
@@ -161,21 +365,21 @@ impl WasmBuildBatchReport {
     /// Whether every specification completed successfully.
     #[must_use]
     pub fn is_success(&self) -> bool {
-        self.results.iter().all(Result::is_ok)
+        self.entries.iter().all(WasmBuildBatchEntry::is_success)
     }
 
     /// Aggregate outcome, input-resolution reuse, and timing counters.
     #[must_use]
     pub fn metrics(&self) -> WasmBuildBatchMetrics {
         let mut metrics = WasmBuildBatchMetrics {
-            specifications: self.results.len(),
+            specifications: self.entries.len(),
             input_resolution_runs: self.input_resolution.runs,
             input_resolution_reuses: self.input_resolution.reuses,
             total: self.total,
             ..WasmBuildBatchMetrics::default()
         };
-        for result in &self.results {
-            match result {
+        for entry in &self.entries {
+            match &entry.result {
                 Ok(outcome) => {
                     metrics.succeeded += 1;
                     if outcome.is_reused() {
@@ -315,8 +519,9 @@ impl std::fmt::Display for WasmBuildBatchReport {
 /// keeps its own package set, profile arguments, feature resolution,
 /// fingerprint, locks, and cache policy. Packages are never combined into one
 /// Cargo command because doing so can unify shared dependency features.
-#[must_use]
-pub fn build_wasm_canisters_cached_batch(specs: &[WasmBuildSpec]) -> WasmBuildBatchReport {
+pub fn build_wasm_canisters_cached_batch(
+    specs: &[LabeledWasmBuildSpec],
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
     build_wasm_canisters_cached_batch_with_config(specs, WasmBuildBatchConfig::new())
 }
 
@@ -326,17 +531,21 @@ pub fn build_wasm_canisters_cached_batch(specs: &[WasmBuildSpec]) -> WasmBuildBa
 /// each distinct configured shared-target path. Isolated specifications are
 /// unaffected. An entry mixing batch-owned and per-spec integrated maintenance
 /// reports an indexed error without preventing later entries from running.
-#[must_use]
 pub fn build_wasm_canisters_cached_batch_with_config(
-    specs: &[WasmBuildSpec],
+    specs: &[LabeledWasmBuildSpec],
     config: WasmBuildBatchConfig,
-) -> WasmBuildBatchReport {
-    let mut resolver = WasmBuildBatchInputResolver::new(specs);
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
+    validate_batch_labels(specs)?;
+    let build_specs = specs
+        .iter()
+        .map(|labeled| labeled.spec.clone())
+        .collect::<Vec<_>>();
+    let mut resolver = WasmBuildBatchInputResolver::new(&build_specs);
     let mut report = build_wasm_batch(specs, config, |spec, index| {
         build_wasm_canisters_cached_in_batch(spec, index, &mut resolver)
     });
     report.input_resolution = resolver.metrics();
-    report
+    Ok(report)
 }
 
 /// Build an independent Wasm batch while forwarding structured progress.
@@ -344,12 +553,11 @@ pub fn build_wasm_canisters_cached_batch_with_config(
 /// The same observation configuration is applied to every entry. Batch events
 /// identify the originating specification without altering the standalone
 /// build semantics.
-#[must_use]
 pub fn build_wasm_canisters_cached_batch_with_progress<F>(
-    specs: &[WasmBuildSpec],
+    specs: &[LabeledWasmBuildSpec],
     config: WasmBuildProgressConfig,
     observer: F,
-) -> WasmBuildBatchReport
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
 where
     F: FnMut(WasmBuildBatchProgressEvent),
 {
@@ -362,21 +570,27 @@ where
 }
 
 /// Build a configured independent Wasm batch while forwarding structured progress.
-#[must_use]
 pub fn build_wasm_canisters_cached_batch_with_config_and_progress<F>(
-    specs: &[WasmBuildSpec],
+    specs: &[LabeledWasmBuildSpec],
     batch_config: WasmBuildBatchConfig,
     progress_config: WasmBuildProgressConfig,
     mut observer: F,
-) -> WasmBuildBatchReport
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
 where
     F: FnMut(WasmBuildBatchProgressEvent),
 {
+    validate_batch_labels(specs)?;
     let count = specs.len();
-    let mut resolver = WasmBuildBatchInputResolver::new(specs);
+    let build_specs = specs
+        .iter()
+        .map(|labeled| labeled.spec.clone())
+        .collect::<Vec<_>>();
+    let mut resolver = WasmBuildBatchInputResolver::new(&build_specs);
     let mut report = build_wasm_batch(specs, batch_config, |spec, index| {
+        let label = specs[index].label.clone();
         observer(WasmBuildBatchProgressEvent::BuildStarted {
             index,
+            label: label.clone(),
             total: count,
         });
         let result = build_wasm_canisters_cached_in_batch_with_progress(
@@ -384,20 +598,26 @@ where
             index,
             &mut resolver,
             progress_config,
-            |event| observer(WasmBuildBatchProgressEvent::BuildProgress { index, event }),
+            |event| {
+                observer(WasmBuildBatchProgressEvent::BuildProgress {
+                    index,
+                    label: label.clone(),
+                    event,
+                });
+            },
         );
         observer(match result {
-            Ok(_) => WasmBuildBatchProgressEvent::BuildFinished { index },
-            Err(_) => WasmBuildBatchProgressEvent::BuildFailed { index },
+            Ok(_) => WasmBuildBatchProgressEvent::BuildFinished { index, label },
+            Err(_) => WasmBuildBatchProgressEvent::BuildFailed { index, label },
         });
         result
     });
     report.input_resolution = resolver.metrics();
-    report
+    Ok(report)
 }
 
 fn build_wasm_batch<F>(
-    specs: &[WasmBuildSpec],
+    specs: &[LabeledWasmBuildSpec],
     config: WasmBuildBatchConfig,
     mut build: F,
 ) -> WasmBuildBatchReport
@@ -405,28 +625,56 @@ where
     F: FnMut(&WasmBuildSpec, usize) -> Result<WasmBuildOutcome, WasmBuildError>,
 {
     let started = Instant::now();
-    let mut results = Vec::with_capacity(specs.len());
-    let mut entry_elapsed = Vec::with_capacity(specs.len());
+    let mut entries = Vec::with_capacity(specs.len());
     let mut maintenance = BatchMaintenanceTracker::new(config.shared_incremental_maintenance);
-    for (index, spec) in specs.iter().enumerate() {
+    for (index, labeled) in specs.iter().enumerate() {
         let entry_started = Instant::now();
+        let spec = &labeled.spec;
         if config.shared_incremental_maintenance.is_some()
             && spec.shared_incremental_target_maintenance().is_some()
         {
-            results.push(Err(batch_maintenance_ownership_error()));
-            entry_elapsed.push(entry_started.elapsed());
+            entries.push(WasmBuildBatchEntry {
+                index,
+                label: labeled.label.clone(),
+                result: Err(batch_maintenance_ownership_error()),
+                entry_elapsed: entry_started.elapsed(),
+            });
             continue;
         }
         let configured = maintenance.prepare_spec(spec);
-        results.push(build(configured.as_ref().unwrap_or(spec), index));
-        entry_elapsed.push(entry_started.elapsed());
+        let result = build(configured.as_ref().unwrap_or(spec), index);
+        entries.push(WasmBuildBatchEntry {
+            index,
+            label: labeled.label.clone(),
+            result,
+            entry_elapsed: entry_started.elapsed(),
+        });
     }
     WasmBuildBatchReport {
-        results,
-        entry_elapsed,
+        entries,
         input_resolution: WasmBuildBatchInputMetrics::default(),
         total: started.elapsed(),
     }
+}
+
+fn validate_batch_labels(
+    specs: &[LabeledWasmBuildSpec],
+) -> Result<(), WasmBuildBatchContractError> {
+    let mut labels = HashMap::with_capacity(specs.len());
+    for (index, labeled) in specs.iter().enumerate() {
+        if labeled.label.is_empty() {
+            return Err(WasmBuildBatchContractError::EmptyLabel { index });
+        }
+        if let Some(first_index) = labels.get(labeled.label.as_str()) {
+            return Err(WasmBuildBatchContractError::DuplicateLabel {
+                label: labeled.label.clone(),
+                first_index: *first_index,
+                duplicate_index: index,
+            });
+        }
+        labels.insert(labeled.label.as_str(), index);
+    }
+    Ok(())
 }
 
 struct BatchMaintenanceTracker {
@@ -465,6 +713,26 @@ fn batch_maintenance_ownership_error() -> WasmBuildError {
                 .to_owned(),
     }
 }
+
+impl std::fmt::Display for WasmBuildBatchContractError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyLabel { index } => {
+                write!(formatter, "Wasm batch label at index {index} is empty")
+            }
+            Self::DuplicateLabel {
+                label,
+                first_index,
+                duplicate_index,
+            } => write!(
+                formatter,
+                "Wasm batch label {label:?} at index {duplicate_index} duplicates index {first_index}",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for WasmBuildBatchContractError {}
 
 #[cfg(test)]
 mod tests;

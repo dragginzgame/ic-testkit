@@ -1,16 +1,17 @@
 use super::{
-    IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetMaintenanceConfig,
-    SharedIncrementalTargetMaintenanceFailureMode, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputResolver, WasmBuildError,
-    WasmBuildOutcome, WasmBuildOutputStream, WasmBuildProgressConfig, WasmBuildProgressEvent,
-    WasmBuildProgressPhase, WasmBuildSpec, append_cargo_configuration_inputs,
-    build_wasm_canisters_cached_with_progress, ensure_cache_directory_tag,
-    finish_fingerprint_build, inspect_shared_incremental_target,
+    IncompleteBuildDirectory, MetadataPackage, ProgressReporter,
+    SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceFailureMode,
+    SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
+    WasmBuildBatchInputResolver, WasmBuildError, WasmBuildOutcome, WasmBuildOutputStream,
+    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildProgressPhase, WasmBuildSpec,
+    append_cargo_configuration_inputs, build_wasm_canisters_cached_with_progress,
+    ensure_cache_directory_tag, finish_fingerprint_build, inspect_shared_incremental_target,
     integrated_shared_maintenance_result, lock_wasm_build_cache,
-    lock_wasm_build_cache_with_progress, maintain_shared_incremental_target,
-    maintain_shared_incremental_target_at_most_every, metadata_arguments,
-    perform_configured_shared_incremental_target_maintenance, prune_wasm_build_cache,
-    prune_wasm_build_cache_locked, resolve_cargo_build_inputs, run_cargo_build, validate_spec,
+    lock_wasm_build_cache_with_progress, locked_package_identities,
+    maintain_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
+    metadata_arguments, perform_configured_shared_incremental_target_maintenance,
+    prune_wasm_build_cache, prune_wasm_build_cache_locked, resolve_cargo_build_inputs,
+    run_cargo_build, semantic_package_identity, validate_spec,
 };
 use crate::artifacts::cache_fs::{
     ArtifactCachePrunePolicy, CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size,
@@ -36,6 +37,23 @@ use crate::artifacts::test_support::write_executable_script;
 
 fn canonical_fixture(path: &Path) -> PathBuf {
     path.canonicalize().expect("canonicalize test fixture path")
+}
+
+fn write_projection_package(root: &Path, package: &str, manifest_suffix: &str) {
+    let directory = root.join(package);
+    fs::create_dir_all(directory.join("src")).expect("create projection fixture package");
+    fs::write(
+        directory.join("Cargo.toml"),
+        format!(
+            "[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{manifest_suffix}"
+        ),
+    )
+    .expect("write projection fixture package manifest");
+    fs::write(
+        directory.join("src/lib.rs"),
+        format!("pub fn {package}() {{}}\n"),
+    )
+    .expect("write projection fixture source");
 }
 
 #[test]
@@ -153,6 +171,154 @@ fn public_cargo_input_snapshot_detects_local_source_changes() {
         Err(WasmBuildError::InvalidSpec { .. })
     ));
     fs::remove_dir_all(root).expect("remove Cargo input fixture");
+}
+
+#[test]
+fn semantic_workspace_projection_ignores_unrelated_host_dependency_changes() {
+    let root = unique_temp_directory("semantic-workspace-projection-host");
+    write_projection_package(&root, "canister", "");
+    write_projection_package(
+        &root,
+        "host",
+        "\n[dependencies]\nhost_dep = { workspace = true }\n",
+    );
+    write_projection_package(&root, "host_dep_a", "");
+    write_projection_package(&root, "host_dep_b", "");
+    let workspace_manifest = root.join("Cargo.toml");
+    let write_workspace = |dependency: &str| {
+        fs::write(
+            &workspace_manifest,
+            format!(
+                "[workspace]\nmembers = [\"canister\", \"host\"]\nexclude = [\"host_dep_a\", \"host_dep_b\"]\nresolver = \"2\"\n\n[workspace.dependencies]\nhost_dep = {{ package = \"{dependency}\", path = \"{dependency}\" }}\n"
+            ),
+        )
+        .expect("write host projection workspace manifest");
+    };
+    write_workspace("host_dep_a");
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "debug");
+
+    let before = resolve_cargo_build_inputs(&spec).expect("resolve initial semantic projection");
+    write_workspace("host_dep_b");
+    let after = resolve_cargo_build_inputs(&spec).expect("resolve changed host projection");
+
+    assert_eq!(before.input_digest(), after.input_digest());
+    assert_eq!(before.fingerprint(), after.fingerprint());
+    assert_ne!(before.validation_digest(), after.validation_digest());
+    assert!(before.is_current(&spec).expect("recheck semantic identity"));
+    assert!(
+        !before
+            .is_content_current()
+            .expect("validate conservative snapshot")
+    );
+    fs::remove_dir_all(root).expect("remove host projection fixture");
+}
+
+#[test]
+fn semantic_workspace_projection_tracks_selected_dependencies_and_profiles() {
+    let root = unique_temp_directory("semantic-workspace-projection-selected");
+    write_projection_package(
+        &root,
+        "canister",
+        "\n[dependencies]\nselected_dep = { workspace = true }\n",
+    );
+    write_projection_package(&root, "selected_dep_a", "");
+    write_projection_package(&root, "selected_dep_b", "");
+    let workspace_manifest = root.join("Cargo.toml");
+    let write_workspace = |dependency: &str, optimize: &str| {
+        fs::write(
+            &workspace_manifest,
+            format!(
+                "[workspace]\nmembers = [\"canister\"]\nexclude = [\"selected_dep_a\", \"selected_dep_b\"]\nresolver = \"2\"\n\n[workspace.dependencies]\nselected_dep = {{ package = \"{dependency}\", path = \"{dependency}\" }}\n\n[profile.release]\nopt-level = \"{optimize}\"\n"
+            ),
+        )
+        .expect("write selected projection workspace manifest");
+    };
+    write_workspace("selected_dep_a", "s");
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "release");
+
+    let initial = resolve_cargo_build_inputs(&spec).expect("resolve selected projection");
+    write_workspace("selected_dep_b", "s");
+    let dependency_changed =
+        resolve_cargo_build_inputs(&spec).expect("resolve changed selected dependency");
+    assert_ne!(initial.input_digest(), dependency_changed.input_digest());
+    assert_ne!(initial.fingerprint(), dependency_changed.fingerprint());
+
+    write_workspace("selected_dep_b", "z");
+    let profile_changed = resolve_cargo_build_inputs(&spec).expect("resolve changed profile");
+    assert_ne!(
+        dependency_changed.input_digest(),
+        profile_changed.input_digest()
+    );
+    assert_ne!(
+        dependency_changed.fingerprint(),
+        profile_changed.fingerprint()
+    );
+    fs::remove_dir_all(root).expect("remove selected projection fixture");
+}
+
+#[test]
+fn semantic_package_identity_uses_selected_registry_lock_checksum() {
+    let root = unique_temp_directory("semantic-registry-lock-identity");
+    let source = "registry+https://example.invalid/index";
+    let package = MetadataPackage {
+        id: format!("{source}#dependency@1.2.3"),
+        name: "dependency".to_owned(),
+        version: "1.2.3".to_owned(),
+        manifest_path: root.join("registry/dependency/Cargo.toml"),
+        is_local: false,
+        source: Some(source.to_owned()),
+        semantic_fields: Vec::new(),
+    };
+    let write_lock = |checksum: Option<&str>| {
+        let checksum = checksum.map_or_else(String::new, |checksum| {
+            format!("checksum = \"{checksum}\"\n")
+        });
+        fs::write(
+            root.join("Cargo.lock"),
+            format!(
+                "version = 4\n\n[[package]]\nname = \"dependency\"\nversion = \"1.2.3\"\nsource = \"{source}\"\n{checksum}"
+            ),
+        )
+        .expect("write registry identity lockfile");
+    };
+
+    write_lock(Some("aaa"));
+    let first_lock = locked_package_identities(&root).expect("project first lockfile");
+    let first = semantic_package_identity(&package, &root, &first_lock)
+        .expect("project checksummed registry package");
+    write_lock(Some("bbb"));
+    let second_lock = locked_package_identities(&root).expect("project second lockfile");
+    let second = semantic_package_identity(&package, &root, &second_lock)
+        .expect("project changed registry checksum");
+    assert_ne!(first, second);
+
+    write_lock(None);
+    let missing_checksum = locked_package_identities(&root).expect("project incomplete lockfile");
+    assert!(semantic_package_identity(&package, &root, &missing_checksum).is_none());
+    fs::remove_dir_all(root).expect("remove registry identity fixture");
+}
+
+#[test]
+fn semantic_workspace_projection_falls_back_for_workspace_root_packages() {
+    let root = unique_temp_directory("semantic-workspace-projection-fallback");
+    fs::create_dir_all(root.join("src")).expect("create root package source directory");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"root_canister\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .expect("write root package manifest");
+    fs::write(root.join("src/lib.rs"), "pub fn root_canister() {}\n")
+        .expect("write root package source");
+    let spec = WasmBuildSpec::new(
+        &root,
+        &root.join("target/exact"),
+        &["root_canister"],
+        "debug",
+    );
+
+    let resolved = resolve_cargo_build_inputs(&spec).expect("resolve fallback projection");
+    assert_eq!(resolved.input_digest(), resolved.validation_digest());
+    fs::remove_dir_all(root).expect("remove projection fallback fixture");
 }
 
 #[test]

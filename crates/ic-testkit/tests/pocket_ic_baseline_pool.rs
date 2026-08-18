@@ -16,9 +16,10 @@ use ic_testkit::pic::{
     BaselinePoolPreparationError, BaselinePreparationStage, CachedPocketIcBaseline,
     CachedPocketIcBaselinePool, CanisterRestoreReceipt, ControllerSnapshotError, CycleResetPolicy,
     ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe,
-    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupError, PreparedBaseline, ReadinessReceipt,
-    RebuildReason, ResetAchievement, ResetReceipt, ResetRequirement, ResetRequirements,
-    TimeResetPolicy, ValidationReceipt, is_dead_pocket_ic_transport_error,
+    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig, PocketIcStartupError,
+    PreparedBaseline, ReadinessReceipt, RebuildReason, ResetAchievement, ResetReceipt,
+    ResetRequirement, ResetRequirements, TimeResetPolicy, ValidationReceipt,
+    is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -150,13 +151,11 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
             .take();
         let pocket_ic = if let Some(server_url) = first_server_url {
             PocketIcBuilder::new()
-                .with_server_url(
-                    server_url
-                        .parse()
-                        .map_err(|_| TestRecipeError::Synthetic("invalid dedicated server URL"))?,
-                )
                 .with_application_subnet()
-                .try_build()
+                .try_build(PocketIcStartupConfig::connect(
+                    server_url,
+                    OPERATION_TIMEOUT,
+                ))
                 .map_err(TestRecipeError::Startup)?
         } else {
             PocketIc::new()

@@ -1,16 +1,18 @@
 use super::{
-    BatchMaintenanceTracker, WasmBuildBatchConfig, build_wasm_canisters_cached_batch,
-    build_wasm_canisters_cached_batch_with_config,
+    BatchMaintenanceTracker, LabeledWasmBuildSpec, WasmBuildBatchConfig,
+    WasmBuildBatchContractError, WasmBuildBatchProgressEvent, build_wasm_canisters_cached_batch,
+    build_wasm_canisters_cached_batch_with_config, build_wasm_canisters_cached_batch_with_progress,
 };
 use crate::artifacts::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceFailureMode,
-    SharedIncrementalTargetPrunePolicy, WasmBuildBatchFailure, WasmBuildError, WasmBuildSpec,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchFailure, WasmBuildError,
+    WasmBuildProgressConfig, WasmBuildSpec,
 };
 use std::{path::Path, time::Duration};
 
 #[test]
 fn empty_independent_batch_succeeds_without_work() {
-    let report = build_wasm_canisters_cached_batch(&[]);
+    let report = build_wasm_canisters_cached_batch(&[]).expect("empty labeled batch");
     assert!(report.is_success());
     assert_eq!(report.outcomes().count(), 0);
 }
@@ -18,21 +20,28 @@ fn empty_independent_batch_succeeds_without_work() {
 #[test]
 fn batch_retains_every_indexed_failure() {
     let specs = [
-        WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug"),
-        WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], ""),
+        LabeledWasmBuildSpec::new(
+            "root",
+            WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug"),
+        ),
+        LabeledWasmBuildSpec::new(
+            "worker",
+            WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], ""),
+        ),
     ];
 
-    let report = build_wasm_canisters_cached_batch(&specs);
+    let report = build_wasm_canisters_cached_batch(&specs).expect("valid labeled batch");
 
     assert!(!report.is_success());
-    assert_eq!(report.results().len(), 2);
-    assert_eq!(report.entry_elapsed().len(), 2);
+    assert_eq!(report.entries().len(), 2);
+    assert_eq!(report.entries()[0].label(), "root");
+    assert_eq!(report.entries()[1].label(), "worker");
     assert_eq!(
         report
             .failures()
-            .map(WasmBuildBatchFailure::index)
+            .map(WasmBuildBatchFailure::label)
             .collect::<Vec<_>>(),
-        [0, 1]
+        ["root", "worker"]
     );
     assert!(
         report
@@ -40,6 +49,62 @@ fn batch_retains_every_indexed_failure() {
             .all(|failure| failure.entry_elapsed() <= report.total())
     );
     assert_eq!(report.outcomes().count(), 0);
+}
+
+#[test]
+fn batch_rejects_invalid_labels_before_progress_or_build_work() {
+    let invalid = WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug");
+    let empty = [LabeledWasmBuildSpec::new("", invalid.clone())];
+    let mut progress_events = 0;
+    let empty_error = build_wasm_canisters_cached_batch_with_progress(
+        &empty,
+        WasmBuildProgressConfig::new(),
+        |_| progress_events += 1,
+    )
+    .expect_err("empty label must reject the batch");
+    assert_eq!(
+        empty_error,
+        WasmBuildBatchContractError::EmptyLabel { index: 0 }
+    );
+    assert_eq!(progress_events, 0);
+
+    let duplicate = [
+        LabeledWasmBuildSpec::new("same", invalid.clone()),
+        LabeledWasmBuildSpec::new("same", invalid),
+    ];
+    assert_eq!(
+        build_wasm_canisters_cached_batch(&duplicate)
+            .expect_err("duplicate labels must reject the batch"),
+        WasmBuildBatchContractError::DuplicateLabel {
+            label: "same".to_owned(),
+            first_index: 0,
+            duplicate_index: 1,
+        }
+    );
+}
+
+#[test]
+fn batch_progress_retains_the_caller_label() {
+    let specs = [LabeledWasmBuildSpec::new(
+        "root",
+        WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug"),
+    )];
+    let mut labels = Vec::new();
+
+    let report = build_wasm_canisters_cached_batch_with_progress(
+        &specs,
+        WasmBuildProgressConfig::new(),
+        |event| match event {
+            WasmBuildBatchProgressEvent::BuildStarted { label, .. }
+            | WasmBuildBatchProgressEvent::BuildProgress { label, .. }
+            | WasmBuildBatchProgressEvent::BuildFinished { label, .. }
+            | WasmBuildBatchProgressEvent::BuildFailed { label, .. } => labels.push(label),
+        },
+    )
+    .expect("valid progress batch");
+
+    assert!(!report.is_success());
+    assert_eq!(labels, ["root", "root"]);
 }
 
 #[test]
@@ -77,18 +142,23 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
         SharedIncrementalTargetPrunePolicy::new(),
         Duration::from_secs(60),
     );
-    let spec = WasmBuildSpec::new(Path::new("."), Path::new("exact"), &["fixture"], "debug")
-        .with_shared_incremental_target("shared")
-        .with_shared_incremental_target_maintenance(maintenance);
+    let spec = LabeledWasmBuildSpec::new(
+        "fixture",
+        WasmBuildSpec::new(Path::new("."), Path::new("exact"), &["fixture"], "debug")
+            .with_shared_incremental_target("shared")
+            .with_shared_incremental_target_maintenance(maintenance),
+    );
     let batch = WasmBuildBatchConfig::new().with_shared_incremental_target_maintenance(maintenance);
 
-    let report = build_wasm_canisters_cached_batch_with_config(&[spec], batch);
+    let report =
+        build_wasm_canisters_cached_batch_with_config(&[spec], batch).expect("valid labeled batch");
     let failures = report.failures().collect::<Vec<_>>();
-    assert_eq!(report.entry_elapsed().len(), 1);
+    assert_eq!(report.entries().len(), 1);
     assert_eq!(failures.len(), 1);
     let failure = failures[0];
     assert_eq!(failure.index(), 0);
-    assert_eq!(failure.entry_elapsed(), report.entry_elapsed()[0]);
+    assert_eq!(failure.label(), "fixture");
+    assert_eq!(failure.entry_elapsed(), report.entries()[0].entry_elapsed());
     assert!(
         matches!(failure.error(), WasmBuildError::InvalidSpec { message } if message.contains("cannot be combined"))
     );
