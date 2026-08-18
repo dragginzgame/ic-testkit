@@ -43,8 +43,9 @@ pub use baseline_pool::{
 pub use calls::CandidCallExt;
 pub use diagnostics::{
     CanisterDiagnosticFailure, CanisterDiagnosticLogRecord, CanisterDiagnosticLogs,
-    CanisterDiagnosticsReport, CanisterDiagnosticsRequest, CanisterLogRenderLimits,
-    DEFAULT_CANISTER_LOG_BYTE_LIMIT, DEFAULT_CANISTER_LOG_RECORD_LIMIT, PocketIcDiagnosticsExt,
+    CanisterDiagnosticsBatchEntry, CanisterDiagnosticsBatchReport, CanisterDiagnosticsReport,
+    CanisterDiagnosticsRequest, CanisterLogRenderLimits, DEFAULT_CANISTER_LOG_BYTE_LIMIT,
+    DEFAULT_CANISTER_LOG_RECORD_LIMIT, LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt,
 };
 pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,

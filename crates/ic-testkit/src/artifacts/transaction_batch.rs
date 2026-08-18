@@ -12,7 +12,16 @@ use super::{
 #[derive(Debug)]
 pub struct ArtifactCacheBatchReport<E> {
     results: Vec<Result<ArtifactCacheOutcome, ArtifactCacheBatchFailure<E>>>,
+    entry_elapsed: Vec<Duration>,
     total: Duration,
+}
+
+/// One failed generic artifact batch entry with its retained wall-clock time.
+#[derive(Debug)]
+pub struct ArtifactCacheBatchFailedEntry<'a, E> {
+    index: usize,
+    failure: &'a ArtifactCacheBatchFailure<E>,
+    entry_elapsed: Duration,
 }
 
 /// Failure from one entry in a collect-all artifact transaction batch.
@@ -50,6 +59,15 @@ impl<E> ArtifactCacheBatchReport<E> {
         &self.results
     }
 
+    /// Wall-clock time retained for every entry, including failed entries.
+    ///
+    /// Values use the supplied specification order and include preparation,
+    /// caller population, commit, and synchronous failure cleanup.
+    #[must_use]
+    pub fn entry_elapsed(&self) -> &[Duration] {
+        &self.entry_elapsed
+    }
+
     /// Consume the report and return its ordered per-specification results.
     #[must_use]
     pub fn into_results(self) -> Vec<Result<ArtifactCacheOutcome, ArtifactCacheBatchFailure<E>>> {
@@ -61,9 +79,13 @@ impl<E> ArtifactCacheBatchReport<E> {
         indexed_outcomes(&self.results)
     }
 
-    /// Failures with their specification indexes.
-    pub fn failures(&self) -> impl Iterator<Item = (usize, &ArtifactCacheBatchFailure<E>)> {
-        indexed_failures(&self.results)
+    /// Structured failed entries with indexes, failures, and wall-clock times.
+    pub fn failures(&self) -> impl Iterator<Item = ArtifactCacheBatchFailedEntry<'_, E>> {
+        indexed_failures(&self.results).map(|(index, failure)| ArtifactCacheBatchFailedEntry {
+            index,
+            failure,
+            entry_elapsed: self.entry_elapsed[index],
+        })
     }
 
     /// Complete wall-clock time for the sequential collect-all batch.
@@ -103,6 +125,26 @@ impl<E> ArtifactCacheBatchReport<E> {
             }
         }
         metrics
+    }
+}
+
+impl<'a, E> ArtifactCacheBatchFailedEntry<'a, E> {
+    /// Zero-based position in the supplied specification slice.
+    #[must_use]
+    pub const fn index(&self) -> usize {
+        self.index
+    }
+
+    /// Structured cache or caller-build failure.
+    #[must_use]
+    pub const fn failure(&self) -> &'a ArtifactCacheBatchFailure<E> {
+        self.failure
+    }
+
+    /// Complete wall-clock time retained for this failed entry.
+    #[must_use]
+    pub const fn entry_elapsed(&self) -> Duration {
+        self.entry_elapsed
     }
 }
 
@@ -198,7 +240,9 @@ where
 {
     let started = Instant::now();
     let mut results = Vec::with_capacity(specs.len());
+    let mut entry_elapsed = Vec::with_capacity(specs.len());
     for (index, spec) in specs.iter().enumerate() {
+        let entry_started = Instant::now();
         let result = match prepare_artifact_cache(spec) {
             Ok(ArtifactCachePreparation::Reused(record)) => {
                 Ok(ArtifactCacheOutcome::Reused(record))
@@ -223,9 +267,11 @@ where
             }),
         };
         results.push(result);
+        entry_elapsed.push(entry_started.elapsed());
     }
     ArtifactCacheBatchReport {
         results,
+        entry_elapsed,
         total: started.elapsed(),
     }
 }

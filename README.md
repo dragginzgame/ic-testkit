@@ -496,6 +496,35 @@ if report.status().is_err() || report.logs().is_err() {
 }
 ```
 
+For several controllers or roles, wrap each exact request in a stable label and
+collect them sequentially without fail-fast behavior:
+
+```rust,no_run
+use ic_testkit::pic::{
+    CanisterDiagnosticsRequest, LabeledCanisterDiagnosticsRequest,
+    PocketIcDiagnosticsExt,
+};
+
+let requests = [
+    LabeledCanisterDiagnosticsRequest::new(
+        "root",
+        CanisterDiagnosticsRequest::new(root_id, root, root),
+    ),
+    LabeledCanisterDiagnosticsRequest::new(
+        "worker",
+        CanisterDiagnosticsRequest::new(worker_id, worker_status_sender, worker_log_sender),
+    ),
+];
+let batch = pocket_ic.collect_canister_diagnostics_batch(&requests);
+if !batch.is_success() {
+    eprintln!("{}", batch.render_compact());
+}
+```
+
+The ordered batch retains every label and structured single-canister report.
+An earlier rejection, transport failure, or panic does not prevent later
+requests from being attempted, and no operation retries anonymously.
+
 Fetched log content is retained as bounded lossy UTF-8 rather than raw byte
 arrays. `CanisterLogRenderLimits` controls the record and aggregate byte bounds;
 the structured log result records omitted records and bytes. PocketIC transport
@@ -771,8 +800,13 @@ let specs = [
 ];
 let batch = build_wasm_canisters_cached_batch(&specs);
 eprintln!("{batch}");
-for (index, error) in batch.failures() {
-    eprintln!("build {index} failed: {error}");
+for failure in batch.failures() {
+    eprintln!(
+        "build {} failed after {:?}: {}",
+        failure.index(),
+        failure.entry_elapsed(),
+        failure.error(),
+    );
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -799,8 +833,9 @@ counts; input-resolution runs and compatible-snapshot reuses; and summed
 successful acquisition timings. The structured input-resolution total makes
 distinct feature-resolution costs visible while reused snapshots remain
 counted explicitly. `entry_elapsed` retains wall time for every ordered entry,
-including failures; successful entries continue to expose detailed phase
-timings through their build records.
+including failures; `failures` returns structured entries that bundle the
+index, error, and elapsed time. Successful entries continue to expose detailed
+phase timings through their build records.
 
 Compatible input reuse is deliberately scoped to one batch call. `0.8.x` has no
 silent process-global cache or cross-call build session: safely retaining source
@@ -921,9 +956,11 @@ one live transaction at a time, avoiding self-deadlock when specs share a
 coordination scope. Callback failures synchronously abort the current staging
 directory, are retained at their specification index, and do not stop later
 independent entries. `ArtifactCacheBatchReport::metrics` aggregates built,
-reused, and failed counts plus all successful acquisition timings. The
-operation is deliberately not atomic across specs: use one `ArtifactCacheSpec`
-with several outputs when all artifacts must publish as one transaction.
+reused, and failed counts plus all successful acquisition timings. Per-entry
+wall time is retained for successes and failures, and structured failed entries
+bundle their index, failure, and elapsed time. The operation is deliberately
+not atomic across specs: use one `ArtifactCacheSpec` with several outputs when
+all artifacts must publish as one transaction.
 
 A miss transaction exposes checked staging paths for redirectable tools and an
 `import_output` helper for commands that write to fixed locations. `commit`

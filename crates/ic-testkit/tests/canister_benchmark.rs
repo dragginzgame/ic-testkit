@@ -11,8 +11,8 @@ use ic_testkit::{
     artifacts::{
         ArtifactCacheError, ArtifactCacheMaintenance, ArtifactCachePreparation,
         ArtifactCachePrunePolicy, ArtifactCacheSpec, SharedIncrementalTargetMaintenanceOutcome,
-        SharedIncrementalTargetPrunePolicy, WasmBuildBatchMetrics, WasmBuildOutcome,
-        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
+        SharedIncrementalTargetPrunePolicy, WasmBuildBatchFailure, WasmBuildBatchMetrics,
+        WasmBuildOutcome, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
         build_wasm_canisters_cached, build_wasm_canisters_cached_batch,
         build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
         prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
@@ -136,7 +136,7 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
     assert_eq!(
         with_failure
             .failures()
-            .map(|(index, _error)| index)
+            .map(WasmBuildBatchFailure::index)
             .collect::<Vec<_>>(),
         [1]
     );

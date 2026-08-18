@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-08-18 - Collect-all diagnostics and failed-entry context
+
+### Added
+
+- Adds controller-aware `collect_canister_diagnostics_batch` for ordered,
+  caller-labeled `CanisterDiagnosticsRequest` values. Every target is attempted;
+  each entry retains its exact senders and independent bounded status/log
+  outcomes without anonymous retry or fallback.
+- Adds structured `WasmBuildBatchFailure` entries that bundle specification
+  index, `WasmBuildError`, and retained entry wall time.
+- Adds per-entry wall time and structured `ArtifactCacheBatchFailedEntry`
+  failures to generic artifact collect-all reports.
+
+### Changed
+
+- Hard-cuts `WasmBuildBatchReport::failures` and
+  `ArtifactCacheBatchReport::failures` from tuple items to their structured
+  failed-entry types. No tuple aliases or deprecated iterators are retained.
+
+### Documentation
+
+- Records partial failed-phase timings as a future error-contract change.
+- Records the correctness contract for possible generic-batch digest reuse:
+  callers must provide a source-immutability lease or the implementation must
+  revalidate rather than silently reuse hashes for matching paths.
+- Records caller-supplied stable artifact entry keys as a future labeled-spec
+  hard cut, not a parallel index/key sidecar.
+
+### Testing
+
+- Covers labeled diagnostic ordering and continuation after rejection or panic,
+  exact request retention, structured Wasm failure elapsed time, and generic
+  per-entry elapsed time across successful and failed batches.
+
 ## [0.8.3] - 2026-08-18 - Code hygiene and release consistency
 
 ### Changed

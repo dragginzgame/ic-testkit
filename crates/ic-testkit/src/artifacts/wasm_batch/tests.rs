@@ -4,7 +4,7 @@ use super::{
 };
 use crate::artifacts::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceFailureMode,
-    SharedIncrementalTargetPrunePolicy, WasmBuildError, WasmBuildSpec,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchFailure, WasmBuildError, WasmBuildSpec,
 };
 use std::{path::Path, time::Duration};
 
@@ -30,9 +30,14 @@ fn batch_retains_every_indexed_failure() {
     assert_eq!(
         report
             .failures()
-            .map(|(index, _error)| index)
+            .map(WasmBuildBatchFailure::index)
             .collect::<Vec<_>>(),
         [0, 1]
+    );
+    assert!(
+        report
+            .failures()
+            .all(|failure| failure.entry_elapsed() <= report.total())
     );
     assert_eq!(report.outcomes().count(), 0);
 }
@@ -81,9 +86,10 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
     let failures = report.failures().collect::<Vec<_>>();
     assert_eq!(report.entry_elapsed().len(), 1);
     assert_eq!(failures.len(), 1);
-    let (index, source) = failures[0];
-    assert_eq!(index, 0);
+    let failure = failures[0];
+    assert_eq!(failure.index(), 0);
+    assert_eq!(failure.entry_elapsed(), report.entry_elapsed()[0]);
     assert!(
-        matches!(source, WasmBuildError::InvalidSpec { message } if message.contains("cannot be combined"))
+        matches!(failure.error(), WasmBuildError::InvalidSpec { message } if message.contains("cannot be combined"))
     );
 }

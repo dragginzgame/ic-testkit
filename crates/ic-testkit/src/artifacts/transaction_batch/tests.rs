@@ -34,6 +34,7 @@ fn independent_transactions_build_then_reuse_in_order() {
     });
 
     assert!(built.is_success());
+    assert_eq!(built.entry_elapsed().len(), 2);
     assert_eq!(built_indices, [0, 1]);
     assert!(
         built
@@ -76,7 +77,7 @@ fn builder_failure_is_retained_and_later_transaction_runs() {
     ];
     let report = build_artifact_caches_batch(&specs, |index, transaction| {
         if index == 1 {
-            return Err("synthetic builder failure");
+            return Err("synthetic builder failure".to_owned());
         }
         fs::write(
             transaction
@@ -90,6 +91,7 @@ fn builder_failure_is_retained_and_later_transaction_runs() {
 
     assert!(!report.is_success());
     assert_eq!(report.results().len(), 3);
+    assert_eq!(report.entry_elapsed().len(), 3);
     assert_eq!(
         report
             .outcomes()
@@ -99,9 +101,10 @@ fn builder_failure_is_retained_and_later_transaction_runs() {
     );
     let failures = report.failures().collect::<Vec<_>>();
     assert_eq!(failures.len(), 1);
-    assert_eq!(failures[0].0, 1);
+    assert_eq!(failures[0].index(), 1);
+    assert_eq!(failures[0].entry_elapsed(), report.entry_elapsed()[1]);
     assert!(matches!(
-        failures[0].1,
+        failures[0].failure(),
         ArtifactCacheBatchFailure::Build {
             cleanup_error: None,
             ..
@@ -148,9 +151,12 @@ fn cache_failure_is_indexed_and_does_not_stop_later_entries() {
     assert_eq!(
         report
             .failures()
-            .map(|(index, failure)| {
-                assert!(matches!(failure, ArtifactCacheBatchFailure::Cache { .. }));
-                index
+            .map(|entry| {
+                assert!(matches!(
+                    entry.failure(),
+                    ArtifactCacheBatchFailure::Cache { .. }
+                ));
+                entry.index()
             })
             .collect::<Vec<_>>(),
         [1]
@@ -185,9 +191,12 @@ fn commit_failure_is_indexed_and_does_not_stop_later_entries() {
     assert_eq!(
         report
             .failures()
-            .map(|(index, failure)| {
-                assert!(matches!(failure, ArtifactCacheBatchFailure::Cache { .. }));
-                index
+            .map(|entry| {
+                assert!(matches!(
+                    entry.failure(),
+                    ArtifactCacheBatchFailure::Cache { .. }
+                ));
+                entry.index()
             })
             .collect::<Vec<_>>(),
         [1]

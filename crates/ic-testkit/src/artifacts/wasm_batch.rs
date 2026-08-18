@@ -30,6 +30,34 @@ pub struct WasmBuildBatchReport {
     total: Duration,
 }
 
+/// One failed Wasm batch entry with its retained wall-clock time.
+#[derive(Clone, Copy, Debug)]
+pub struct WasmBuildBatchFailure<'a> {
+    index: usize,
+    error: &'a WasmBuildError,
+    entry_elapsed: Duration,
+}
+
+impl<'a> WasmBuildBatchFailure<'a> {
+    /// Zero-based position in the supplied specification slice.
+    #[must_use]
+    pub const fn index(self) -> usize {
+        self.index
+    }
+
+    /// Structured acquisition failure.
+    #[must_use]
+    pub const fn error(self) -> &'a WasmBuildError {
+        self.error
+    }
+
+    /// Complete wall-clock time retained for this failed entry.
+    #[must_use]
+    pub const fn entry_elapsed(self) -> Duration {
+        self.entry_elapsed
+    }
+}
+
 /// Aggregate counters and successful-acquisition timings for a Wasm build batch.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WasmBuildBatchMetrics {
@@ -100,9 +128,13 @@ impl WasmBuildBatchReport {
         indexed_outcomes(&self.results)
     }
 
-    /// Failures with their specification indexes.
-    pub fn failures(&self) -> impl Iterator<Item = (usize, &WasmBuildError)> {
-        indexed_failures(&self.results)
+    /// Structured failed entries with indexes, errors, and wall-clock times.
+    pub fn failures(&self) -> impl Iterator<Item = WasmBuildBatchFailure<'_>> {
+        indexed_failures(&self.results).map(|(index, error)| WasmBuildBatchFailure {
+            index,
+            error,
+            entry_elapsed: self.entry_elapsed[index],
+        })
     }
 
     /// Integrated shared-target maintenance outcomes with their build indexes.

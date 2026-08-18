@@ -4,6 +4,37 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.4
+
+`0.8.4` adds sequential collect-all diagnostics for caller-labeled exact
+requests. `PocketIcDiagnosticsExt::collect_canister_diagnostics_batch` attempts
+every target and returns ordered `CanisterDiagnosticsBatchEntry` values. Each
+entry retains its label, exact controller-aware request, independent status and
+log outcomes, bounded lossy UTF-8 log content, and omitted-byte/record counts.
+An earlier rejection, dead PocketIC transport, or panic does not prevent later
+entries from being attempted. There is no anonymous retry and
+`dump_canister_debug` is not restored.
+
+Wasm and generic artifact collect-all reports now expose structured failed
+entries with specification index, error or failure, and complete entry wall
+time. Generic reports also retain an ordered `entry_elapsed` value for every
+success and failure. Detailed partial phase timings for failed preparation or
+commit paths remain a future error-contract change.
+
+### Hard-cut migration
+
+| 0.8.3 API | 0.8.4 API |
+| --- | --- |
+| `WasmBuildBatchReport::failures()` yields `(usize, &WasmBuildError)` | Yields `WasmBuildBatchFailure`; use `index()`, `error()`, and `entry_elapsed()` |
+| `ArtifactCacheBatchReport::failures()` yields `(usize, &ArtifactCacheBatchFailure<E>)` | Yields `ArtifactCacheBatchFailedEntry<E>`; use `index()`, `failure()`, and `entry_elapsed()` |
+
+The tuple iterators have no aliases or deprecated bridges. Generic batch input
+hashing is not memoized across entries because current preparation rehashes to
+detect mutations. Safe reuse requires a caller-supplied source-immutability
+lease or explicit revalidation. Caller-supplied stable artifact entry keys are
+likewise reserved for one future labeled-spec hard cut rather than a parallel
+key sidecar.
+
 ## 0.8.3
 
 `0.8.3` is a behavior-preserving code-hygiene patch. It consolidates optional
