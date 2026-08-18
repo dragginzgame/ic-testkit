@@ -3,8 +3,8 @@
 //! `ic-testkit` keeps PocketIC itself visible: [`pic`] re-exports the upstream
 //! `PocketIc` and `PocketIcBuilder` types and adds extension traits for typed
 //! Candid calls, generic installation, diagnostics, snapshots, startup errors,
-//! and a small time conversion. It does not provide a simulator wrapper or a
-//! host-wide runtime lock.
+//! caller-owned managed-server startup, and a small time conversion. It does
+//! not provide a simulator wrapper or a host-wide runtime lock.
 //!
 //! The crate also provides:
 //!

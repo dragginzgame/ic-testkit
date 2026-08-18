@@ -4,6 +4,64 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.7
+
+Managed spawn now allocates stdout, stderr, and the server-owned port path
+inside a unique private directory, but creates only the output files before
+launch. The actual `--port-file` path remains absent until PocketIC publishes
+it; a missing path is treated as pending readiness. This fixes PocketIC 15,
+which exits successfully without starting when the supplied port path already
+exists.
+
+`PocketIcStartupConfig::start_managed_server` returns a caller-owned
+`PocketIcManagedServer`. Its `url()` can feed any number of bounded
+`PocketIcStartupConfig::connect` calls in a serial suite, `output()` returns
+the first 16 KiB of lossy stdout/stderr per stream with an omitted-byte marker,
+and dropping the handle terminates and waits for the managed child. Keep the
+handle alive until its connected instances are dropped. This is explicit
+ownership rather than a process-global server or an implicit retry path.
+
+An ignored real-server regression test accepts the exact caller-resolved
+binary through `IC_TESTKIT_POCKET_IC_SERVER`. It verifies port publication,
+bounded instance construction, owned shutdown, and startup-directory cleanup
+without adding binary discovery or download behavior to the crate.
+
+`WasmBuildSession` is an explicit caller-owned cross-call input snapshot. Its
+constructor borrows a source write-exclusion guard for the session lifetime;
+the caller must ensure that all Cargo/rustc executables, manifests and Cargo
+configuration, discovered sources, declared additional inputs, and relevant
+environment values are immutable while the session exists. Exact resolution
+snapshots and content digests may then be reused by separate sequential
+`build_batch` or `build_batch_with_progress` calls. Ordinary batch functions
+retain their current per-call validation, and there is no ambient or
+process-global cache.
+
+If revalidation around a Cargo build detects an input mutation, the session is
+permanently invalidated, all pending pre-race snapshots are discarded, and a
+later call returns `WasmBuildBatchContractError::SourceLeaseInvalidated`.
+`WasmBuildSession::metrics` exposes retained snapshots, successful snapshot
+reuses, and invalidation state; each batch separately reports
+`input_resolution_session_reuses`.
+
+Failed Wasm batch entries now expose `WasmBuildFailurePhase` and partial
+`WasmBuildFailureTimings` through `WasmBuildBatchFailure::phase` and `timings`.
+The timings retain completed exact/shared coordination, tool identity, Cargo
+metadata, input discovery, content hashing, shared maintenance, Cargo,
+publication, exact-cache maintenance, explicit cleanup, and total wall time.
+Successful build-record timing remains unchanged.
+
+### Hard-cut migration
+
+| 0.8.6 API | 0.8.7 API |
+| --- | --- |
+| `WasmBuildBatchEntry::into_parts() -> (usize, String, Result<_, _>, Duration)` | Destructure `(index, label, result, failure_details, entry_elapsed)`; failed entries carry `Some(WasmBuildFailureDetails)` |
+| `WasmBuildBatchFailure` exposes only label/index/error/elapsed | Use `phase()` and `timings()` for the primary failed phase and partial work |
+| Separate batch calls always resolve their inputs independently | Hold the real source write-exclusion guard and call `WasmBuildSession::new(&guard)` when the immutable-source contract can be guaranteed |
+
+There is no four-field `into_parts` alias, deprecated session-free overload,
+implicit guard, global cache, or reset-after-race shim. Batches remain
+sequential and collect-all; recipe and observer panics continue unwinding.
+
 ## 0.8.6
 
 Wasm batches now require `LabeledWasmBuildSpec`. Labels must be nonempty and

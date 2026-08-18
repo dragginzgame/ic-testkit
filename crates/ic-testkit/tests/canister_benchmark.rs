@@ -12,12 +12,12 @@ use ic_testkit::{
         ArtifactCacheError, ArtifactCacheMaintenance, ArtifactCachePreparation,
         ArtifactCachePrunePolicy, ArtifactCacheSpec, LabeledWasmBuildSpec,
         SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
-        WasmBuildBatchMetrics, WasmBuildBatchOutcomeEntry, WasmBuildOutcome,
-        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
-        build_wasm_canisters_cached, build_wasm_canisters_cached_batch,
-        build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
-        prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
-        wasm_path, workspace_root_for,
+        WasmBuildBatchConfig, WasmBuildBatchContractError, WasmBuildBatchMetrics,
+        WasmBuildBatchOutcomeEntry, WasmBuildFailurePhase, WasmBuildOutcome,
+        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSession, WasmBuildSpec,
+        build_wasm_canisters_cached, build_wasm_canisters_cached_with_progress,
+        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
+        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -28,7 +28,7 @@ use ic_testkit::{
 use std::{
     fs,
     path::Path,
-    sync::{Arc, Barrier},
+    sync::{Arc, Barrier, Mutex},
     thread,
     time::Duration,
 };
@@ -63,7 +63,14 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         ),
     ];
 
-    let batch = build_wasm_canisters_cached_batch(&specs).expect("valid labeled Wasm batch");
+    let source_write_exclusion = Mutex::new(());
+    let source_guard = source_write_exclusion
+        .lock()
+        .expect("lock immutable source fixture");
+    let mut session = WasmBuildSession::new(&source_guard);
+    let batch = session
+        .build_batch(&specs, ic_testkit::artifacts::WasmBuildBatchConfig::new())
+        .expect("valid leased Wasm batch");
 
     assert!(batch.is_success());
     assert_cold_batch_metrics(batch.metrics());
@@ -105,8 +112,12 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         ),
         specs[1].clone(),
     ];
-    let with_failure = build_wasm_canisters_cached_batch(&with_invalid_middle)
-        .expect("valid labeled failure batch");
+    let with_failure = session
+        .build_batch(
+            &with_invalid_middle,
+            ic_testkit::artifacts::WasmBuildBatchConfig::new(),
+        )
+        .expect("valid leased failure batch");
     assert!(!with_failure.is_success());
     assert_reused_batch_metrics_with_failure(with_failure.metrics());
     assert_eq!(with_failure.outcomes().count(), 2);
@@ -126,6 +137,11 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         first_exact_cache.is_dir(),
         "a validated caller-facing hit must recreate its immutable cache directory"
     );
+    assert_eq!(session.metrics().snapshots(), 2);
+    assert_eq!(session.metrics().snapshot_reuses(), 2);
+    assert!(!session.metrics().is_invalidated());
+    drop(session);
+    drop(source_guard);
     fs::remove_dir_all(root).expect("remove independent feature fixture");
 }
 
@@ -178,6 +194,7 @@ fn assert_cold_batch_metrics(metrics: WasmBuildBatchMetrics) {
     assert_eq!(metrics.reused(), 0);
     assert_eq!(metrics.input_resolution_runs(), 1);
     assert_eq!(metrics.input_resolution_reuses(), 1);
+    assert_eq!(metrics.input_resolution_session_reuses(), 0);
     assert!(metrics.successful_timings().input_resolution().total() > Duration::ZERO);
     assert!(metrics.successful_timings().cargo_build().is_some());
 }
@@ -187,8 +204,9 @@ fn assert_reused_batch_metrics_with_failure(metrics: WasmBuildBatchMetrics) {
     assert_eq!(metrics.failed(), 1);
     assert_eq!(metrics.built(), 0);
     assert_eq!(metrics.reused(), 2);
-    assert_eq!(metrics.input_resolution_runs(), 1);
-    assert_eq!(metrics.input_resolution_reuses(), 1);
+    assert_eq!(metrics.input_resolution_runs(), 0);
+    assert_eq!(metrics.input_resolution_reuses(), 0);
+    assert_eq!(metrics.input_resolution_session_reuses(), 2);
 }
 
 #[test]
@@ -737,7 +755,20 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
     let fingerprint = resolve_cargo_build_inputs(&spec)
         .expect("resolve original race fingerprint")
         .fingerprint();
-    let worker = thread::spawn(move || build_wasm_canisters_cached(&spec));
+    let worker = thread::spawn(move || {
+        let source_write_exclusion = Mutex::new(());
+        let source_guard = source_write_exclusion
+            .lock()
+            .expect("lock race-test source lease");
+        let mut session = WasmBuildSession::new(&source_guard);
+        let specs = [LabeledWasmBuildSpec::new("race", spec)];
+        let report = session
+            .build_batch(&specs, WasmBuildBatchConfig::new())
+            .expect("valid race-test batch");
+        let invalidated = session.metrics().is_invalidated();
+        let next = session.build_batch(&specs, WasmBuildBatchConfig::new());
+        (report, invalidated, next)
+    });
     wait_for_path(&started);
     fs::write(
         &source,
@@ -746,14 +777,28 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
     .expect("change source during blocked Cargo build");
     fs::write(&release, b"go").expect("release blocked Cargo build");
 
-    let error = worker
+    let (report, invalidated, next) = worker
         .join()
-        .expect("shared input-race worker must not panic")
-        .expect_err("changed source must reject exact publication");
+        .expect("shared input-race worker must not panic");
+    let failure = report
+        .failures()
+        .next()
+        .expect("changed source must fail the leased entry");
+    let error = failure.error();
 
     assert!(matches!(
         error,
         WasmBuildError::InputsChangedDuringBuild { .. }
+    ));
+    assert_eq!(failure.phase(), WasmBuildFailurePhase::ContentHashing);
+    assert!(failure.timings().input_resolution().content_hashing() > Duration::ZERO);
+    assert!(failure.timings().cargo_build().is_some());
+    assert!(failure.timings().artifact_publication().is_some());
+    assert!(failure.timings().cleanup().is_some());
+    assert!(invalidated);
+    assert!(matches!(
+        next,
+        Err(WasmBuildBatchContractError::SourceLeaseInvalidated)
     ));
     assert!(root.join("shared-target").is_dir());
     assert!(

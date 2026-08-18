@@ -5,8 +5,9 @@
 //! snapshots, fallible startup, and nanosecond time conversion. Native
 //! simulator operations remain upstream inherent methods.
 //!
-//! No type in this module serializes independent instances or owns PocketIC's
-//! server download/cache policy.
+//! [`PocketIcManagedServer`] can explicitly own one exact caller-selected
+//! server child for a serial suite. No type serializes independent instances
+//! or owns PocketIC's server download/cache policy.
 
 pub use pocket_ic::{
     CanisterStatusResult, ErrorCode, LATEST_SERVER_VERSION, PocketIc, PocketIcBuilder, RejectCode,
@@ -63,7 +64,10 @@ pub use standalone_pool::{
     StandaloneFixturePoolError, StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason,
     StandaloneFixturePoolStage, StandaloneFixturePoolTimings,
 };
-pub use startup::{PocketIcBuilderExt, PocketIcStartupConfig, PocketIcStartupError};
+pub use startup::{
+    PocketIcBuilderExt, PocketIcManagedServer, PocketIcManagedServerOutput, PocketIcStartupConfig,
+    PocketIcStartupError,
+};
 pub use time::PocketIcTimeExt;
 pub use transport::is_dead_pocket_ic_transport_error;
 

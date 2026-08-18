@@ -2,6 +2,8 @@
 //!
 //! These functions keep integration-test artifacts in caller-selected target
 //! directories and contain no application-specific package or profile policy.
+//! Independent Wasm batches remain sequential; [`WasmBuildSession`] adds only
+//! explicit cross-call resolution reuse under a caller-held source lease.
 
 mod cache_fs;
 mod digest;
@@ -39,6 +41,7 @@ pub use wasm_batch::{
     LabeledWasmBuildSpec, WasmBuildBatchConfig, WasmBuildBatchContractError, WasmBuildBatchEntry,
     WasmBuildBatchFailure, WasmBuildBatchMaintenanceEntry, WasmBuildBatchMetrics,
     WasmBuildBatchOutcomeEntry, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
+    WasmBuildFailureDetails, WasmBuildSession, WasmBuildSessionMetrics,
     build_wasm_canisters_cached_batch, build_wasm_canisters_cached_batch_with_config,
     build_wasm_canisters_cached_batch_with_config_and_progress,
     build_wasm_canisters_cached_batch_with_progress,
@@ -47,10 +50,11 @@ pub use wasm_cache::{
     CargoBuildInput, ResolvedCargoBuildInputs, SharedIncrementalTargetInspection,
     SharedIncrementalTargetMaintenance, SharedIncrementalTargetMaintenanceConfig,
     SharedIncrementalTargetMaintenanceFailureMode, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome,
-    WasmBuildOutputStream, WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent,
-    WasmBuildProgressOutcome, WasmBuildProgressPhase, WasmBuildRecord, WasmBuildSpec,
-    WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached,
+    SharedIncrementalTargetPrunePolicy, WasmBuildCacheMode, WasmBuildError, WasmBuildFailurePhase,
+    WasmBuildFailureTimings, WasmBuildOutcome, WasmBuildOutputStream, WasmBuildPhase,
+    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildProgressOutcome,
+    WasmBuildProgressPhase, WasmBuildRecord, WasmBuildSpec, WasmBuildTimings,
+    WasmInputResolutionTimings, build_wasm_canisters_cached,
     build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
     maintain_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
     prune_wasm_build_cache, resolve_cargo_build_inputs,

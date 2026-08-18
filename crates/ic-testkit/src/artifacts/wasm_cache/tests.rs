@@ -889,12 +889,15 @@ fn failed_build_removes_its_incomplete_fingerprint_directory() {
         message: "synthetic build failure".to_owned(),
     });
 
+    let mut progress = ProgressReporter::silent();
     let result = finish_fingerprint_build(
         failure,
         IncompleteBuildDirectory::new(fingerprint_dir.clone()),
+        &mut progress,
     );
 
     assert!(matches!(result, Err(WasmBuildError::InvalidSpec { .. })));
+    assert!(progress.failure_timings.cleanup().is_some());
     assert!(!fingerprint_dir.exists());
     fs::remove_dir_all(target_dir).expect("remove cleanup test directory");
 }

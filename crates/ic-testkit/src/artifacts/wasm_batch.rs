@@ -1,14 +1,16 @@
 use std::{
     collections::{HashMap, HashSet},
+    marker::PhantomData,
     path::PathBuf,
     time::{Duration, Instant},
 };
 
 use super::wasm_cache::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputMetrics, WasmBuildBatchInputResolver,
-    WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome, WasmBuildProgressConfig,
-    WasmBuildProgressEvent, WasmBuildSpec, WasmBuildTimings, build_wasm_canisters_cached_in_batch,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchAttempt, WasmBuildBatchInputMetrics,
+    WasmBuildBatchInputResolver, WasmBuildCacheMode, WasmBuildError, WasmBuildFailurePhase,
+    WasmBuildFailureTimings, WasmBuildOutcome, WasmBuildProgressConfig, WasmBuildProgressEvent,
+    WasmBuildSessionState, WasmBuildSpec, WasmBuildTimings, build_wasm_canisters_cached_in_batch,
     build_wasm_canisters_cached_in_batch_with_progress,
 };
 
@@ -36,13 +38,39 @@ pub struct WasmBuildBatchReport {
     total: Duration,
 }
 
+/// Explicit cross-call input snapshot scoped to a caller-held source lease.
+///
+/// The session contains no global state. It may reuse successful Cargo/rustc
+/// identity, metadata, input-discovery, and content-digest work while the
+/// caller keeps the supplied write-exclusion guard alive and unchanged.
+pub struct WasmBuildSession<'guard> {
+    state: WasmBuildSessionState,
+    _source_guard: PhantomData<&'guard ()>,
+}
+
+/// Aggregate state retained by one explicit Wasm build session.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct WasmBuildSessionMetrics {
+    snapshots: usize,
+    snapshot_reuses: usize,
+    invalidated: bool,
+}
+
 /// One ordered caller-labeled result from a Wasm build batch.
 #[derive(Debug)]
 pub struct WasmBuildBatchEntry {
     index: usize,
     label: String,
     result: Result<WasmBuildOutcome, WasmBuildError>,
+    failure: Option<WasmBuildFailureDetails>,
     entry_elapsed: Duration,
+}
+
+/// Structured phase and partial timings for one failed Wasm entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WasmBuildFailureDetails {
+    phase: WasmBuildFailurePhase,
+    timings: WasmBuildFailureTimings,
 }
 
 /// One successful Wasm batch entry.
@@ -60,6 +88,7 @@ pub struct WasmBuildBatchFailure<'a> {
     index: usize,
     label: &'a str,
     error: &'a WasmBuildError,
+    details: WasmBuildFailureDetails,
     entry_elapsed: Duration,
 }
 
@@ -89,6 +118,8 @@ pub enum WasmBuildBatchContractError {
         /// Position where the label was repeated.
         duplicate_index: usize,
     },
+    /// A source mutation invalidated the caller's immutable-source lease.
+    SourceLeaseInvalidated,
 }
 
 impl LabeledWasmBuildSpec {
@@ -117,6 +148,82 @@ impl LabeledWasmBuildSpec {
     #[must_use]
     pub fn into_parts(self) -> (String, WasmBuildSpec) {
         (self.label, self.spec)
+    }
+}
+
+impl<'guard> WasmBuildSession<'guard> {
+    /// Bind a reusable input snapshot to a caller-owned source write-exclusion guard.
+    ///
+    /// The guard must prevent mutation of every Cargo/rustc executable,
+    /// manifest, configuration file, discovered source, declared additional
+    /// input, and relevant environment value used by every specification sent
+    /// through this session. The guard must remain held until the session is
+    /// dropped. Supplying an unrelated value can permit stale cache reuse.
+    #[must_use]
+    pub fn new<Guard: ?Sized>(_source_write_guard: &'guard Guard) -> Self {
+        Self {
+            state: WasmBuildSessionState::new(),
+            _source_guard: PhantomData,
+        }
+    }
+
+    /// Build one sequential collect-all batch using retained immutable inputs.
+    pub fn build_batch(
+        &mut self,
+        specs: &[LabeledWasmBuildSpec],
+        config: WasmBuildBatchConfig,
+    ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
+        build_wasm_canisters_cached_batch_with_session(specs, config, &mut self.state)
+    }
+
+    /// Build one observed sequential batch using retained immutable inputs.
+    pub fn build_batch_with_progress<F>(
+        &mut self,
+        specs: &[LabeledWasmBuildSpec],
+        batch_config: WasmBuildBatchConfig,
+        progress_config: WasmBuildProgressConfig,
+        observer: F,
+    ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
+    where
+        F: FnMut(WasmBuildBatchProgressEvent),
+    {
+        build_wasm_canisters_cached_batch_with_session_and_progress(
+            specs,
+            batch_config,
+            progress_config,
+            &mut self.state,
+            observer,
+        )
+    }
+
+    /// Current retained snapshot, reuse, and invalidation counters.
+    #[must_use]
+    pub const fn metrics(&self) -> WasmBuildSessionMetrics {
+        WasmBuildSessionMetrics {
+            snapshots: self.state.snapshot_count(),
+            snapshot_reuses: self.state.snapshot_reuses(),
+            invalidated: self.state.is_invalidated(),
+        }
+    }
+}
+
+impl WasmBuildSessionMetrics {
+    /// Number of successful exact specification snapshots currently retained.
+    #[must_use]
+    pub const fn snapshots(self) -> usize {
+        self.snapshots
+    }
+
+    /// Number of later entries resolved from a retained snapshot.
+    #[must_use]
+    pub const fn snapshot_reuses(self) -> usize {
+        self.snapshot_reuses
+    }
+
+    /// Whether a detected source race permanently invalidated this session.
+    #[must_use]
+    pub const fn is_invalidated(self) -> bool {
+        self.invalidated
     }
 }
 
@@ -150,6 +257,12 @@ impl WasmBuildBatchEntry {
         self.result.as_ref().err()
     }
 
+    /// Structured phase and partial timings when this entry failed.
+    #[must_use]
+    pub const fn failure_details(&self) -> Option<WasmBuildFailureDetails> {
+        self.failure
+    }
+
     /// Complete wall-clock time retained for this entry.
     #[must_use]
     pub const fn entry_elapsed(&self) -> Duration {
@@ -162,16 +275,37 @@ impl WasmBuildBatchEntry {
         self.result.is_ok()
     }
 
-    /// Consume the entry into its ordered identity, result, and wall time.
+    /// Consume the entry into its identity, result, optional failure details, and wall time.
     pub fn into_parts(
         self,
     ) -> (
         usize,
         String,
         Result<WasmBuildOutcome, WasmBuildError>,
+        Option<WasmBuildFailureDetails>,
         Duration,
     ) {
-        (self.index, self.label, self.result, self.entry_elapsed)
+        (
+            self.index,
+            self.label,
+            self.result,
+            self.failure,
+            self.entry_elapsed,
+        )
+    }
+}
+
+impl WasmBuildFailureDetails {
+    /// Primary acquisition phase that returned the failure.
+    #[must_use]
+    pub const fn phase(self) -> WasmBuildFailurePhase {
+        self.phase
+    }
+
+    /// Partial phase timings retained before the failure returned.
+    #[must_use]
+    pub const fn timings(self) -> WasmBuildFailureTimings {
+        self.timings
     }
 }
 
@@ -220,6 +354,18 @@ impl<'a> WasmBuildBatchFailure<'a> {
         self.error
     }
 
+    /// Primary acquisition phase that returned the failure.
+    #[must_use]
+    pub const fn phase(self) -> WasmBuildFailurePhase {
+        self.details.phase
+    }
+
+    /// Partial phase timings retained before the failure returned.
+    #[must_use]
+    pub const fn timings(self) -> WasmBuildFailureTimings {
+        self.details.timings
+    }
+
     /// Complete wall-clock time retained for this failed entry.
     #[must_use]
     pub const fn entry_elapsed(self) -> Duration {
@@ -257,6 +403,7 @@ pub struct WasmBuildBatchMetrics {
     reused: usize,
     input_resolution_runs: usize,
     input_resolution_reuses: usize,
+    input_resolution_session_reuses: usize,
     successful_timings: WasmBuildTimings,
     total: Duration,
 }
@@ -331,6 +478,9 @@ impl WasmBuildBatchReport {
                 index: entry.index,
                 label: &entry.label,
                 error,
+                details: entry
+                    .failure
+                    .expect("failed Wasm batch entry must retain failure details"),
                 entry_elapsed: entry.entry_elapsed,
             })
         })
@@ -375,6 +525,7 @@ impl WasmBuildBatchReport {
             specifications: self.entries.len(),
             input_resolution_runs: self.input_resolution.runs,
             input_resolution_reuses: self.input_resolution.reuses,
+            input_resolution_session_reuses: self.input_resolution.session_reuses,
             total: self.total,
             ..WasmBuildBatchMetrics::default()
         };
@@ -441,6 +592,12 @@ impl WasmBuildBatchMetrics {
         self.input_resolution_reuses
     }
 
+    /// Number of specifications resolved from an explicit session snapshot.
+    #[must_use]
+    pub const fn input_resolution_session_reuses(self) -> usize {
+        self.input_resolution_session_reuses
+    }
+
     /// Sum of timings from successful acquisitions.
     #[must_use]
     pub const fn successful_timings(self) -> WasmBuildTimings {
@@ -499,7 +656,7 @@ impl std::fmt::Display for WasmBuildBatchReport {
         let metrics = self.metrics();
         write!(
             formatter,
-            "builds={} succeeded={} failed={} built={} reused={} input_resolution_runs={} input_resolution_reuses={} successful_timings=({}) total={:?}",
+            "builds={} succeeded={} failed={} built={} reused={} input_resolution_runs={} input_resolution_reuses={} input_resolution_session_reuses={} successful_timings=({}) total={:?}",
             metrics.specifications(),
             metrics.succeeded(),
             metrics.failed(),
@@ -507,6 +664,7 @@ impl std::fmt::Display for WasmBuildBatchReport {
             metrics.reused(),
             metrics.input_resolution_runs(),
             metrics.input_resolution_reuses(),
+            metrics.input_resolution_session_reuses(),
             metrics.successful_timings(),
             metrics.total(),
         )
@@ -535,12 +693,37 @@ pub fn build_wasm_canisters_cached_batch_with_config(
     specs: &[LabeledWasmBuildSpec],
     config: WasmBuildBatchConfig,
 ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
+    build_wasm_canisters_cached_batch_internal(specs, config, None)
+}
+
+fn build_wasm_canisters_cached_batch_with_session(
+    specs: &[LabeledWasmBuildSpec],
+    config: WasmBuildBatchConfig,
+    session: &mut WasmBuildSessionState,
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
+    build_wasm_canisters_cached_batch_internal(specs, config, Some(session))
+}
+
+fn build_wasm_canisters_cached_batch_internal(
+    specs: &[LabeledWasmBuildSpec],
+    config: WasmBuildBatchConfig,
+    session: Option<&mut WasmBuildSessionState>,
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
     validate_batch_labels(specs)?;
+    if session
+        .as_deref()
+        .is_some_and(WasmBuildSessionState::is_invalidated)
+    {
+        return Err(WasmBuildBatchContractError::SourceLeaseInvalidated);
+    }
     let build_specs = specs
         .iter()
         .map(|labeled| labeled.spec.clone())
         .collect::<Vec<_>>();
-    let mut resolver = WasmBuildBatchInputResolver::new(&build_specs);
+    let mut resolver = session.map_or_else(
+        || WasmBuildBatchInputResolver::new(&build_specs),
+        |session| WasmBuildBatchInputResolver::with_session(&build_specs, session),
+    );
     let mut report = build_wasm_batch(specs, config, |spec, index| {
         build_wasm_canisters_cached_in_batch(spec, index, &mut resolver)
     });
@@ -574,18 +757,65 @@ pub fn build_wasm_canisters_cached_batch_with_config_and_progress<F>(
     specs: &[LabeledWasmBuildSpec],
     batch_config: WasmBuildBatchConfig,
     progress_config: WasmBuildProgressConfig,
+    observer: F,
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
+where
+    F: FnMut(WasmBuildBatchProgressEvent),
+{
+    build_wasm_canisters_cached_batch_with_progress_internal(
+        specs,
+        batch_config,
+        progress_config,
+        None,
+        observer,
+    )
+}
+
+fn build_wasm_canisters_cached_batch_with_session_and_progress<F>(
+    specs: &[LabeledWasmBuildSpec],
+    batch_config: WasmBuildBatchConfig,
+    progress_config: WasmBuildProgressConfig,
+    session: &mut WasmBuildSessionState,
+    observer: F,
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
+where
+    F: FnMut(WasmBuildBatchProgressEvent),
+{
+    build_wasm_canisters_cached_batch_with_progress_internal(
+        specs,
+        batch_config,
+        progress_config,
+        Some(session),
+        observer,
+    )
+}
+
+fn build_wasm_canisters_cached_batch_with_progress_internal<F>(
+    specs: &[LabeledWasmBuildSpec],
+    batch_config: WasmBuildBatchConfig,
+    progress_config: WasmBuildProgressConfig,
+    session: Option<&mut WasmBuildSessionState>,
     mut observer: F,
 ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
 where
     F: FnMut(WasmBuildBatchProgressEvent),
 {
     validate_batch_labels(specs)?;
+    if session
+        .as_deref()
+        .is_some_and(WasmBuildSessionState::is_invalidated)
+    {
+        return Err(WasmBuildBatchContractError::SourceLeaseInvalidated);
+    }
     let count = specs.len();
     let build_specs = specs
         .iter()
         .map(|labeled| labeled.spec.clone())
         .collect::<Vec<_>>();
-    let mut resolver = WasmBuildBatchInputResolver::new(&build_specs);
+    let mut resolver = session.map_or_else(
+        || WasmBuildBatchInputResolver::new(&build_specs),
+        |session| WasmBuildBatchInputResolver::with_session(&build_specs, session),
+    );
     let mut report = build_wasm_batch(specs, batch_config, |spec, index| {
         let label = specs[index].label.clone();
         observer(WasmBuildBatchProgressEvent::BuildStarted {
@@ -593,7 +823,7 @@ where
             label: label.clone(),
             total: count,
         });
-        let result = build_wasm_canisters_cached_in_batch_with_progress(
+        let attempt = build_wasm_canisters_cached_in_batch_with_progress(
             spec,
             index,
             &mut resolver,
@@ -606,11 +836,11 @@ where
                 });
             },
         );
-        observer(match result {
+        observer(match &attempt.result {
             Ok(_) => WasmBuildBatchProgressEvent::BuildFinished { index, label },
             Err(_) => WasmBuildBatchProgressEvent::BuildFailed { index, label },
         });
-        result
+        attempt
     });
     report.input_resolution = resolver.metrics();
     Ok(report)
@@ -622,7 +852,7 @@ fn build_wasm_batch<F>(
     mut build: F,
 ) -> WasmBuildBatchReport
 where
-    F: FnMut(&WasmBuildSpec, usize) -> Result<WasmBuildOutcome, WasmBuildError>,
+    F: FnMut(&WasmBuildSpec, usize) -> WasmBuildBatchAttempt,
 {
     let started = Instant::now();
     let mut entries = Vec::with_capacity(specs.len());
@@ -633,20 +863,36 @@ where
         if config.shared_incremental_maintenance.is_some()
             && spec.shared_incremental_target_maintenance().is_some()
         {
+            let elapsed = entry_started.elapsed();
+            let attempt =
+                WasmBuildBatchAttempt::invalid_spec(batch_maintenance_ownership_error(), elapsed);
             entries.push(WasmBuildBatchEntry {
                 index,
                 label: labeled.label.clone(),
-                result: Err(batch_maintenance_ownership_error()),
-                entry_elapsed: entry_started.elapsed(),
+                result: attempt.result,
+                failure: Some(WasmBuildFailureDetails {
+                    phase: attempt
+                        .failure_phase
+                        .expect("invalid batch entry must retain its failure phase"),
+                    timings: attempt
+                        .failure_timings
+                        .expect("invalid batch entry must retain its failure timings"),
+                }),
+                entry_elapsed: elapsed,
             });
             continue;
         }
         let configured = maintenance.prepare_spec(spec);
-        let result = build(configured.as_ref().unwrap_or(spec), index);
+        let attempt = build(configured.as_ref().unwrap_or(spec), index);
+        let failure = attempt
+            .failure_phase
+            .zip(attempt.failure_timings)
+            .map(|(phase, timings)| WasmBuildFailureDetails { phase, timings });
         entries.push(WasmBuildBatchEntry {
             index,
             label: labeled.label.clone(),
-            result,
+            result: attempt.result,
+            failure,
             entry_elapsed: entry_started.elapsed(),
         });
     }
@@ -727,6 +973,9 @@ impl std::fmt::Display for WasmBuildBatchContractError {
             } => write!(
                 formatter,
                 "Wasm batch label {label:?} at index {duplicate_index} duplicates index {first_index}",
+            ),
+            Self::SourceLeaseInvalidated => formatter.write_str(
+                "Wasm build session source lease was invalidated by a detected input mutation",
             ),
         }
     }

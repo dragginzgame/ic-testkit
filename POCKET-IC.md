@@ -27,9 +27,11 @@ upstream.
 PocketIC owns its default server-binary discovery, downloading, validation,
 and caching. The bounded ic-testkit startup path deliberately bypasses that
 implicit path: the caller supplies one already-resolved compatible executable,
-and ic-testkit only owns that process long enough to observe readiness and keep
-its child handle reaped. It has no duplicate downloader, resolver, or binary
-cache.
+and ic-testkit owns only that exact child lifecycle. One-shot managed
+`try_build` keeps a reaper until the child exits; a caller can instead retain
+`PocketIcManagedServer` explicitly and construct several instances through its
+URL. Neither path adds a downloader, resolver, binary cache, or compatibility
+guess.
 
 It would be useful if upstream provided a first-class, non-panicking server
 binary resolver with:
@@ -61,12 +63,30 @@ the child when the complete deadline expires. Connect mode bounds construction
 against an existing caller-owned server. Upstream panics remain unclassified
 structured errors.
 
+PocketIC 15 also requires the `--port-file` path not to exist before spawn. If
+an empty file is pre-created, the server exits successfully and silently rather
+than binding and publishing its port. The local launcher therefore creates a
+unique private directory and output files but deliberately leaves the port path
+absent; `NotFound` remains pending until PocketIC publishes a newline-terminated
+port. Synthetic startup tests reject a pre-existing fourth argument explicitly.
+An ignored live regression test accepts the exact binary through
+`IC_TESTKIT_POCKET_IC_SERVER` and verifies real port publication, bounded
+instance construction, owned shutdown, and temporary-directory cleanup.
+
+`PocketIcStartupConfig::start_managed_server` exposes the same bounded launcher
+without constructing an instance. The returned `PocketIcManagedServer` retains
+the URL and bounded lossy output and terminates and waits for the child on drop.
+Serial runners can keep that handle alive and use bounded connect-mode builders
+without reimplementing process ownership. This remains explicit caller scope,
+not a process-global singleton.
+
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
 structured startup error, while `start_server` could accept a readiness
 deadline, poll `Child::try_wait`, retain bounded output, and terminate/reap on
-failure. Once those cover the same lifecycle, ic-testkit should delegate or
-remove its process-owning extension.
+failure. An upstream owned-server handle would additionally remove the need for
+the local serial-suite lifecycle type. Once those cover the same lifecycle,
+ic-testkit should delegate or remove its process-owning extension.
 
 ### Fallible Lifecycle and Transport APIs
 
@@ -164,8 +184,9 @@ ic-testkit cannot truthfully forward those values.
 
 Until upstream exposes that provenance, reproducible benchmark suites should
 resolve and hash a compatible binary themselves, pass that exact path to
-`PocketIcStartupConfig::spawn`, and record those values. ic-testkit should not
-recreate PocketIC's binary resolver to infer them.
+`PocketIcStartupConfig::spawn` for either one-shot construction or an explicit
+managed handle, and record those values. ic-testkit should not recreate
+PocketIC's binary resolver to infer them.
 
 Useful additional upstream APIs are:
 
@@ -196,6 +217,11 @@ across unrelated PocketIC instances.
 Locks remain local to genuinely shared resources owned by `ic-testkit`, such
 as one benchmark output path or one explicitly shared cached baseline. The
 PocketIC server cache and any synchronization around it remain upstream-owned.
+
+An optional `PocketIcManagedServer` is likewise caller-scoped ownership of one
+server process, not a host-wide instance lock. Several `PocketIc` instances may
+use its endpoint while retaining independent upstream instance state and
+lifetimes; the caller decides whether that serial-suite topology is appropriate.
 
 See [`docs/design/0.2-concurrency/0.2-design.md`](docs/design/0.2-concurrency/0.2-design.md)
 for the historical design record behind this decision.

@@ -103,7 +103,7 @@ restored or validated.
 | Area | Main surface | Value added by ic-testkit |
 | --- | --- | --- |
 | PocketIC runtime | `PocketIc`, `PocketIcBuilder` | Direct upstream re-exports; no wrapper |
-| Startup | `PocketIcBuilderExt`, `PocketIcStartupConfig` | Explicit bounded spawn/connect policy with structured child, readiness, and builder failures |
+| Startup | `PocketIcBuilderExt`, `PocketIcStartupConfig`, `PocketIcManagedServer` | Explicit bounded spawn/connect policy, owned shared-server lifecycle, and structured failures |
 | Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
 | Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
 | Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
@@ -209,13 +209,46 @@ monitors it while waiting for its port file and while PocketIC creates the
 instance, and terminates it if the complete deadline expires. A child exit,
 readiness timeout, invalid port, spawn failure, builder panic, and instance
 creation timeout remain distinct `PocketIcStartupError` variants. Captured
-server output is bounded and lossy UTF-8. The default managed-server hard TTL
-is ten minutes and can be changed explicitly with `with_server_hard_ttl`.
+server output retains at most the first 16 KiB per stream as lossy UTF-8 and
+appends an omitted-byte marker when truncated. The default managed-server hard
+TTL is ten minutes and can be changed explicitly with
+`with_server_hard_ttl`. After successful one-shot construction, an internal
+reaper owns the child until it exits.
 
 Use `PocketIcStartupConfig::connect(url, timeout)` for a caller-owned existing
 server. Both modes set the server URL on the builder, preventing its implicit,
 unbounded child-startup path. There is no zero-argument `try_build`, implicit
 binary fallback, or hidden retry.
+
+A serial suite can retain one testkit-owned server explicitly and construct
+several bounded instances against it:
+
+```rust,no_run
+use ic_testkit::pic::{
+    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig,
+};
+use std::{path::Path, time::Duration};
+
+fn run_serial_suite(server_binary: &Path) -> Result<(), ic_testkit::pic::PocketIcStartupError> {
+    let server = PocketIcStartupConfig::spawn(server_binary, Duration::from_secs(30))
+        .start_managed_server()?;
+    let first = PocketIcBuilder::new().with_application_subnet().try_build(
+        PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30)),
+    )?;
+    let second = PocketIcBuilder::new().with_application_subnet().try_build(
+        PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30)),
+    )?;
+    eprintln!("managed server stdout: {}", server.output().stdout());
+    drop((first, second));
+    Ok(())
+}
+```
+
+`PocketIcManagedServer` owns the child and terminates and waits for it on drop.
+Managed startup creates a unique private temporary directory but leaves the
+actual `--port-file` path absent for PocketIC to create. Output is retained as
+bounded lossy UTF-8 for the handle lifetime. Keep the handle alive until every
+instance connected through its URL has been dropped.
 
 ic-testkit does not discover, download, cache, or validate server binaries.
 Resolve the exact compatible executable before `spawn`, hash it when runtime
@@ -836,12 +869,14 @@ let batch = build_wasm_canisters_cached_batch(&specs)?;
 eprintln!("{batch}");
 for failure in batch.failures() {
     eprintln!(
-        "build {} ({}) failed after {:?}: {}",
+        "build {} ({}) failed in {:?} after {:?}: {}",
         failure.label(),
         failure.index(),
+        failure.phase(),
         failure.entry_elapsed(),
         failure.error(),
     );
+    eprintln!("partial timings: {:?}", failure.timings());
 }
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
@@ -872,17 +907,42 @@ feature semantics remain intact.
 counts; input-resolution runs and compatible-snapshot reuses; and summed
 successful acquisition timings. The structured input-resolution total makes
 distinct feature-resolution costs visible while reused snapshots remain
-counted explicitly. `entry_elapsed` retains wall time for every ordered entry,
-including failures; `failures` returns structured entries that bundle the
-label, index, error, and elapsed time. Successful entries continue to expose
-detailed phase timings through their build records.
+counted explicitly, including reuse from an explicit session. `entry_elapsed`
+retains wall time for every ordered entry, including failures; `failures`
+returns structured entries that bundle the label, index, error, primary failed
+phase, partial phase timings, and elapsed time. Successful entries continue to
+expose detailed phase timings through their build records.
 
-Compatible input reuse is deliberately scoped to one batch call. `0.8.x` has no
-silent process-global cache or cross-call build session: safely retaining source
-digests across calls requires an explicit source-immutability/staleness
-contract. The proposed session boundary and its required caller obligations are
+Repeated batches can reuse exact input snapshots when the caller owns a real
+write-exclusion boundary for every build input:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    LabeledWasmBuildSpec, WasmBuildBatchConfig, WasmBuildSession,
+};
+use std::sync::Mutex;
+
+# let specs: Vec<LabeledWasmBuildSpec> = Vec::new();
+// Every source/config/tool/environment writer must coordinate on this lock.
+let source_write_exclusion = Mutex::new(());
+let source_guard = source_write_exclusion.lock().expect("acquire source lease");
+let mut session = WasmBuildSession::new(&source_guard);
+let first = session.build_batch(&specs, WasmBuildBatchConfig::new())?;
+let second = session.build_batch(&specs, WasmBuildBatchConfig::new())?;
+eprintln!("first={first}; second={second}; session={:?}", session.metrics());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+The borrowed guard is a lifetime boundary, not filesystem locking performed by
+`ic-testkit`. Supplying an unrelated value violates the contract and can reuse
+stale inputs. The lease covers Cargo and rustc executables, manifests, Cargo
+configuration, discovered sources, declared additional inputs, and relevant
+environment values. A detected input race permanently invalidates the session,
+clears pending snapshots, and makes later calls return
+`SourceLeaseInvalidated`. Ordinary batch functions still resolve current inputs
+per call, and there is no silent process-global cache. The complete contract is
 recorded in the
-[`0.7` orchestration design](docs/design/0.7-artifact-orchestration/0.7-design.md#deferred-cross-call-immutable-build-session).
+[`0.7` orchestration design](docs/design/0.7-artifact-orchestration/0.7-design.md#explicit-cross-call-immutable-build-session).
 
 The batch remains sequential. Shared incremental Cargo targets already
 serialize access, so parallel scheduling would add lock contention. A future
@@ -1162,6 +1222,16 @@ make release-check
 The release gate includes formatting, native and Wasm checks, warnings-denied
 Clippy, rustdoc, unit and live PocketIC tests, canister fixture builds, package
 verification, publish dry-run, and the Rust 1.88 MSRV check.
+
+To exercise bounded managed startup against one exact caller-provided PocketIC
+server binary without invoking any downloader or resolver:
+
+```bash
+IC_TESTKIT_POCKET_IC_SERVER=/path/to/pocket-ic \
+  cargo test -p ic-testkit --lib \
+  pic::startup::tests::caller_provided_server_publishes_port_constructs_instance_and_cleans_up \
+  -- --ignored --exact
+```
 
 ## Releases
 

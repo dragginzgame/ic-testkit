@@ -8,6 +8,68 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-08-18 - Explicit Wasm sessions and reliable PocketIC ownership
+
+### Added
+
+- Adds explicit caller-owned `WasmBuildSession` input snapshots. A session is
+  lifetime-bound to a caller-held source write-exclusion guard and reuses exact
+  Cargo/rustc identity, metadata, input discovery, and content digests across
+  separate sequential batch calls. Ordinary batch functions remain
+  independently validated and no process-global cache is introduced.
+- Adds `WasmBuildFailurePhase`, `WasmBuildFailureTimings`, and
+  `WasmBuildFailureDetails`. Failed batch entries now retain the primary
+  specification, coordination, metadata, discovery, hashing, Cargo,
+  publication, maintenance, or cleanup phase plus all phase time completed
+  before return.
+- Adds per-batch session-reuse metrics and session-wide retained-snapshot,
+  snapshot-reuse, and invalidation counters.
+- Adds caller-owned `PocketIcManagedServer` startup through
+  `PocketIcStartupConfig::start_managed_server`. The handle exposes its URL and
+  bounded lossy output, supports multiple bounded `connect` calls, and
+  terminates and waits for its child on drop.
+
+### Changed
+
+- Permanently invalidates an explicit session after detecting an input race,
+  discards every pending snapshot captured before that race, and rejects later
+  calls with `WasmBuildBatchContractError::SourceLeaseInvalidated`.
+- Hard-cuts `WasmBuildBatchEntry::into_parts` to return failure details between
+  the result and entry elapsed time. No four-field alias or deprecated bridge
+  is retained.
+- Allocates managed PocketIC startup artifacts inside a unique private
+  directory while deliberately leaving the server-owned port-file path absent
+  before spawn. A missing path remains pending until the server publishes it,
+  matching PocketIC 15's `--port-file` contract.
+
+### Documentation
+
+- Replaces the deferred session proposal with the implemented immutable-source
+  contract, including the caller's obligation to coordinate every source,
+  configuration, tool, declared-input, and relevant-environment mutation for
+  the complete session lifetime.
+- Documents partial failed-phase timing access and the hard-cut report-entry
+  migration in the packaged changelog.
+- Documents shared serial-suite server ownership through the managed handle
+  and bounded `PocketIcStartupConfig::connect` calls.
+- Refreshes `POCKET-IC.md` and the concurrency, baseline-pool, and artifact
+  orchestration designs so their current-state sections reflect managed-server
+  ownership, PocketIC 15 port-file semantics, session digest reuse, and failed
+  Wasm phase timings.
+
+### Testing
+
+- Covers cross-call exact snapshot reuse, session metrics, source-race
+  invalidation, post-invalidation rejection, and partial metadata, hashing,
+  Cargo, and cleanup timings.
+- Covers absent pre-spawn port paths, private startup directories, synthetic
+  rejection of a pre-existing `$4` port argument, managed-server URL/output,
+  readiness timeout, child exit, and RAII termination.
+- Adds an explicit ignored real-server test driven by
+  `IC_TESTKIT_POCKET_IC_SERVER`; PocketIC 15.0.0 publishes its port, constructs
+  an instance through bounded connect mode, and leaves no startup directory
+  after owned shutdown.
+
 ## [0.8.6] - 2026-08-18 - Semantic Wasm identity and bounded PocketIC startup
 
 ### Added

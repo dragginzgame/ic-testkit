@@ -6,9 +6,12 @@ use super::{
 use crate::artifacts::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceFailureMode,
     SharedIncrementalTargetPrunePolicy, WasmBuildBatchFailure, WasmBuildError,
-    WasmBuildProgressConfig, WasmBuildSpec,
+    WasmBuildFailurePhase, WasmBuildProgressConfig, WasmBuildSpec,
 };
 use std::{path::Path, time::Duration};
+
+#[cfg(unix)]
+use crate::artifacts::test_support::{unique_temp_directory, write_executable_script};
 
 #[test]
 fn empty_independent_batch_succeeds_without_work() {
@@ -48,7 +51,38 @@ fn batch_retains_every_indexed_failure() {
             .failures()
             .all(|failure| failure.entry_elapsed() <= report.total())
     );
+    assert!(report.failures().all(|failure| {
+        failure.phase() == WasmBuildFailurePhase::Specification
+            && failure.timings().total() <= failure.entry_elapsed()
+    }));
     assert_eq!(report.outcomes().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_failure_retains_partial_metadata_timing() {
+    let root = unique_temp_directory("wasm-batch-failure-timings");
+    let cargo = root.join("cargo.sh");
+    write_executable_script(
+        &cargo,
+        b"#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'cargo 1.0.0'; exit 0; fi\nsleep 0.02\necho 'synthetic metadata failure' >&2\nexit 23\n",
+    );
+    let specs = [LabeledWasmBuildSpec::new(
+        "metadata-failure",
+        WasmBuildSpec::new(&root, &root.join("target"), &["fixture"], "debug")
+            .with_cargo_program(&cargo),
+    )];
+
+    let report = build_wasm_canisters_cached_batch(&specs).expect("valid labeled batch");
+    let failure = report.failures().next().expect("metadata failure");
+
+    assert_eq!(failure.phase(), WasmBuildFailurePhase::CargoMetadata);
+    assert!(failure.timings().input_resolution().tool_identity() > Duration::ZERO);
+    assert!(failure.timings().input_resolution().cargo_metadata() > Duration::ZERO);
+    assert_eq!(failure.timings().cargo_build(), None);
+    assert!(failure.timings().total() <= failure.entry_elapsed());
+
+    std::fs::remove_dir_all(root).expect("remove failure timing fixture");
 }
 
 #[test]
@@ -159,6 +193,7 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
     assert_eq!(failure.index(), 0);
     assert_eq!(failure.label(), "fixture");
     assert_eq!(failure.entry_elapsed(), report.entries()[0].entry_elapsed());
+    assert_eq!(failure.phase(), WasmBuildFailurePhase::Specification);
     assert!(
         matches!(failure.error(), WasmBuildError::InvalidSpec { message } if message.contains("cannot be combined"))
     );
