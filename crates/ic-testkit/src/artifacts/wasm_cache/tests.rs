@@ -203,6 +203,10 @@ fn batch_input_snapshot_reuses_compatible_toolchain_and_metadata_resolution() {
     let second = resolver
         .resolve(1, &mut progress)
         .expect("reuse batched input snapshot");
+    assert_eq!(resolver.metrics().runs, 1);
+    assert_eq!(resolver.metrics().reuses, 1);
+    assert!(first.timings().total() > Duration::ZERO);
+    assert_eq!(second.timings().total(), Duration::ZERO);
 
     let invocations = fs::read_to_string(&invocation_log).expect("read Cargo invocation log");
     assert_eq!(

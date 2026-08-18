@@ -4,7 +4,7 @@ use std::time::Duration;
 use candid::Principal;
 use pocket_ic::{ErrorCode, PocketIc, RejectResponse};
 
-use super::{CanisterInstallError, PocketIcDiagnosticsExt, transport};
+use super::{CanisterDiagnosticsRequest, CanisterInstallError, PocketIcDiagnosticsExt, transport};
 
 /// Inputs and diagnostic context for one generic canister installation.
 #[non_exhaustive]
@@ -253,6 +253,7 @@ fn try_create_funded_and_install(
     spec: InstallSpec,
 ) -> Result<Principal, CanisterInstallError> {
     let canister_id = pocket_ic.create_canister();
+    let diagnostic_sender = spec.install_sender.unwrap_or_else(Principal::anonymous);
     if spec.cycles > 0 {
         let _ = pocket_ic.add_cycles(canister_id, spec.cycles);
     }
@@ -270,7 +271,12 @@ fn try_create_funded_and_install(
         // Diagnostics are best-effort and must never replace the original
         // structured install failure, including if stderr or PocketIC fails.
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            pocket_ic.dump_canister_debug(canister_id, &context);
+            let report = pocket_ic.collect_canister_diagnostics(CanisterDiagnosticsRequest::new(
+                canister_id,
+                diagnostic_sender,
+                diagnostic_sender,
+            ));
+            eprintln!("{context}: {report}");
         }));
 
         return if let Some(label) = spec.label {

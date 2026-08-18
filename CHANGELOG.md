@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-18 - Structured diagnostics and batch observability
+
+### Added
+
+- Adds controller-aware `CanisterDiagnosticsRequest` and a structured
+  `CanisterDiagnosticsReport` that retains independent status/log outcomes,
+  exact senders, bounded lossy UTF-8 logs, and explicit truncation counts.
+- Adds Wasm and generic artifact batch metrics for built/reused/failed counts,
+  compatible input-resolution reuse, and summed successful timings.
+- Retains per-entry wall time in `WasmBuildBatchReport`, including for failed
+  entries.
+- Packages a `0.8` changelog and hard-cut migration guide with the crate.
+
+### Changed
+
+- Makes `build_artifact_caches_batch` return an ordered collect-all
+  `ArtifactCacheBatchReport`; preparation, callback, and commit failures retain
+  their indexes while later independent specifications continue.
+- Replaces printing `PocketIcDiagnosticsExt::dump_canister_debug` with the
+  structured `collect_canister_diagnostics` hard cut. Install diagnostics use
+  the exact install sender and remain subordinate to the original failure.
+
+### Removed
+
+- Removes the fail-fast `ArtifactCacheBatchOutcome` and
+  `ArtifactCacheBatchError` contract; the generic artifact batch report is the
+  sole batch result.
+- Removes the anonymous-only `dump_canister_debug` entry point without an alias
+  or deprecated bridge.
+
+### Documentation
+
+- Records the required immutability/staleness contract for a future explicit
+  cross-call Wasm build session. No global or partial session cache is added in
+  `0.8.x`.
+- Records failed phase-timing retention as a broader error-contract follow-up;
+  this release retains the small per-entry elapsed completion.
+
+### Testing
+
+- Covers independent diagnostic senders and failures, bounded lossy log
+  rendering, original install-error preservation, generic collect-all
+  continuation, aggregate metrics, and elapsed retention for failed Wasm
+  entries.
+
 ## [0.8.0] - 2026-08-18 - Collect-all Wasm batches and API hard cuts
 
 ### Added

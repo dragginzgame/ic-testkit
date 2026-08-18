@@ -118,7 +118,7 @@ pub struct WasmBuildRecord {
 }
 
 /// Timings for cache coordination, input resolution, and Cargo execution.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WasmBuildTimings {
     lock_wait: Duration,
     shared_incremental_lock_wait: Option<Duration>,
@@ -163,10 +163,17 @@ pub(super) struct WasmBuildBatchInputResolver<'a> {
     groups: Vec<BatchResolutionGroup>,
     group_by_index: Vec<usize>,
     resolved: Vec<Option<Result<ResolvedCargoBuildInputs, WasmBuildError>>>,
+    metrics: WasmBuildBatchInputMetrics,
 }
 
 struct BatchResolutionGroup {
     indexes: Vec<usize>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct WasmBuildBatchInputMetrics {
+    pub(super) runs: usize,
+    pub(super) reuses: usize,
 }
 
 #[derive(Eq, PartialEq)]
@@ -927,6 +934,25 @@ impl WasmBuildTimings {
     pub const fn total(self) -> Duration {
         self.total
     }
+
+    pub(super) const fn saturating_add(self, other: Self) -> Self {
+        let mut input_resolution = self.input_resolution;
+        input_resolution.include(other.input_resolution);
+        Self {
+            lock_wait: self.lock_wait.saturating_add(other.lock_wait),
+            shared_incremental_lock_wait: sum_optional_duration(
+                self.shared_incremental_lock_wait,
+                other.shared_incremental_lock_wait,
+            ),
+            input_resolution,
+            cargo_build: sum_optional_duration(self.cargo_build, other.cargo_build),
+            cache_maintenance: sum_optional_duration(
+                self.cache_maintenance,
+                other.cache_maintenance,
+            ),
+            total: self.total.saturating_add(other.total),
+        }
+    }
 }
 
 impl WasmInputResolutionTimings {
@@ -966,6 +992,17 @@ impl WasmInputResolutionTimings {
         self.input_discovery = self.input_discovery.saturating_add(other.input_discovery);
         self.content_hashing = self.content_hashing.saturating_add(other.content_hashing);
         self.total = self.total.saturating_add(other.total);
+    }
+}
+
+const fn sum_optional_duration(
+    left: Option<Duration>,
+    right: Option<Duration>,
+) -> Option<Duration> {
+    match (left, right) {
+        (None, None) => None,
+        (Some(duration), None) | (None, Some(duration)) => Some(duration),
+        (Some(left), Some(right)) => Some(left.saturating_add(right)),
     }
 }
 
@@ -1081,7 +1118,12 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
             groups,
             group_by_index,
             resolved: std::iter::repeat_with(|| None).take(specs.len()).collect(),
+            metrics: WasmBuildBatchInputMetrics::default(),
         }
+    }
+
+    pub(super) const fn metrics(&self) -> WasmBuildBatchInputMetrics {
+        self.metrics
     }
 
     fn resolve(
@@ -1166,6 +1208,16 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
             content_hashing,
             total: total_started.elapsed(),
         };
+        let resolved_count = resolved_inputs.len();
+        if resolved_count > 0 {
+            self.metrics.runs += 1;
+            self.metrics.reuses += resolved_count.saturating_sub(1);
+        }
+        let timing_index = resolved_inputs
+            .iter()
+            .any(|(index, ..)| *index == active_index)
+            .then_some(active_index)
+            .or_else(|| resolved_inputs.first().map(|(index, ..)| *index));
         for (index, inputs, exclusions, input_digest) in resolved_inputs {
             let spec = &self.specs[index];
             self.resolved[index] = Some(Ok(ResolvedCargoBuildInputs {
@@ -1181,7 +1233,7 @@ impl<'a> WasmBuildBatchInputResolver<'a> {
                     .map(|(label, path)| CargoBuildInput { label, path })
                     .collect(),
                 exclusions,
-                timings: if index == active_index {
+                timings: if Some(index) == timing_index {
                     timings
                 } else {
                     WasmInputResolutionTimings::default()

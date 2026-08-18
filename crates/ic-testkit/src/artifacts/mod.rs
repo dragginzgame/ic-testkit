@@ -29,11 +29,12 @@ pub use transaction::{
     ArtifactOutputValidation, prepare_artifact_cache, prune_artifact_cache,
 };
 pub use transaction_batch::{
-    ArtifactCacheBatchError, ArtifactCacheBatchOutcome, build_artifact_caches_batch,
+    ArtifactCacheBatchFailure, ArtifactCacheBatchMetrics, ArtifactCacheBatchReport,
+    build_artifact_caches_batch,
 };
 pub use wasm::{read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_batch::{
-    WasmBuildBatchConfig, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
+    WasmBuildBatchConfig, WasmBuildBatchMetrics, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
     build_wasm_canisters_cached_batch, build_wasm_canisters_cached_batch_with_config,
     build_wasm_canisters_cached_batch_with_config_and_progress,
     build_wasm_canisters_cached_batch_with_progress,

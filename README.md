@@ -31,13 +31,17 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.7"
+ic-testkit = "0.8"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
 `[dependencies]` and use `ic_testkit::performance`.
 
 The crate supports Rust 1.88 and uses PocketIC 15.
+
+Upgrading from `0.7` requires several pre-1.0 hard cuts. See the packaged
+[`0.8` migration guide](crates/ic-testkit/CHANGELOG.md) for the complete API
+mapping.
 
 ## Features for application-scale test suites
 
@@ -105,7 +109,7 @@ restored or validated.
 | Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
 | Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline` | Ordered transactional capture, explicit restore funding, scoped caching |
 | Fixture pools | `CachedStandaloneCanisterFixturePool`, `CachedPocketIcBaselinePool` | Bounded standalone or recipe-driven multi-canister baseline reuse |
-| Diagnostics | `PocketIcDiagnosticsExt` | Best-effort status and log reporting |
+| Diagnostics | `PocketIcDiagnosticsExt` | Controller-aware structured status and bounded log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
 | Artifacts | `ArtifactCacheSpec`, `WasmBuildSpec`, `WatchedInputSnapshot` | Transactional external artifact sets, content-addressed Wasm builds, bounded retention, and exact freshness stamps |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
@@ -475,9 +479,29 @@ for the contract, consumer eligibility, and benchmark plan.
 
 ## Diagnostics and time
 
-`PocketIcDiagnosticsExt::dump_canister_debug` prints best-effort status and
-canister logs without allowing a secondary diagnostics failure to replace the
-original operation error.
+`PocketIcDiagnosticsExt::collect_canister_diagnostics` accepts exact,
+independent principals for canister status and log access. It attempts both
+operations even if one fails and returns their results independently:
+
+```rust,no_run
+use ic_testkit::pic::{
+    CanisterDiagnosticsRequest, PocketIcDiagnosticsExt,
+};
+
+let report = pocket_ic.collect_canister_diagnostics(
+    CanisterDiagnosticsRequest::new(canister_id, status_sender, log_sender),
+);
+if report.status().is_err() || report.logs().is_err() {
+    eprintln!("{}", report.render_compact());
+}
+```
+
+Fetched log content is retained as bounded lossy UTF-8 rather than raw byte
+arrays. `CanisterLogRenderLimits` controls the record and aggregate byte bounds;
+the structured log result records omitted records and bytes. PocketIC transport
+panics are captured per operation, and install-failure diagnostics remain
+wrapped so a dead instance or failed renderer cannot replace the original
+install error.
 
 `PocketIcTimeExt` intentionally contains one convenience:
 
@@ -770,6 +794,21 @@ and Cargo invocation. A different workspace, tool environment, or
 metadata-affecting feature argument starts a separate snapshot so independent
 feature semantics remain intact.
 
+`WasmBuildBatchReport::metrics` aggregates built, exact-cache reused, and failed
+counts; input-resolution runs and compatible-snapshot reuses; and summed
+successful acquisition timings. The structured input-resolution total makes
+distinct feature-resolution costs visible while reused snapshots remain
+counted explicitly. `entry_elapsed` retains wall time for every ordered entry,
+including failures; successful entries continue to expose detailed phase
+timings through their build records.
+
+Compatible input reuse is deliberately scoped to one batch call. `0.8.x` has no
+silent process-global cache or cross-call build session: safely retaining source
+digests across calls requires an explicit source-immutability/staleness
+contract. The proposed session boundary and its required caller obligations are
+recorded in the
+[`0.7` orchestration design](docs/design/0.7-artifact-orchestration/0.7-design.md#deferred-cross-call-immutable-build-session).
+
 The batch remains sequential. Shared incremental Cargo targets already
 serialize access, so parallel scheduling would add lock contention. A future
 parallel API should be restricted to isolated target directories and supported
@@ -847,8 +886,8 @@ let spec = ArtifactCacheSpec::new(
 )
 .with_input("counter.wasm", &input)
 .with_tool("optimizer", &optimizer)
-.with_arguments(&["--optimize-for-size"])
-.with_environment(&[("OPTIMIZER_MODE", "deterministic")])
+.with_arguments(["--optimize-for-size"])
+.with_environment([("OPTIMIZER_MODE", "deterministic")])
 .with_output("optimized.wasm", &destination)
 .with_prune_policy_at_most_every(
     ArtifactCachePrunePolicy::new()
@@ -880,9 +919,11 @@ Multiple independent external recipes can use
 `build_artifact_caches_batch`. Its callback receives only cache misses and only
 one live transaction at a time, avoiding self-deadlock when specs share a
 coordination scope. Callback failures synchronously abort the current staging
-directory. The operation is deliberately not atomic across specs: use one
-`ArtifactCacheSpec` with several outputs when all artifacts must publish as one
-transaction.
+directory, are retained at their specification index, and do not stop later
+independent entries. `ArtifactCacheBatchReport::metrics` aggregates built,
+reused, and failed counts plus all successful acquisition timings. The
+operation is deliberately not atomic across specs: use one `ArtifactCacheSpec`
+with several outputs when all artifacts must publish as one transaction.
 
 A miss transaction exposes checked staging paths for redirectable tools and an
 `import_output` helper for commands that write to fixed locations. `commit`

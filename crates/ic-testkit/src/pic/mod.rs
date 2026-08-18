@@ -9,7 +9,8 @@
 //! server download/cache policy.
 
 pub use pocket_ic::{
-    ErrorCode, LATEST_SERVER_VERSION, PocketIc, PocketIcBuilder, RejectCode, RejectResponse,
+    CanisterStatusResult, ErrorCode, LATEST_SERVER_VERSION, PocketIc, PocketIcBuilder, RejectCode,
+    RejectResponse,
 };
 
 mod baseline;
@@ -40,7 +41,11 @@ pub use baseline_pool::{
     TimeResetPolicy, ValidationReceipt,
 };
 pub use calls::CandidCallExt;
-pub use diagnostics::PocketIcDiagnosticsExt;
+pub use diagnostics::{
+    CanisterDiagnosticFailure, CanisterDiagnosticLogRecord, CanisterDiagnosticLogs,
+    CanisterDiagnosticsReport, CanisterDiagnosticsRequest, CanisterLogRenderLimits,
+    DEFAULT_CANISTER_LOG_BYTE_LIMIT, DEFAULT_CANISTER_LOG_RECORD_LIMIT, PocketIcDiagnosticsExt,
+};
 pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
     StandaloneCanisterInstallError,

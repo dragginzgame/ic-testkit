@@ -24,6 +24,9 @@ Most users should read the
 [repository README](https://github.com/dragginzgame/ic-testkit#readme) for
 setup, examples, local checks, and release notes.
 
+The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
+the `0.8` hard-cut migration tables and batch-report examples.
+
 The repository also includes a complete
 [multi-canister baseline recipe](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/multi_canister_baseline_pool.rs)
 and a

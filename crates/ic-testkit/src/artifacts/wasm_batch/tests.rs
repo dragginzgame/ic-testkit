@@ -26,6 +26,7 @@ fn batch_retains_every_indexed_failure() {
 
     assert!(!report.is_success());
     assert_eq!(report.results().len(), 2);
+    assert_eq!(report.entry_elapsed().len(), 2);
     assert_eq!(
         report
             .failures()
@@ -78,6 +79,7 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
 
     let report = build_wasm_canisters_cached_batch_with_config(&[spec], batch);
     let failures = report.failures().collect::<Vec<_>>();
+    assert_eq!(report.entry_elapsed().len(), 1);
     assert_eq!(failures.len(), 1);
     let (index, source) = failures[0];
     assert_eq!(index, 0);

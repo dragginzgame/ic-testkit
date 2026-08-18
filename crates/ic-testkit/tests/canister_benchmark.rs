@@ -11,11 +11,12 @@ use ic_testkit::{
     artifacts::{
         ArtifactCacheError, ArtifactCacheMaintenance, ArtifactCachePreparation,
         ArtifactCachePrunePolicy, ArtifactCacheSpec, SharedIncrementalTargetMaintenanceOutcome,
-        SharedIncrementalTargetPrunePolicy, WasmBuildOutcome, WasmBuildProgressConfig,
-        WasmBuildProgressEvent, WasmBuildSpec, build_wasm_canisters_cached,
-        build_wasm_canisters_cached_batch, build_wasm_canisters_cached_with_progress,
-        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
-        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
+        SharedIncrementalTargetPrunePolicy, WasmBuildBatchMetrics, WasmBuildOutcome,
+        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
+        build_wasm_canisters_cached, build_wasm_canisters_cached_batch,
+        build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
+        prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
+        wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -94,6 +95,7 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
     let batch = build_wasm_canisters_cached_batch(&specs);
 
     assert!(batch.is_success());
+    assert_cold_batch_metrics(batch.metrics());
     assert_eq!(batch.outcomes().count(), 2);
     assert!(
         batch
@@ -124,6 +126,7 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
     ];
     let with_failure = build_wasm_canisters_cached_batch(&with_invalid_middle);
     assert!(!with_failure.is_success());
+    assert_reused_batch_metrics_with_failure(with_failure.metrics());
     assert_eq!(with_failure.outcomes().count(), 2);
     assert!(
         with_failure
@@ -142,6 +145,27 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         "a validated caller-facing hit must recreate its immutable cache directory"
     );
     fs::remove_dir_all(root).expect("remove independent feature fixture");
+}
+
+fn assert_cold_batch_metrics(metrics: WasmBuildBatchMetrics) {
+    assert_eq!(metrics.specifications(), 2);
+    assert_eq!(metrics.succeeded(), 2);
+    assert_eq!(metrics.failed(), 0);
+    assert_eq!(metrics.built(), 2);
+    assert_eq!(metrics.reused(), 0);
+    assert_eq!(metrics.input_resolution_runs(), 1);
+    assert_eq!(metrics.input_resolution_reuses(), 1);
+    assert!(metrics.successful_timings().input_resolution().total() > Duration::ZERO);
+    assert!(metrics.successful_timings().cargo_build().is_some());
+}
+
+fn assert_reused_batch_metrics_with_failure(metrics: WasmBuildBatchMetrics) {
+    assert_eq!(metrics.succeeded(), 2);
+    assert_eq!(metrics.failed(), 1);
+    assert_eq!(metrics.built(), 0);
+    assert_eq!(metrics.reused(), 2);
+    assert_eq!(metrics.input_resolution_runs(), 1);
+    assert_eq!(metrics.input_resolution_reuses(), 1);
 }
 
 #[test]
