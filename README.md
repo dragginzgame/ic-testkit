@@ -522,8 +522,10 @@ if !batch.is_success() {
 ```
 
 The ordered batch retains every label and structured single-canister report.
-An earlier rejection, transport failure, or panic does not prevent later
-requests from being attempted, and no operation retries anonymously.
+Each entry retains its collection wall time and the report retains total
+sequential batch time. An earlier rejection, transport failure, or panic does
+not prevent later requests from being attempted, and no operation retries
+anonymously.
 
 Fetched log content is retained as bounded lossy UTF-8 rather than raw byte
 arrays. `CanisterLogRenderLimits` controls the record and aggregate byte bounds;
@@ -951,16 +953,21 @@ eprintln!("artifact key: {}", outcome.record().key());
 ```
 
 Multiple independent external recipes can use
-`build_artifact_caches_batch`. Its callback receives only cache misses and only
-one live transaction at a time, avoiding self-deadlock when specs share a
-coordination scope. Callback failures synchronously abort the current staging
-directory, are retained at their specification index, and do not stop later
-independent entries. `ArtifactCacheBatchReport::metrics` aggregates built,
-reused, and failed counts plus all successful acquisition timings. Per-entry
-wall time is retained for successes and failures, and structured failed entries
-bundle their index, failure, and elapsed time. The operation is deliberately
-not atomic across specs: use one `ArtifactCacheSpec` with several outputs when
-all artifacts must publish as one transaction.
+`build_artifact_caches_batch`. Every `ArtifactCacheSpec` is wrapped in a
+`LabeledArtifactCacheSpec`; labels must be nonempty and unique and are retained
+in callbacks and ordered report entries. Labels are composition metadata, not
+cache identity. A structural label error rejects the batch before work starts.
+
+The callback receives only cache misses and only one live transaction at a
+time, avoiding self-deadlock when specs share a coordination scope. Callback
+failures synchronously abort the current staging directory, retain their label,
+and do not stop later independent entries. `ArtifactCacheBatchReport::metrics`
+aggregates built, reused, and failed counts plus all successful acquisition
+timings. Every entry retains wall time; failed entries additionally distinguish
+preparation, callback, explicit abort cleanup, and commit time. Commit timing
+includes commit-owned failure cleanup. The operation is deliberately not atomic
+across specs: use one `ArtifactCacheSpec` with several outputs when all
+artifacts must publish as one transaction.
 
 A miss transaction exposes checked staging paths for redirectable tools and an
 `import_output` helper for commands that write to fixed locations. `commit`

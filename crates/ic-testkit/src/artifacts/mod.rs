@@ -30,8 +30,10 @@ pub use transaction::{
     ArtifactOutputValidation, prepare_artifact_cache, prune_artifact_cache,
 };
 pub use transaction_batch::{
-    ArtifactCacheBatchFailedEntry, ArtifactCacheBatchFailure, ArtifactCacheBatchMetrics,
-    ArtifactCacheBatchReport, build_artifact_caches_batch,
+    ArtifactCacheBatchContractError, ArtifactCacheBatchEntry, ArtifactCacheBatchFailedEntry,
+    ArtifactCacheBatchFailure, ArtifactCacheBatchFailurePhase, ArtifactCacheBatchFailureTimings,
+    ArtifactCacheBatchMetrics, ArtifactCacheBatchOutcomeEntry, ArtifactCacheBatchReport,
+    LabeledArtifactCacheSpec, build_artifact_caches_batch,
 };
 pub use wasm::{read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_batch::{

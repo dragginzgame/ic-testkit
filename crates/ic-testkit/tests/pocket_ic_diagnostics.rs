@@ -39,6 +39,12 @@ fn diagnostics_use_independent_exact_senders_and_preserve_both_outcomes() {
     assert_eq!(batch.entries().len(), 2);
     assert_eq!(batch.entries()[0].label(), "denied");
     assert_eq!(batch.entries()[1].label(), "controller");
+    assert!(
+        batch
+            .entries()
+            .iter()
+            .all(|entry| entry.entry_elapsed() <= batch.total())
+    );
     let denied = batch.entries()[0].report();
     assert!(matches!(
         denied.status(),

@@ -1,6 +1,7 @@
 use std::{
     fmt,
     panic::{AssertUnwindSafe, catch_unwind},
+    time::{Duration, Instant},
 };
 
 use candid::Principal;
@@ -367,6 +368,7 @@ impl CanisterDiagnosticsReport {
 pub struct CanisterDiagnosticsBatchEntry {
     label: String,
     report: CanisterDiagnosticsReport,
+    entry_elapsed: Duration,
 }
 
 impl CanisterDiagnosticsBatchEntry {
@@ -388,10 +390,16 @@ impl CanisterDiagnosticsBatchEntry {
         self.report.is_success()
     }
 
-    /// Consume the entry into its caller label and structured report.
+    /// Complete wall-clock time for this target's diagnostic collection.
     #[must_use]
-    pub fn into_parts(self) -> (String, CanisterDiagnosticsReport) {
-        (self.label, self.report)
+    pub const fn entry_elapsed(&self) -> Duration {
+        self.entry_elapsed
+    }
+
+    /// Consume the entry into its label, structured report, and wall time.
+    #[must_use]
+    pub fn into_parts(self) -> (String, CanisterDiagnosticsReport, Duration) {
+        (self.label, self.report, self.entry_elapsed)
     }
 }
 
@@ -399,6 +407,7 @@ impl CanisterDiagnosticsBatchEntry {
 #[derive(Debug, Default)]
 pub struct CanisterDiagnosticsBatchReport {
     entries: Vec<CanisterDiagnosticsBatchEntry>,
+    total: Duration,
 }
 
 impl CanisterDiagnosticsBatchReport {
@@ -421,6 +430,12 @@ impl CanisterDiagnosticsBatchReport {
             .all(CanisterDiagnosticsBatchEntry::is_success)
     }
 
+    /// Complete wall-clock time for the sequential collect-all batch.
+    #[must_use]
+    pub const fn total(&self) -> Duration {
+        self.total
+    }
+
     /// Consume the report into its ordered entries.
     #[must_use]
     pub fn into_entries(self) -> Vec<CanisterDiagnosticsBatchEntry> {
@@ -436,9 +451,18 @@ impl CanisterDiagnosticsBatchReport {
 
 impl fmt::Display for CanisterDiagnosticsBatchReport {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "diagnostics={}", self.entries.len())?;
+        write!(
+            formatter,
+            "diagnostics={} total={:?}",
+            self.entries.len(),
+            self.total
+        )?;
         for entry in &self.entries {
-            write!(formatter, "; label={:?} {}", entry.label, entry.report)?;
+            write!(
+                formatter,
+                "; label={:?} elapsed={:?} {}",
+                entry.label, entry.entry_elapsed, entry.report
+            )?;
         }
         Ok(())
     }
@@ -493,9 +517,11 @@ pub trait PocketIcDiagnosticsExt {
         &self,
         requests: &[LabeledCanisterDiagnosticsRequest],
     ) -> CanisterDiagnosticsBatchReport {
+        let started = Instant::now();
         let entries = requests
             .iter()
             .map(|labeled| {
+                let entry_started = Instant::now();
                 let request = labeled.request;
                 let report = catch_unwind(AssertUnwindSafe(|| {
                     self.collect_canister_diagnostics(request)
@@ -511,10 +537,14 @@ pub trait PocketIcDiagnosticsExt {
                 CanisterDiagnosticsBatchEntry {
                     label: labeled.label.clone(),
                     report,
+                    entry_elapsed: entry_started.elapsed(),
                 }
             })
             .collect();
-        CanisterDiagnosticsBatchReport { entries }
+        CanisterDiagnosticsBatchReport {
+            entries,
+            total: started.elapsed(),
+        }
     }
 }
 
@@ -667,6 +697,12 @@ mod tests {
         assert_eq!(report.entries()[0].report().request(), first);
         assert_eq!(report.entries()[1].label(), "worker");
         assert_eq!(report.entries()[1].report().request(), second);
+        assert!(
+            report
+                .entries()
+                .iter()
+                .all(|entry| entry.entry_elapsed() <= report.total())
+        );
         assert_eq!(report.failures().count(), 2);
         assert!(!report.is_success());
         let compact = report.render_compact();

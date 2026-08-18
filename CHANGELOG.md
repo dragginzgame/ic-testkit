@@ -8,6 +8,52 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-18 - Labeled artifact batches and failure phases
+
+### Added
+
+- Adds required `LabeledArtifactCacheSpec` batch inputs and retains each
+  caller-owned stable label in callbacks, ordered entries, outcomes, and
+  failures. Empty or duplicate labels reject the batch before work begins.
+- Adds partial `ArtifactCacheBatchFailureTimings` for preparation, callback,
+  explicit abort cleanup, commit, and total elapsed time, plus the primary
+  `ArtifactCacheBatchFailurePhase`.
+- Adds canonical `ArtifactCacheBatchEntry` and structured successful-entry
+  views so multi-stage consumers can compose results by label instead of
+  remapping filtered indexes.
+- Adds per-target `entry_elapsed` and total wall time to
+  `CanisterDiagnosticsBatchReport`, allowing deployment recovery to identify
+  slow diagnostic targets without downstream timers.
+
+### Changed
+
+- Hard-cuts `build_artifact_caches_batch` to labeled specifications, a
+  label-based population callback, and a batch-level contract `Result`.
+- Hard-cuts generic artifact reports from parallel result/elapsed slices to one
+  ordered labeled-entry collection. Outcome and failure iterators return
+  structured entries with labels, indexes, and elapsed time.
+- Hard-cuts `ArtifactCacheBatchFailure` variants to retain failure phase
+  timings. Recipe panics continue unwinding and batches remain sequential.
+- Hard-cuts `CanisterDiagnosticsBatchEntry::into_parts` to include retained
+  elapsed time; no two-field compatibility method is retained.
+
+### Documentation
+
+- Records why a package dependency closure alone cannot safely discard the
+  complete workspace manifest and lockfile, and defines a conservative,
+  validated-success contract for any future narrower fingerprint.
+- Records an explicit batch-scoped immutable-source lease or validated snapshot
+  as the required boundary for sharing content digests across incompatible
+  feature/metadata groups. No ambient or unsafe hash cache is added.
+
+### Testing
+
+- Covers stable label propagation, preflight rejection of empty/duplicate
+  labels, collect-all continuation, and preparation/callback/cleanup/commit
+  failure timing availability.
+- Covers diagnostics entry timing against total sequential batch time for panic
+  capture and real controller-rejection paths.
+
 ## [0.8.4] - 2026-08-18 - Collect-all diagnostics and failed-entry context
 
 ### Added

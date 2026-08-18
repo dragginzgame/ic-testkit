@@ -4,6 +4,49 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.5
+
+`0.8.5` hard-cuts generic artifact batches to caller-labeled specifications.
+`LabeledArtifactCacheSpec` labels must be nonempty and unique; they are retained
+in cache-miss callbacks and every ordered report entry. Labels are report and
+composition identity only and do not alter exact artifact-cache keys. Invalid
+label structure returns `ArtifactCacheBatchContractError` before any entry
+starts.
+
+`ArtifactCacheBatchFailureTimings` distinguishes preparation, callback,
+explicit abort cleanup, commit, and total time. The failure also exposes its
+primary `ArtifactCacheBatchFailurePhase`. Commit timing includes cleanup owned
+internally by a failed commit. Recipe panics still unwind, and independent
+entries remain sequential and collect-all.
+
+`CanisterDiagnosticsBatchEntry::entry_elapsed` retains each target's complete
+diagnostic collection time, while `CanisterDiagnosticsBatchReport::total`
+retains total sequential batch time. The compact renderer includes both. Exact
+controllers, bounded logs, collect-all behavior, and the absence of anonymous
+fallback remain unchanged.
+
+### Hard-cut migration
+
+| 0.8.4 API | 0.8.5 API |
+| --- | --- |
+| `build_artifact_caches_batch(&[ArtifactCacheSpec], FnMut(usize, ...)) -> ArtifactCacheBatchReport<E>` | Wrap specs with `LabeledArtifactCacheSpec`; the callback receives `&str`; handle `Result<ArtifactCacheBatchReport<E>, ArtifactCacheBatchContractError>` |
+| `results()`, `into_results()`, and `entry_elapsed()` parallel report slices | `entries()` and `into_entries()` return canonical `ArtifactCacheBatchEntry<E>` values with `index()`, `label()`, `result()`, and `entry_elapsed()` |
+| `outcomes()` yields `(usize, &ArtifactCacheOutcome)` | Yields `ArtifactCacheBatchOutcomeEntry`; use `index()`, `label()`, `outcome()`, and `entry_elapsed()` |
+| `ArtifactCacheBatchFailure` without phase timing fields | Match the hard-cut variants with `..`, then use `phase()` and `timings()`; failed-entry views also expose `label()` and `timings()` |
+| `CanisterDiagnosticsBatchEntry::into_parts() -> (String, CanisterDiagnosticsReport)` | Returns `(String, CanisterDiagnosticsReport, Duration)`; borrowed callers may use `entry_elapsed()` and the batch `total()` |
+
+No index-only overloads, parallel label sidecars, tuple aliases, or deprecated
+bridges are retained.
+
+The Wasm resolver already discovers the selected local dependency closure, but
+the complete workspace manifest and lockfile remain exact inputs because
+workspace inheritance, profiles, patches, resolver state, external revisions,
+build scripts, proc macros, and includes can cross the apparent closure. A
+future narrower fingerprint must use a validated semantic projection with a
+conservative fallback. Likewise, digest reuse across incompatible batch groups
+requires an explicit caller-held immutable-source lease or validated snapshot;
+`0.8.5` adds no ambient or unsafe digest cache.
+
 ## 0.8.4
 
 `0.8.4` adds sequential collect-all diagnostics for caller-labeled exact
