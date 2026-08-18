@@ -1,8 +1,11 @@
 use std::time::{Duration, Instant};
 
-use super::transaction::{
-    ArtifactBuildTransaction, ArtifactCacheError, ArtifactCacheOutcome, ArtifactCachePreparation,
-    ArtifactCacheSpec, ArtifactCacheTimings, prepare_artifact_cache,
+use super::{
+    batch::{indexed_failures, indexed_outcomes},
+    transaction::{
+        ArtifactBuildTransaction, ArtifactCacheError, ArtifactCacheOutcome,
+        ArtifactCachePreparation, ArtifactCacheSpec, ArtifactCacheTimings, prepare_artifact_cache,
+    },
 };
 
 /// Ordered outcomes and failures from a collect-all artifact transaction batch.
@@ -55,18 +58,12 @@ impl<E> ArtifactCacheBatchReport<E> {
 
     /// Successful outcomes with their specification indexes.
     pub fn outcomes(&self) -> impl Iterator<Item = (usize, &ArtifactCacheOutcome)> {
-        self.results
-            .iter()
-            .enumerate()
-            .filter_map(|(index, result)| result.as_ref().ok().map(|outcome| (index, outcome)))
+        indexed_outcomes(&self.results)
     }
 
     /// Failures with their specification indexes.
     pub fn failures(&self) -> impl Iterator<Item = (usize, &ArtifactCacheBatchFailure<E>)> {
-        self.results
-            .iter()
-            .enumerate()
-            .filter_map(|(index, result)| result.as_ref().err().map(|error| (index, error)))
+        indexed_failures(&self.results)
     }
 
     /// Complete wall-clock time for the sequential collect-all batch.

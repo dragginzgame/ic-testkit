@@ -4,12 +4,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::wasm_cache::{
-    SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputMetrics, WasmBuildBatchInputResolver,
-    WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome, WasmBuildProgressConfig,
-    WasmBuildProgressEvent, WasmBuildSpec, WasmBuildTimings, build_wasm_canisters_cached_in_batch,
-    build_wasm_canisters_cached_in_batch_with_progress,
+use super::{
+    batch::{indexed_failures, indexed_outcomes},
+    wasm_cache::{
+        SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
+        SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputMetrics,
+        WasmBuildBatchInputResolver, WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome,
+        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec, WasmBuildTimings,
+        build_wasm_canisters_cached_in_batch, build_wasm_canisters_cached_in_batch_with_progress,
+    },
 };
 
 /// Orchestration shared by every entry in one independent Wasm build batch.
@@ -94,18 +97,12 @@ impl WasmBuildBatchReport {
 
     /// Successful outcomes with their specification indexes.
     pub fn outcomes(&self) -> impl Iterator<Item = (usize, &WasmBuildOutcome)> {
-        self.results
-            .iter()
-            .enumerate()
-            .filter_map(|(index, result)| result.as_ref().ok().map(|outcome| (index, outcome)))
+        indexed_outcomes(&self.results)
     }
 
     /// Failures with their specification indexes.
     pub fn failures(&self) -> impl Iterator<Item = (usize, &WasmBuildError)> {
-        self.results
-            .iter()
-            .enumerate()
-            .filter_map(|(index, result)| result.as_ref().err().map(|error| (index, error)))
+        indexed_failures(&self.results)
     }
 
     /// Integrated shared-target maintenance outcomes with their build indexes.

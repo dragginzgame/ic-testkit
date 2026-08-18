@@ -11,6 +11,41 @@ fail() {
   exit 1
 }
 
+version_case="${work_dir}/version"
+mkdir -p "${version_case}"
+printf '[workspace.package]\nversion = "0.8.3"\n' >"${version_case}/Cargo.toml"
+version="$(
+  /bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
+    --stable "${version_case}/Cargo.toml"
+)"
+[[ "${version}" == "0.8.3" ]] \
+  || fail "the version reader did not return a stable workspace version"
+
+printf '[workspace.package]\nversion = "0.8.3-rc.1"\n' >"${version_case}/Cargo.toml"
+version="$(
+  /bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
+    "${version_case}/Cargo.toml"
+)"
+[[ "${version}" == "0.8.3-rc.1" ]] \
+  || fail "the version reader rejected a bump-compatible prerelease version"
+set +e
+/bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
+  --stable "${version_case}/Cargo.toml" >/dev/null 2>&1
+prerelease_status="$?"
+set -e
+[[ "${prerelease_status}" -eq 2 ]] \
+  || fail "the stable version reader accepted a prerelease version"
+
+printf '[workspace]\n\n[unrelated]\nversion = "9.9.9"\n' \
+  >"${version_case}/Cargo.toml"
+set +e
+/bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
+  "${version_case}/Cargo.toml" >/dev/null 2>&1
+missing_version_status="$?"
+set -e
+[[ "${missing_version_status}" -eq 1 ]] \
+  || fail "the version reader accepted a manifest without a package version"
+
 clean_case="${work_dir}/clean"
 mkdir -p "${clean_case}/bin"
 cat >"${clean_case}/bin/git" <<'EOF'
@@ -37,7 +72,7 @@ set -e
 
 bump_case="${work_dir}/bump"
 mkdir -p "${bump_case}/bin"
-printf 'version = "0.8.0"\n' >"${bump_case}/Cargo.toml"
+printf '[workspace.package]\nversion = "0.8.0"\n' >"${bump_case}/Cargo.toml"
 cat >"${bump_case}/bin/git" <<'EOF'
 #!/bin/bash
 if [[ "${1:-}" == "rev-parse" ]]; then
@@ -113,7 +148,7 @@ mapfile -t ci_trace <"${bump_case}/trace"
     EXPECTED_CHANGELOG_VERSION=0.9.0 \
     /bin/bash "${repo_root}/scripts/release/bump-version.sh" minor
 ) >/dev/null 2>&1
-[[ "$(<"${bump_case}/Cargo.toml")" == 'version = "0.9.0"' ]] \
+[[ "$(<"${bump_case}/Cargo.toml")" == $'[workspace.package]\nversion = "0.9.0"' ]] \
   || fail "the minor bump script did not reset the patch component"
 mapfile -t minor_trace <"${bump_case}/trace"
 [[ "${minor_trace[0]:-}" == "changelog scripts/ci/check-changelog-version.sh 0.9.0" ]] \
@@ -181,7 +216,7 @@ successful_ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
 
 commit_case="${work_dir}/commit"
 mkdir -p "${commit_case}/bin"
-printf 'version = "0.8.1"\n' >"${commit_case}/Cargo.toml"
+printf '[workspace.package]\nversion = "0.8.1"\n' >"${commit_case}/Cargo.toml"
 cat >"${commit_case}/bin/git" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -208,7 +243,7 @@ set -e
 
 push_case="${work_dir}/push"
 mkdir -p "${push_case}/bin"
-printf 'version = "0.8.1"\n' >"${push_case}/Cargo.toml"
+printf '[workspace.package]\nversion = "0.8.1"\n' >"${push_case}/Cargo.toml"
 cat >"${push_case}/bin/git" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in

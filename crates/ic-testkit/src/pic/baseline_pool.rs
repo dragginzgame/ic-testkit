@@ -7,6 +7,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::timing::saturating_add_optional_duration;
+
 use super::{
     CachedPocketIcBaseline,
     bounded_pool::{BoundedSlotLease, BoundedSlotPool},
@@ -1155,8 +1157,8 @@ fn nonempty_receipt_identity(
     Ok(identity)
 }
 
-fn add_timing(total: &mut Option<Duration>, elapsed: Duration) {
-    *total = Some(total.unwrap_or_default().saturating_add(elapsed));
+const fn add_timing(total: &mut Option<Duration>, elapsed: Duration) {
+    *total = saturating_add_optional_duration(*total, Some(elapsed));
 }
 
 fn rebuild_reason_for_error<E>(error: &BaselinePoolPreparationError<E>) -> RebuildReason {

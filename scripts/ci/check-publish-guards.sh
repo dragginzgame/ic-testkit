@@ -43,7 +43,10 @@ esac
 EOF
 chmod +x "${publish_case}/bin/cargo"
 
-current_version="$(sed -n 's/^version = "\(.*\)"/\1/p' "${repo_root}/Cargo.toml" | head -n 1)"
+current_version="$(
+  /bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
+    --stable "${repo_root}/Cargo.toml"
+)"
 (
   cd "${repo_root}"
   PATH="${publish_case}/bin:${PATH}" TRACE_FILE="${publish_case}/trace" \

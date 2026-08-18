@@ -21,6 +21,9 @@
 pub mod benchmark;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod timing;
+
+#[cfg(not(target_arch = "wasm32"))]
 pub mod artifacts;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,10 +48,6 @@ impl Fake {
         Principal::from_slice(&buf)
     }
 }
-
-///
-/// TESTS
-///
 
 #[cfg(test)]
 mod tests {

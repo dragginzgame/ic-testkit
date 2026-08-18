@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [[ "$#" -gt 1 ]]; then
   echo "Usage: $0 [VERSION]" >&2
   exit 2
@@ -8,11 +10,7 @@ fi
 
 version="${1:-}"
 if [[ -z "${version}" ]]; then
-  version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-fi
-if [[ -z "${version}" ]]; then
-  echo "error: failed to read package version from Cargo.toml" >&2
-  exit 1
+  version="$(/bin/bash "${script_dir}/../release/read-workspace-version.sh" --stable Cargo.toml)"
 fi
 if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "error: unsupported version format ${version}" >&2

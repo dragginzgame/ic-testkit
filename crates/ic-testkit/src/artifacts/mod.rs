@@ -3,6 +3,7 @@
 //! These functions keep integration-test artifacts in caller-selected target
 //! directories and contain no application-specific package or profile policy.
 
+mod batch;
 mod cache_fs;
 mod digest;
 mod icp;

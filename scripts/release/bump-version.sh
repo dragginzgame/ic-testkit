@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+release_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 usage() {
   echo "Usage: $0 patch|minor" >&2
 }
@@ -14,11 +16,7 @@ case "${bump}" in
     ;;
 esac
 
-previous_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-if [[ -z "${previous_version}" ]]; then
-  echo "error: failed to read package version from Cargo.toml" >&2
-  exit 1
-fi
+previous_version="$(/bin/bash "${release_dir}/read-workspace-version.sh" Cargo.toml)"
 
 IFS=. read -r major minor patch_extra <<<"${previous_version}"
 patch="${patch_extra%%[-+]*}"

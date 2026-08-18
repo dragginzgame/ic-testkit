@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-if ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "error: failed to read a release version from Cargo.toml" >&2
-  exit 1
-fi
+release_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+version="$(/bin/bash "${release_dir}/read-workspace-version.sh" --stable Cargo.toml)"
 
 if ! tag_commit="$(git rev-parse "v${version}^{}" 2>/dev/null)"; then
   echo "error: release tag v${version} does not exist" >&2

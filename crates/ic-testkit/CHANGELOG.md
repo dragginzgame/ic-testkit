@@ -4,6 +4,20 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.3
+
+`0.8.3` is a behavior-preserving code-hygiene patch. It consolidates optional
+phase-timing aggregation and the indexed result iteration shared by collect-all
+batch reports, removing duplicate internal implementations.
+
+Release tooling now uses one reader for the `[workspace.package]` version
+across Make, changelog, bump, tag, publish, and release guards. Exact stable
+versions are required for release operations while bump preparation retains
+its prerelease-compatible parsing.
+
+There are no public API, cache-format, schema, or runtime behavior changes in
+this patch, and no migration or pre-1.0 API hard cut is required.
+
 ## 0.8.2
 
 `0.8.2` is a release-process and CI-stability patch. It makes exact-cache

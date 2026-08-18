@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::timing::saturating_add_optional_duration;
+
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
@@ -600,26 +602,15 @@ impl ArtifactCacheTimings {
                 .saturating_add(other.namespace_lock_wait),
             input_capture: self.input_capture.saturating_add(other.input_capture),
             cache_lookup: self.cache_lookup.saturating_add(other.cache_lookup),
-            caller_build: add_optional_duration(self.caller_build, other.caller_build),
+            caller_build: saturating_add_optional_duration(self.caller_build, other.caller_build),
             output_validation: self
                 .output_validation
                 .saturating_add(other.output_validation),
             publication: self.publication.saturating_add(other.publication),
             materialization: self.materialization.saturating_add(other.materialization),
-            maintenance: add_optional_duration(self.maintenance, other.maintenance),
+            maintenance: saturating_add_optional_duration(self.maintenance, other.maintenance),
             total: self.total.saturating_add(other.total),
         }
-    }
-}
-
-const fn add_optional_duration(
-    left: Option<Duration>,
-    right: Option<Duration>,
-) -> Option<Duration> {
-    match (left, right) {
-        (None, None) => None,
-        (Some(duration), None) | (None, Some(duration)) => Some(duration),
-        (Some(left), Some(right)) => Some(left.saturating_add(right)),
     }
 }
 

@@ -46,7 +46,7 @@ ensure-clean:
 	fi
 
 version:
-	@sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1
+	@bash "$(REPO_ROOT)scripts/release/read-workspace-version.sh" Cargo.toml
 
 tags:
 	@git tag --sort=-version:refname | head -10
@@ -138,11 +138,7 @@ release-stage:
 
 release-commit:
 	@set -eu; \
-	version="$$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"; \
-	if [ -z "$$version" ]; then \
-		echo "error: failed to read package version from Cargo.toml" >&2; \
-		exit 1; \
-	fi; \
+	version="$$(bash "$(REPO_ROOT)scripts/release/read-workspace-version.sh" --stable Cargo.toml)"; \
 	if git rev-parse "v$$version" >/dev/null 2>&1; then \
 		echo "error: tag v$$version already exists; aborting" >&2; \
 		exit 1; \

@@ -12,6 +12,8 @@ use std::{
 };
 use toml::Value as TomlValue;
 
+use crate::timing::saturating_add_optional_duration;
+
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
@@ -940,13 +942,13 @@ impl WasmBuildTimings {
         input_resolution.include(other.input_resolution);
         Self {
             lock_wait: self.lock_wait.saturating_add(other.lock_wait),
-            shared_incremental_lock_wait: sum_optional_duration(
+            shared_incremental_lock_wait: saturating_add_optional_duration(
                 self.shared_incremental_lock_wait,
                 other.shared_incremental_lock_wait,
             ),
             input_resolution,
-            cargo_build: sum_optional_duration(self.cargo_build, other.cargo_build),
-            cache_maintenance: sum_optional_duration(
+            cargo_build: saturating_add_optional_duration(self.cargo_build, other.cargo_build),
+            cache_maintenance: saturating_add_optional_duration(
                 self.cache_maintenance,
                 other.cache_maintenance,
             ),
@@ -992,17 +994,6 @@ impl WasmInputResolutionTimings {
         self.input_discovery = self.input_discovery.saturating_add(other.input_discovery);
         self.content_hashing = self.content_hashing.saturating_add(other.content_hashing);
         self.total = self.total.saturating_add(other.total);
-    }
-}
-
-const fn sum_optional_duration(
-    left: Option<Duration>,
-    right: Option<Duration>,
-) -> Option<Duration> {
-    match (left, right) {
-        (None, None) => None,
-        (Some(duration), None) | (None, Some(duration)) => Some(duration),
-        (Some(left), Some(right)) => Some(left.saturating_add(right)),
     }
 }
 

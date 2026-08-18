@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-18 - Code hygiene and release consistency
+
+### Changed
+
+- Shares one saturating optional-duration aggregator across Wasm,
+  transactional artifact, and baseline-pool timing reports.
+- Shares ordered indexed outcome/failure iteration between Wasm and generic
+  artifact collect-all reports.
+- Routes Make, changelog, bump, tag, publish, and release-guard tooling through
+  one workspace-version reader. The reader targets `[workspace.package]`, and
+  stable release operations require an exact `major.minor.patch` version.
+- Removes a stale source-section banner while keeping the crate layout and
+  public surface unchanged.
+
+### Compatibility
+
+- Makes no public API, runtime, cache-format, schema, or compatibility-policy
+  changes. No migration or pre-1.0 API hard cut is required for this patch.
+
+### Testing
+
+- Covers absent, present, and saturating optional-duration aggregation while
+  retaining the existing focused batch-index and pool-timing coverage.
+- Covers stable, bump-compatible prerelease, missing, and unrelated-section
+  workspace-version inputs through the shared release helper.
+
 ## [0.8.2] - 2026-08-18 - Release flow and CI stability
 
 ### Changed
