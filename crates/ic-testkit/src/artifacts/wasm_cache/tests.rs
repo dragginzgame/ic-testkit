@@ -25,6 +25,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -564,13 +565,27 @@ fn observer_panic_joins_active_phase_worker() {
 fn exact_cache_lock_wait_emits_phase_aware_heartbeats() {
     let target_dir = unique_temp_directory("observed-exact-lock-wait");
     let (held_lock, _) = lock_wasm_build_cache(&target_dir).expect("acquire fixture cache lock");
+    let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
     let release = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(35));
+        heartbeat_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("wait for exact-cache lock heartbeat");
         drop(held_lock);
     });
     let mut events = Vec::new();
     {
-        let mut observer = |event| events.push(event);
+        let mut observer = |event| {
+            if matches!(
+                &event,
+                WasmBuildProgressEvent::Heartbeat {
+                    phase: WasmBuildProgressPhase::ExactCacheLock,
+                    ..
+                }
+            ) {
+                let _ = heartbeat_sender.send(());
+            }
+            events.push(event);
+        };
         let mut progress = ProgressReporter::observed(
             WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(5)),
             &mut observer,

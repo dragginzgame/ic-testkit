@@ -4,6 +4,17 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.2
+
+`0.8.2` is a release-process and CI-stability patch. It makes exact-cache
+lock-heartbeat coverage scheduling-independent and ensures the complete release
+gate runs before version metadata changes. A committed, tagged release is no
+longer subjected to a redundant second validation pass that can strand a local
+patch version after failure.
+
+There are no public API, cache-format, schema, or runtime behavior changes in
+this patch.
+
 ## 0.8.1
 
 `0.8.1` continues the pre-1.0 hard-cut policy with structured controller-aware

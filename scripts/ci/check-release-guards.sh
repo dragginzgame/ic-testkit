@@ -209,11 +209,6 @@ set -e
 push_case="${work_dir}/push"
 mkdir -p "${push_case}/bin"
 printf 'version = "0.8.1"\n' >"${push_case}/Cargo.toml"
-cat >"${push_case}/bin/make" <<'EOF'
-#!/usr/bin/env bash
-printf 'make %s\n' "$*" >"${TRACE_FILE}"
-exit 41
-EOF
 cat >"${push_case}/bin/git" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -232,36 +227,37 @@ case "${1:-}" in
   *) exit 2 ;;
 esac
 EOF
-chmod +x "${push_case}/bin/make" "${push_case}/bin/git"
-set +e
+chmod +x "${push_case}/bin/git"
 (
   cd "${push_case}"
-  PATH="${push_case}/bin:${PATH}" TRACE_FILE="${push_case}/trace" \
-    PUSH_MARKER="${push_case}/pushed" TAG_COMMIT=release HEAD_COMMIT=release \
-    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
-      MAKE="${push_case}/bin/make" release-push
+  PATH="${push_case}/bin:${PATH}" PUSH_MARKER="${push_case}/pushed" \
+    TAG_COMMIT=release HEAD_COMMIT=release \
+    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" release-push
 ) >/dev/null 2>&1
-push_status="$?"
-set -e
-[[ "${push_status}" -ne 0 ]] || fail "release-push hid a failing CI gate"
-[[ ! -e "${push_case}/pushed" ]] || fail "release-push pushed after a failed CI gate"
-[[ "$(<"${push_case}/trace")" == "make --no-print-directory release-ci" ]] \
-  || fail "release-push did not run cleanable release CI before pushing"
+[[ -e "${push_case}/pushed" ]] \
+  || fail "release-push did not push a clean release tag"
 
-rm -f "${push_case}/trace" "${push_case}/pushed"
+rm -f "${push_case}/pushed"
 set +e
 (
   cd "${push_case}"
-  PATH="${push_case}/bin:${PATH}" TRACE_FILE="${push_case}/trace" \
-    PUSH_MARKER="${push_case}/pushed" TAG_COMMIT=stale HEAD_COMMIT=current \
-    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
-      MAKE="${push_case}/bin/make" release-push
+  PATH="${push_case}/bin:${PATH}" PUSH_MARKER="${push_case}/pushed" \
+    TAG_COMMIT=stale HEAD_COMMIT=current \
+    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" release-push
 ) >/dev/null 2>&1
 stale_tag_status="$?"
 set -e
 [[ "${stale_tag_status}" -ne 0 ]] || fail "release-push accepted a stale release tag"
-[[ ! -e "${push_case}/trace" ]] || fail "release-push ran CI with a stale tag"
 [[ ! -e "${push_case}/pushed" ]] || fail "release-push pushed a stale tag"
+
+release_push_block="$(awk '
+  $0 == "release-push: ensure-clean release-tag-check" { found = 1; next }
+  found && /^[^[:space:]].*:/ { exit }
+  found { print }
+' "${repo_root}/Makefile")"
+expected_push_block="$(printf '\tgit push --follow-tags')"
+[[ "${release_push_block}" == "${expected_push_block}" ]] \
+  || fail "release-push repeats fallible validation after the release commit and tag"
 
 release_block="$(awk '
   $0 == "release-patch:" { found = 1; next }

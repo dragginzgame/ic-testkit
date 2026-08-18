@@ -35,8 +35,8 @@ help:
 	@echo "  tags            List recent version tags"
 	@echo "  patch           Run CI, then bump patch-version files"
 	@echo "  minor           Run CI, then bump minor-version files"
-	@echo "  release-patch   Bump, stage, commit, tag, verify, and push a patch release"
-	@echo "  release-minor   Bump, stage, commit, tag, verify, and push a minor release"
+	@echo "  release-patch   Verify, then bump, stage, commit, tag, and push a patch release"
+	@echo "  release-minor   Verify, then bump, stage, commit, tag, and push a minor release"
 	@echo "  publish         Publish the tagged release to crates.io"
 
 ensure-clean:
@@ -154,7 +154,6 @@ release-tag-check:
 	bash "$(REPO_ROOT)scripts/release/check-tag-at-head.sh"
 
 release-push: ensure-clean release-tag-check
-	+$(MAKE) --no-print-directory release-ci
 	git push --follow-tags
 
 clean:

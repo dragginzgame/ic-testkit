@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-18 - Release flow and CI stability
+
+### Changed
+
+- Runs the complete release gate once, before changing version metadata;
+  pushing a committed, tagged release no longer repeats fallible validation
+  that can strand a local patch version after failure.
+
+### Testing
+
+- Makes exact-cache lock-heartbeat coverage scheduling-independent by releasing
+  the fixture lock only after the expected heartbeat is observed.
+- Verifies release-gate failures leave version metadata untouched and the final
+  tagged push performs no second fallible validation pass.
+
 ## [0.8.1] - 2026-08-18 - Structured diagnostics and batch observability
 
 ### Added
