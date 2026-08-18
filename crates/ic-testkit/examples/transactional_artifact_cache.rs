@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spec = ArtifactCacheSpec::new(&cache_root, "example-transform", "example/transform/v1")
         .with_input("source", &input)
         .with_tool("transformer", &tool)
-        .with_arguments(&["<input>", "<output>"])
+        .with_arguments(["<input>", "<output>"])
         .with_output("result", &output)
         .with_prune_policy(
             ArtifactCachePrunePolicy::new()

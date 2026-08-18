@@ -118,7 +118,7 @@ fn shared_incremental_process_worker() {
     )
     .with_shared_incremental_target(root.join("shared-target"))
     .with_cargo_program(root.join("cargo-wrapper.sh"))
-    .with_extra_env_os([
+    .with_extra_env([
         (OsString::from("REAL_CARGO"), real_cargo),
         (
             OsString::from("IC_TESTKIT_ACTIVE_BUILD"),

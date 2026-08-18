@@ -10,21 +10,30 @@ use std::{path::Path, time::Duration};
 
 #[test]
 fn empty_independent_batch_succeeds_without_work() {
-    let outcome = build_wasm_canisters_cached_batch(&[]).expect("empty batch");
-    assert!(outcome.outcomes().is_empty());
+    let report = build_wasm_canisters_cached_batch(&[]);
+    assert!(report.is_success());
+    assert_eq!(report.outcomes().count(), 0);
 }
 
 #[test]
-fn invalid_independent_spec_reports_its_batch_index() {
-    let specs = [WasmBuildSpec::new(
-        Path::new("."),
-        Path::new("target"),
-        &[],
-        "debug",
-    )];
-    let error = build_wasm_canisters_cached_batch(&specs).expect_err("invalid batch entry");
-    assert_eq!(error.failed_index(), 0);
-    assert!(error.completed().is_empty());
+fn batch_retains_every_indexed_failure() {
+    let specs = [
+        WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug"),
+        WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], ""),
+    ];
+
+    let report = build_wasm_canisters_cached_batch(&specs);
+
+    assert!(!report.is_success());
+    assert_eq!(report.results().len(), 2);
+    assert_eq!(
+        report
+            .failures()
+            .map(|(index, _error)| index)
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    assert_eq!(report.outcomes().count(), 0);
 }
 
 #[test]
@@ -67,11 +76,11 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
         .with_shared_incremental_target_maintenance(maintenance);
     let batch = WasmBuildBatchConfig::new().with_shared_incremental_target_maintenance(maintenance);
 
-    let error = build_wasm_canisters_cached_batch_with_config(&[spec], batch)
-        .expect_err("ambiguous maintenance ownership must fail before building");
-    assert_eq!(error.failed_index(), 0);
-    assert!(error.completed().is_empty());
-    let (_, source) = error.into_parts();
+    let report = build_wasm_canisters_cached_batch_with_config(&[spec], batch);
+    let failures = report.failures().collect::<Vec<_>>();
+    assert_eq!(failures.len(), 1);
+    let (index, source) = failures[0];
+    assert_eq!(index, 0);
     assert!(
         matches!(source, WasmBuildError::InvalidSpec { message } if message.contains("cannot be combined"))
     );

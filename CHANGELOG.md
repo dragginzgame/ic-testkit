@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-18 - Collect-all Wasm batches and API hard cuts
+
+### Added
+
+- Exposes each successful record's immutable content-addressed directory
+  through `WasmBuildRecord::exact_cache_path`.
+
+### Changed
+
+- Makes the cached-Wasm batch sequentially collect every ordered result in one
+  `WasmBuildBatchReport` with indexed outcome, failure, and maintenance
+  iterators. Later specifications continue after an independent failure.
+- Reuses tool identity, Cargo metadata, input discovery, and memoized input
+  digests across resolution-compatible batch specifications without combining
+  Cargo builds or changing standalone fingerprints.
+- Recreates a missing immutable entry from an already validated caller-facing
+  artifact before returning its public exact-cache path.
+- Updates the `v1` exact-Wasm cache semantics in place for composable input
+  digests; no migration reader or second format is introduced before `1.0`.
+- Makes `CachedStandaloneCanisterFixturePool::acquire` return the structured
+  lifecycle outcome and timings directly.
+- Moves exact-sender capture and restore onto the single
+  `PocketIcSnapshotExt` trait.
+- Makes the canonical Wasm and transactional artifact builders accept both
+  strings and OS-native values through their unsuffixed methods.
+- Makes `WasmBuildTimings::input_resolution` return the structured phase
+  timings directly.
+
+### Removed
+
+- Removes the fail-fast `WasmBuildBatchOutcome` and `WasmBuildBatchError`
+  contract; the batch report is the sole batch result.
+- Removes the Wasm-specific `WasmBuildCachePrunePolicy`,
+  `WasmBuildCachePruneReport`, and `WasmBuildCacheMaintenance` aliases in favor
+  of the generic artifact retention types.
+- Removes the duplicate `CargoHeartbeat` progress event, `_os` and alternate
+  additional-input builders, boolean pool result, split
+  `PocketIcCapturedSnapshotExt` trait, and panicking `build_wasm_canisters`
+  wrapper without compatibility shims.
+
+### Testing
+
+- Covers collect-all continuation, batch snapshot reuse, standalone
+  fingerprints, and public exact-cache paths.
+
 ## [0.7.6] - 2026-08-06 - Maintenance ownership and resilience
 
 ### Added

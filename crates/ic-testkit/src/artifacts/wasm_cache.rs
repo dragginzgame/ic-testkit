@@ -22,8 +22,8 @@ use super::{
         record_cache_maintenance, remove_path_if_present,
     },
     digest::{
-        InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
-        digest_labeled_paths, os_bytes, write_atomic,
+        InputDigest, InputHasher, LabeledPathDigestCache, copy_file_atomic, digest_bytes,
+        digest_file, digest_labeled_paths_composable, os_bytes, write_atomic,
     },
     wasm::wasm_path,
 };
@@ -60,7 +60,7 @@ pub struct WasmBuildSpec {
     cargo_program: OsString,
     rustc_program: OsString,
     cache_mode: WasmBuildCacheMode,
-    prune_policy: Option<WasmBuildCachePrunePolicy>,
+    prune_policy: Option<ArtifactCachePrunePolicy>,
     prune_interval: Option<Duration>,
     shared_incremental_maintenance_config: Option<SharedIncrementalTargetMaintenanceConfig>,
 }
@@ -110,9 +110,10 @@ pub enum WasmBuildOutcome {
 pub struct WasmBuildRecord {
     fingerprint: InputDigest,
     input_digest: InputDigest,
+    exact_cache_path: PathBuf,
     artifacts: Vec<PathBuf>,
     timings: WasmBuildTimings,
-    maintenance: Option<WasmBuildCacheMaintenance>,
+    maintenance: Option<ArtifactCacheMaintenance>,
     shared_incremental_maintenance: Option<SharedIncrementalTargetMaintenanceOutcome>,
 }
 
@@ -155,6 +156,26 @@ pub struct ResolvedCargoBuildInputs {
     inputs: Vec<CargoBuildInput>,
     exclusions: Vec<PathBuf>,
     timings: WasmInputResolutionTimings,
+}
+
+pub(super) struct WasmBuildBatchInputResolver<'a> {
+    specs: &'a [WasmBuildSpec],
+    groups: Vec<BatchResolutionGroup>,
+    group_by_index: Vec<usize>,
+    resolved: Vec<Option<Result<ResolvedCargoBuildInputs, WasmBuildError>>>,
+}
+
+struct BatchResolutionGroup {
+    indexes: Vec<usize>,
+}
+
+#[derive(Eq, PartialEq)]
+struct BatchResolutionKey {
+    workspace_root: PathBuf,
+    cargo_program: OsString,
+    rustc_program: OsString,
+    metadata_arguments: Vec<OsString>,
+    environment: BTreeMap<OsString, Option<OsString>>,
 }
 
 /// Lock-coordinated disk-usage observation for a caller-owned shared Cargo target.
@@ -346,15 +367,6 @@ pub enum WasmBuildProgressEvent {
         /// Time elapsed since this phase started.
         elapsed: Duration,
     },
-    /// Cargo remained active without another emitted output chunk.
-    ///
-    /// This compatibility event is emitted alongside [`Self::Heartbeat`] for
-    /// [`WasmBuildProgressPhase::CargoBuild`]. New observers can handle the
-    /// phase-aware event alone.
-    CargoHeartbeat {
-        /// Time elapsed since Cargo started.
-        elapsed: Duration,
-    },
     /// Cargo exited and all captured output was drained.
     CargoFinished {
         /// Whether Cargo reported success.
@@ -477,9 +489,6 @@ impl ProgressReporter<'_> {
 
     fn emit_heartbeat(&mut self, phase: WasmBuildProgressPhase, elapsed: Duration) {
         self.emit(WasmBuildProgressEvent::Heartbeat { phase, elapsed });
-        if phase == WasmBuildProgressPhase::CargoBuild {
-            self.emit(WasmBuildProgressEvent::CargoHeartbeat { elapsed });
-        }
     }
 
     fn emit_heartbeat_if_due(&mut self, phase: WasmBuildProgressPhase, elapsed: Duration) {
@@ -521,15 +530,6 @@ impl ProgressReporter<'_> {
         })
     }
 }
-
-/// Wasm-cache compatibility name for generic artifact-cache retention limits.
-pub type WasmBuildCachePrunePolicy = ArtifactCachePrunePolicy;
-
-/// Wasm-cache compatibility name for a generic artifact-cache pruning report.
-pub type WasmBuildCachePruneReport = ArtifactCachePruneReport;
-
-/// Wasm-cache compatibility name for generic nonfatal cache maintenance.
-pub type WasmBuildCacheMaintenance = ArtifactCacheMaintenance;
 
 /// External phase associated with a cacheable Wasm build failure.
 #[non_exhaustive]
@@ -623,37 +623,23 @@ impl WasmBuildSpec {
         }
     }
 
-    /// Set Cargo profile and feature arguments used for both the build and fingerprint.
+    /// Set Cargo profile and feature arguments used for the build and fingerprint.
     #[must_use]
-    pub fn with_cargo_profile_args(mut self, arguments: &[&str]) -> Self {
-        self.cargo_profile_args = arguments.iter().map(OsString::from).collect();
-        self
-    }
-
-    /// Set OS-native Cargo profile and feature arguments used for the build and fingerprint.
-    #[must_use]
-    pub fn with_cargo_profile_args_os<I, S>(mut self, arguments: I) -> Self
+    pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<OsString>,
+        S: AsRef<OsStr>,
     {
-        self.cargo_profile_args = arguments.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Set deterministic child-process environment overrides.
-    #[must_use]
-    pub fn with_extra_env(mut self, environment: &[(&str, &str)]) -> Self {
-        self.extra_env = environment
-            .iter()
-            .map(|(key, value)| (OsString::from(key), OsString::from(value)))
+        self.cargo_profile_args = arguments
+            .into_iter()
+            .map(|argument| argument.as_ref().to_owned())
             .collect();
         self
     }
 
-    /// Set OS-native deterministic child-process environment overrides.
+    /// Set deterministic OS-native child-process environment overrides.
     #[must_use]
-    pub fn with_extra_env_os<I, K, V>(mut self, environment: I) -> Self
+    pub fn with_extra_env<I, K, V>(mut self, environment: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<OsString>,
@@ -666,19 +652,12 @@ impl WasmBuildSpec {
         self
     }
 
-    /// Add ambient environment variables whose current values affect the build.
+    /// Add ambient environment names whose current values affect the build.
     ///
     /// Common Rust and Cargo toolchain variables are included automatically.
     /// Callers must declare application-specific variables read by build scripts.
     #[must_use]
-    pub fn with_inherited_env(mut self, names: &[&str]) -> Self {
-        self.inherited_env.extend(names.iter().map(OsString::from));
-        self
-    }
-
-    /// Add OS-native ambient environment names whose current values affect the build.
-    #[must_use]
-    pub fn with_inherited_env_os<I, S>(mut self, names: I) -> Self
+    pub fn with_inherited_env<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,
@@ -692,15 +671,7 @@ impl WasmBuildSpec {
     /// Relative paths are resolved from the workspace root. Use this for build
     /// script configuration, generated schemas, or other externally read inputs.
     #[must_use]
-    pub fn with_additional_inputs(mut self, paths: &[&str]) -> Self {
-        self.additional_inputs
-            .extend(paths.iter().map(PathBuf::from));
-        self
-    }
-
-    /// Add path-native files or directories outside Cargo's local dependency graph.
-    #[must_use]
-    pub fn with_additional_input_paths<I, P>(mut self, paths: I) -> Self
+    pub fn with_additional_inputs<I, P>(mut self, paths: I) -> Self
     where
         I: IntoIterator<Item = P>,
         P: Into<PathBuf>,
@@ -786,7 +757,7 @@ impl WasmBuildSpec {
     /// successful build record and cannot turn ready artifacts into a build
     /// failure. The active fingerprint is protected from this pruning pass.
     #[must_use]
-    pub const fn with_prune_policy(mut self, policy: WasmBuildCachePrunePolicy) -> Self {
+    pub const fn with_prune_policy(mut self, policy: ArtifactCachePrunePolicy) -> Self {
         self.prune_policy = Some(policy);
         self.prune_interval = None;
         self
@@ -801,7 +772,7 @@ impl WasmBuildSpec {
     #[must_use]
     pub const fn with_prune_policy_at_most_every(
         mut self,
-        policy: WasmBuildCachePrunePolicy,
+        policy: ArtifactCachePrunePolicy,
         minimum_interval: Duration,
     ) -> Self {
         self.prune_policy = Some(policy);
@@ -835,7 +806,7 @@ impl WasmBuildSpec {
 
     /// Exact-entry retention policy attached to this specification, when configured.
     #[must_use]
-    pub const fn prune_policy(&self) -> Option<WasmBuildCachePrunePolicy> {
+    pub const fn prune_policy(&self) -> Option<ArtifactCachePrunePolicy> {
         self.prune_policy
     }
 
@@ -883,6 +854,16 @@ impl WasmBuildRecord {
         self.input_digest
     }
 
+    /// Immutable content-addressed cache directory for this exact build.
+    ///
+    /// The directory is selected by the build fingerprint and contains the
+    /// cached Wasm artifacts and their stamps. Callers can persist this path
+    /// in CI without depending on `ic-testkit`'s private target layout.
+    #[must_use]
+    pub fn exact_cache_path(&self) -> &Path {
+        &self.exact_cache_path
+    }
+
     /// Expected Wasm artifacts produced or reused by the build.
     #[must_use]
     pub fn artifacts(&self) -> &[PathBuf] {
@@ -897,7 +878,7 @@ impl WasmBuildRecord {
 
     /// Cache maintenance attempted under the build lock, when configured.
     #[must_use]
-    pub const fn maintenance(&self) -> Option<&WasmBuildCacheMaintenance> {
+    pub const fn maintenance(&self) -> Option<&ArtifactCacheMaintenance> {
         self.maintenance.as_ref()
     }
 
@@ -923,15 +904,9 @@ impl WasmBuildTimings {
         self.shared_incremental_lock_wait
     }
 
-    /// Time spent resolving toolchain identity, Cargo metadata, and exact inputs.
-    #[must_use]
-    pub const fn input_resolution(self) -> Duration {
-        self.input_resolution.total
-    }
-
     /// Detailed tool, metadata, discovery, and hashing timings.
     #[must_use]
-    pub const fn input_resolution_detail(self) -> WasmInputResolutionTimings {
+    pub const fn input_resolution(self) -> WasmInputResolutionTimings {
         self.input_resolution
     }
 
@@ -1064,16 +1039,195 @@ impl ResolvedCargoBuildInputs {
             .iter()
             .map(|input| (input.label.clone(), input.path.clone()))
             .collect::<Vec<_>>();
-        digest_labeled_paths("wasm-source-inputs-v1", &inputs, &self.exclusions).map_err(|source| {
-            WasmBuildError::Io {
-                operation: "rehash resolved Cargo build inputs",
-                path: self
-                    .inputs
-                    .first()
-                    .map_or_else(PathBuf::new, |input| input.path.clone()),
-                source,
-            }
+        digest_labeled_paths_composable(
+            "wasm-source-inputs-v1",
+            &inputs,
+            &self.exclusions,
+            &mut LabeledPathDigestCache::default(),
+        )
+        .map_err(|source| WasmBuildError::Io {
+            operation: "rehash resolved Cargo build inputs",
+            path: self
+                .inputs
+                .first()
+                .map_or_else(PathBuf::new, |input| input.path.clone()),
+            source,
         })
+    }
+}
+
+impl<'a> WasmBuildBatchInputResolver<'a> {
+    pub(super) fn new(specs: &'a [WasmBuildSpec]) -> Self {
+        let mut keys = Vec::<BatchResolutionKey>::new();
+        let mut groups = Vec::<BatchResolutionGroup>::new();
+        let mut group_by_index = Vec::with_capacity(specs.len());
+        for (index, spec) in specs.iter().enumerate() {
+            let key = BatchResolutionKey::for_spec(spec);
+            let group = keys
+                .iter()
+                .position(|candidate| *candidate == key)
+                .unwrap_or_else(|| {
+                    keys.push(key);
+                    groups.push(BatchResolutionGroup {
+                        indexes: Vec::new(),
+                    });
+                    groups.len() - 1
+                });
+            groups[group].indexes.push(index);
+            group_by_index.push(group);
+        }
+        Self {
+            specs,
+            groups,
+            group_by_index,
+            resolved: std::iter::repeat_with(|| None).take(specs.len()).collect(),
+        }
+    }
+
+    fn resolve(
+        &mut self,
+        index: usize,
+        progress: &mut ProgressReporter<'_>,
+    ) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
+        if self.resolved[index].is_none() {
+            self.resolve_group(index, progress)?;
+        }
+        self.resolved[index]
+            .take()
+            .expect("resolved batch input must be populated")
+    }
+
+    fn resolve_group(
+        &mut self,
+        active_index: usize,
+        progress: &mut ProgressReporter<'_>,
+    ) -> Result<(), WasmBuildError> {
+        let total_started = Instant::now();
+        let indexes = self.groups[self.group_by_index[active_index]]
+            .indexes
+            .clone();
+        let active = &self.specs[active_index];
+
+        let (cargo_identity, rustc_identity, tool_identity) =
+            resolve_batch_tool_identity(active, progress)?;
+
+        let metadata_started = Instant::now();
+        let metadata = progress.run_phase(WasmBuildProgressPhase::CargoMetadata, || {
+            cargo_metadata(active)
+        })?;
+        let cargo_metadata = metadata_started.elapsed();
+
+        let discovery_started = Instant::now();
+        let mut discovered = Vec::new();
+        for index in indexes {
+            if self.resolved[index].is_some() || validate_spec(&self.specs[index]).is_err() {
+                continue;
+            }
+            let spec = &self.specs[index];
+            let result = (|| {
+                let inputs = resolve_local_inputs(spec, &metadata)?;
+                validate_shared_incremental_target_boundary(spec, &inputs)?;
+                let exclusions = source_exclusions(spec, &inputs);
+                Ok::<_, WasmBuildError>((inputs, exclusions))
+            })();
+            match result {
+                Ok((inputs, exclusions)) => discovered.push((index, inputs, exclusions)),
+                Err(error) => self.resolved[index] = Some(Err(error)),
+            }
+        }
+        let input_discovery = discovery_started.elapsed();
+
+        let hashing_started = Instant::now();
+        let resolved_inputs = progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
+            let mut cache = LabeledPathDigestCache::default();
+            discovered
+                .into_iter()
+                .map(|(index, inputs, exclusions)| {
+                    let input_digest = digest_labeled_paths_composable(
+                        "wasm-source-inputs-v1",
+                        &inputs,
+                        &exclusions,
+                        &mut cache,
+                    )
+                    .map_err(|source| WasmBuildError::Io {
+                        operation: "hash batched Wasm build inputs",
+                        path: active.workspace_root.clone(),
+                        source,
+                    })?;
+                    Ok::<_, WasmBuildError>((index, inputs, exclusions, input_digest))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        let content_hashing = hashing_started.elapsed();
+        let timings = WasmInputResolutionTimings {
+            tool_identity,
+            cargo_metadata,
+            input_discovery,
+            content_hashing,
+            total: total_started.elapsed(),
+        };
+        for (index, inputs, exclusions, input_digest) in resolved_inputs {
+            let spec = &self.specs[index];
+            self.resolved[index] = Some(Ok(ResolvedCargoBuildInputs {
+                fingerprint: finish_build_fingerprint(
+                    spec,
+                    &cargo_identity,
+                    &rustc_identity,
+                    input_digest,
+                ),
+                input_digest,
+                inputs: inputs
+                    .into_iter()
+                    .map(|(label, path)| CargoBuildInput { label, path })
+                    .collect(),
+                exclusions,
+                timings: if index == active_index {
+                    timings
+                } else {
+                    WasmInputResolutionTimings::default()
+                },
+            }));
+        }
+        Ok(())
+    }
+}
+
+fn resolve_batch_tool_identity(
+    spec: &WasmBuildSpec,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<(Vec<u8>, Vec<u8>, Duration), WasmBuildError> {
+    let started = Instant::now();
+    let cargo_identity = progress.run_phase(WasmBuildProgressPhase::CargoIdentity, || {
+        command_identity(
+            spec,
+            WasmBuildPhase::CargoIdentity,
+            &spec.cargo_program,
+            &["--version", "--verbose"],
+        )
+    })?;
+    let rustc_program = spec
+        .extra_env
+        .get(OsStr::new("RUSTC"))
+        .unwrap_or(&spec.rustc_program);
+    let rustc_identity = progress.run_phase(WasmBuildProgressPhase::RustcIdentity, || {
+        command_identity(spec, WasmBuildPhase::RustcIdentity, rustc_program, &["-vV"])
+    })?;
+    Ok((cargo_identity, rustc_identity, started.elapsed()))
+}
+
+impl BatchResolutionKey {
+    fn for_spec(spec: &WasmBuildSpec) -> Self {
+        Self {
+            workspace_root: spec.workspace_root.clone(),
+            cargo_program: spec.cargo_program.clone(),
+            rustc_program: spec
+                .extra_env
+                .get(OsStr::new("RUSTC"))
+                .unwrap_or(&spec.rustc_program)
+                .clone(),
+            metadata_arguments: metadata_arguments(&spec.cargo_profile_args),
+            environment: effective_environment(spec),
+        }
     }
 }
 
@@ -1645,7 +1799,19 @@ fn clear_shared_incremental_target_contents(target_dir: &Path) -> Result<(), Was
 pub fn build_wasm_canisters_cached(
     spec: &WasmBuildSpec,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
-    build_wasm_canisters_cached_internal(spec, &mut ProgressReporter::silent())
+    build_wasm_canisters_cached_internal(spec, &mut ProgressReporter::silent(), None)
+}
+
+pub(super) fn build_wasm_canisters_cached_in_batch(
+    spec: &WasmBuildSpec,
+    index: usize,
+    resolver: &mut WasmBuildBatchInputResolver<'_>,
+) -> Result<WasmBuildOutcome, WasmBuildError> {
+    build_wasm_canisters_cached_internal(
+        spec,
+        &mut ProgressReporter::silent(),
+        Some((resolver, index)),
+    )
 }
 
 /// Build or reuse one exact Wasm set while streaming structured progress.
@@ -1672,12 +1838,36 @@ where
     build_wasm_canisters_cached_internal(
         spec,
         &mut ProgressReporter::observed(config, &mut observer),
+        None,
+    )
+}
+
+pub(super) fn build_wasm_canisters_cached_in_batch_with_progress<F>(
+    spec: &WasmBuildSpec,
+    index: usize,
+    resolver: &mut WasmBuildBatchInputResolver<'_>,
+    config: WasmBuildProgressConfig,
+    mut observer: F,
+) -> Result<WasmBuildOutcome, WasmBuildError>
+where
+    F: FnMut(WasmBuildProgressEvent),
+{
+    if config.heartbeat_interval == Some(Duration::ZERO) {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "Wasm build progress heartbeat interval must be greater than zero".to_owned(),
+        });
+    }
+    build_wasm_canisters_cached_internal(
+        spec,
+        &mut ProgressReporter::observed(config, &mut observer),
+        Some((resolver, index)),
     )
 }
 
 fn build_wasm_canisters_cached_internal(
     spec: &WasmBuildSpec,
     progress: &mut ProgressReporter<'_>,
+    mut batch_resolution: Option<(&mut WasmBuildBatchInputResolver<'_>, usize)>,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
     let total_started = Instant::now();
     validate_spec(spec)?;
@@ -1687,6 +1877,7 @@ fn build_wasm_canisters_cached_internal(
             spec,
             total_started,
             progress,
+            batch_resolution.take(),
         )?;
         emit_finished_progress(&outcome, progress);
         return Ok(outcome);
@@ -1695,7 +1886,7 @@ fn build_wasm_canisters_cached_internal(
         lock_wasm_build_cache_with_progress(&spec.target_dir, progress)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
 
-    let resolved = resolve_inputs_with_progress(spec, progress)?;
+    let resolved = resolve_initial_inputs(spec, batch_resolution.take(), progress)?;
     if let Some(outcome) = try_reuse_wasm_artifacts(
         spec,
         &resolved,
@@ -1781,6 +1972,7 @@ fn build_wasm_canisters_cached_with_scheduled_shared_maintenance(
     spec: &WasmBuildSpec,
     total_started: Instant,
     progress: &mut ProgressReporter<'_>,
+    batch_resolution: Option<(&mut WasmBuildBatchInputResolver<'_>, usize)>,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
     let configured_target = shared_incremental_target(spec)
         .expect("validated scheduled maintenance must have a shared Cargo target");
@@ -1798,7 +1990,7 @@ fn build_wasm_canisters_cached_with_scheduled_shared_maintenance(
 
     // Resolution under both locks proves the target boundary once for the
     // scheduled retention pass and the following exact-cache acquisition.
-    let resolved = resolve_inputs_with_progress(spec, progress)?;
+    let resolved = resolve_initial_inputs(spec, batch_resolution, progress)?;
     let shared_maintenance = perform_configured_shared_incremental_target_maintenance(
         spec,
         &shared_target,
@@ -1905,6 +2097,24 @@ fn resolve_inputs_with_progress(
     Ok(resolved)
 }
 
+fn resolve_initial_inputs(
+    spec: &WasmBuildSpec,
+    batch_resolution: Option<(&mut WasmBuildBatchInputResolver<'_>, usize)>,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
+    let resolved = if let Some((resolver, index)) = batch_resolution {
+        resolver.resolve(index, progress)?
+    } else {
+        build_fingerprint_with_progress(spec, progress)?
+    };
+    progress.emit(WasmBuildProgressEvent::InputsResolved {
+        fingerprint: resolved.fingerprint,
+        input_digest: resolved.input_digest,
+        elapsed: resolved.timings.total,
+    });
+    Ok(resolved)
+}
+
 fn emit_finished_progress(outcome: &WasmBuildOutcome, progress: &mut ProgressReporter<'_>) {
     let state = if outcome.is_reused() {
         progress.emit(WasmBuildProgressEvent::CacheHit {
@@ -1943,7 +2153,7 @@ fn try_reuse_wasm_artifacts(
     });
     if artifacts_match {
         progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-            record_cache_entry_use_if_present(&cache_entry)
+            ensure_exact_cache_entry(spec, &artifacts, &cache_entry, fingerprint)
         })?;
         return Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
             spec,
@@ -1989,6 +2199,46 @@ fn try_reuse_wasm_artifacts(
         total_started,
         progress,
     ))))
+}
+
+fn ensure_exact_cache_entry(
+    spec: &WasmBuildSpec,
+    artifacts: &[PathBuf],
+    cache_entry: &Path,
+    fingerprint: InputDigest,
+) -> Result<(), WasmBuildError> {
+    let cached_artifacts = expected_artifacts(spec, cache_entry);
+    if artifact_set_matches(&cached_artifacts, fingerprint) {
+        return record_cache_entry_use(cache_entry);
+    }
+    remove_directory_if_present(cache_entry)?;
+    create_dir_all(
+        cache_entry,
+        "create content-addressed Cargo target directory",
+    )?;
+    let incomplete = IncompleteBuildDirectory::new(cache_entry.to_owned());
+    let result = (|| {
+        copy_wasm_artifacts(artifacts, &cached_artifacts)?;
+        publish_artifact_stamps(&cached_artifacts, fingerprint)?;
+        record_cache_entry_use(cache_entry)
+    })();
+    match result {
+        Ok(()) => {
+            incomplete.preserve();
+            Ok(())
+        }
+        Err(build_error) => {
+            let path = incomplete.path.clone();
+            match incomplete.cleanup() {
+                Ok(()) => Err(build_error),
+                Err(source) => Err(WasmBuildError::FailedBuildCleanup {
+                    build_error: Box::new(build_error),
+                    path,
+                    source,
+                }),
+            }
+        }
+    }
 }
 
 fn build_wasm_cache_miss(
@@ -2073,8 +2323,8 @@ fn build_wasm_cache_miss(
 /// artifacts and unrelated target contents are never removed.
 pub fn prune_wasm_build_cache(
     target_dir: &Path,
-    policy: WasmBuildCachePrunePolicy,
-) -> Result<WasmBuildCachePruneReport, WasmBuildError> {
+    policy: ArtifactCachePrunePolicy,
+) -> Result<ArtifactCachePruneReport, WasmBuildError> {
     let (_lock_file, _) = lock_wasm_build_cache(target_dir)?;
     ensure_cache_directory_tag(target_dir)?;
 
@@ -2111,6 +2361,7 @@ fn complete_build_record(
     WasmBuildRecord {
         fingerprint: input.fingerprint,
         input_digest: input.input_digest,
+        exact_cache_path: input.active_entry.to_owned(),
         artifacts: input.artifacts,
         timings: WasmBuildTimings {
             lock_wait: input.lock_wait,
@@ -2127,9 +2378,9 @@ fn complete_build_record(
 
 fn prune_wasm_build_cache_locked(
     target_dir: &Path,
-    policy: WasmBuildCachePrunePolicy,
+    policy: ArtifactCachePrunePolicy,
     protected_entry: Option<&Path>,
-) -> Result<WasmBuildCachePruneReport, WasmBuildError> {
+) -> Result<ArtifactCachePruneReport, WasmBuildError> {
     let cache_root = target_dir.join(".ic-testkit/wasm-targets");
     prune_direct_child_directories(&cache_root, policy, protected_entry, is_sha256_directory)
         .map_err(wasm_cache_fs_error)
@@ -2272,13 +2523,6 @@ fn ensure_cache_directory_tag(target_dir: &Path) -> Result<(), WasmBuildError> {
     ensure_cache_tag(target_dir).map_err(wasm_cache_fs_error)
 }
 
-fn record_cache_entry_use_if_present(path: &Path) -> Result<(), WasmBuildError> {
-    if path.is_dir() {
-        record_cache_entry_use(path)?;
-    }
-    Ok(())
-}
-
 fn record_cache_entry_use(path: &Path) -> Result<(), WasmBuildError> {
     record_entry_use(path).map_err(wasm_cache_fs_error)
 }
@@ -2375,16 +2619,46 @@ fn build_fingerprint_with_progress(
 
     let hashing_started = Instant::now();
     let input_digest = progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
-        digest_labeled_paths("wasm-source-inputs-v1", &inputs, &exclusions).map_err(|source| {
-            WasmBuildError::Io {
-                operation: "hash Wasm build inputs",
-                path: spec.workspace_root.clone(),
-                source,
-            }
+        digest_labeled_paths_composable(
+            "wasm-source-inputs-v1",
+            &inputs,
+            &exclusions,
+            &mut LabeledPathDigestCache::default(),
+        )
+        .map_err(|source| WasmBuildError::Io {
+            operation: "hash Wasm build inputs",
+            path: spec.workspace_root.clone(),
+            source,
         })
     })?;
     let content_hashing = hashing_started.elapsed();
 
+    let fingerprint =
+        finish_build_fingerprint(spec, &cargo_identity, &rustc_identity, input_digest);
+    Ok(ResolvedCargoBuildInputs {
+        fingerprint,
+        input_digest,
+        inputs: inputs
+            .into_iter()
+            .map(|(label, path)| CargoBuildInput { label, path })
+            .collect(),
+        exclusions,
+        timings: WasmInputResolutionTimings {
+            tool_identity,
+            cargo_metadata,
+            input_discovery,
+            content_hashing,
+            total: total_started.elapsed(),
+        },
+    })
+}
+
+fn finish_build_fingerprint(
+    spec: &WasmBuildSpec,
+    cargo_identity: &[u8],
+    rustc_identity: &[u8],
+    input_digest: InputDigest,
+) -> InputDigest {
     let mut hasher = InputHasher::new(CACHE_FORMAT_VERSION);
     let mut packages = spec.packages.clone();
     packages.sort();
@@ -2405,25 +2679,10 @@ fn build_fingerprint_with_progress(
             hasher.field("environment-unset", b"");
         }
     }
-    hasher.field("cargo-identity", &cargo_identity);
-    hasher.field("rustc-identity", &rustc_identity);
+    hasher.field("cargo-identity", cargo_identity);
+    hasher.field("rustc-identity", rustc_identity);
     hasher.field("source-input-digest", input_digest.as_bytes());
-    Ok(ResolvedCargoBuildInputs {
-        fingerprint: hasher.finish(),
-        input_digest,
-        inputs: inputs
-            .into_iter()
-            .map(|(label, path)| CargoBuildInput { label, path })
-            .collect(),
-        exclusions,
-        timings: WasmInputResolutionTimings {
-            tool_identity,
-            cargo_metadata,
-            input_discovery,
-            content_hashing,
-            total: total_started.elapsed(),
-        },
-    })
+    hasher.finish()
 }
 
 fn command_identity(

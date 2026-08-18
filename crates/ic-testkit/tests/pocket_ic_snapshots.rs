@@ -1,7 +1,7 @@
 use candid::Principal;
 use ic_testkit::pic::{
-    CanisterSnapshotTarget, ControllerSnapshotError, PocketIc, PocketIcCapturedSnapshotExt,
-    PocketIcSnapshotExt, SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, PocketIc, PocketIcSnapshotExt,
+    SnapshotRestoreFunding,
 };
 use pocket_ic::CanisterSettings;
 

@@ -6,9 +6,10 @@ use std::{
 
 use super::wasm_cache::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome,
-    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec, build_wasm_canisters_cached,
-    build_wasm_canisters_cached_with_progress,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputResolver, WasmBuildCacheMode,
+    WasmBuildError, WasmBuildOutcome, WasmBuildProgressConfig, WasmBuildProgressEvent,
+    WasmBuildSpec, build_wasm_canisters_cached_in_batch,
+    build_wasm_canisters_cached_in_batch_with_progress,
 };
 
 /// Orchestration shared by every entry in one independent Wasm build batch.
@@ -17,10 +18,10 @@ pub struct WasmBuildBatchConfig {
     shared_incremental_maintenance: Option<SharedIncrementalTargetMaintenanceConfig>,
 }
 
-/// Successful outcomes from an independent sequence of exact Wasm builds.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WasmBuildBatchOutcome {
-    outcomes: Vec<WasmBuildOutcome>,
+/// Ordered outcomes and failures from a collect-all Wasm build batch.
+#[derive(Debug)]
+pub struct WasmBuildBatchReport {
+    results: Vec<Result<WasmBuildOutcome, WasmBuildError>>,
     total: Duration,
 }
 
@@ -47,34 +48,39 @@ pub enum WasmBuildBatchProgressEvent {
         /// Zero-based position in the supplied specification slice.
         index: usize,
     },
+    /// One independent build failed.
+    BuildFailed {
+        /// Zero-based position in the supplied specification slice.
+        index: usize,
+    },
 }
 
-/// Failure from an independent Wasm build batch.
-#[derive(Debug)]
-pub struct WasmBuildBatchError {
-    failed_index: usize,
-    completed: Vec<WasmBuildOutcome>,
-    total: Duration,
-    source: WasmBuildError,
-}
-
-impl WasmBuildBatchOutcome {
-    /// Successful outcomes in specification order.
-    #[must_use]
-    pub fn outcomes(&self) -> &[WasmBuildOutcome] {
-        &self.outcomes
+impl WasmBuildBatchReport {
+    /// Per-specification results in the supplied order.
+    pub fn results(&self) -> &[Result<WasmBuildOutcome, WasmBuildError>] {
+        &self.results
     }
 
-    /// Consume the report and return its ordered outcomes.
+    /// Consume the report and return its ordered per-specification results.
     #[must_use]
-    pub fn into_outcomes(self) -> Vec<WasmBuildOutcome> {
-        self.outcomes
+    pub fn into_results(self) -> Vec<Result<WasmBuildOutcome, WasmBuildError>> {
+        self.results
     }
 
-    /// Complete wall-clock time for the sequential batch.
-    #[must_use]
-    pub const fn total(&self) -> Duration {
-        self.total
+    /// Successful outcomes with their specification indexes.
+    pub fn outcomes(&self) -> impl Iterator<Item = (usize, &WasmBuildOutcome)> {
+        self.results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, result)| result.as_ref().ok().map(|outcome| (index, outcome)))
+    }
+
+    /// Failures with their specification indexes.
+    pub fn failures(&self) -> impl Iterator<Item = (usize, &WasmBuildError)> {
+        self.results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, result)| result.as_ref().err().map(|error| (index, error)))
     }
 
     /// Integrated shared-target maintenance outcomes with their build indexes.
@@ -84,15 +90,24 @@ impl WasmBuildBatchOutcome {
     pub fn shared_incremental_maintenance_outcomes(
         &self,
     ) -> impl Iterator<Item = (usize, &SharedIncrementalTargetMaintenanceOutcome)> {
-        self.outcomes
-            .iter()
-            .enumerate()
-            .filter_map(|(index, outcome)| {
-                outcome
-                    .record()
-                    .shared_incremental_maintenance()
-                    .map(|maintenance| (index, maintenance))
-            })
+        self.outcomes().filter_map(|(index, outcome)| {
+            outcome
+                .record()
+                .shared_incremental_maintenance()
+                .map(|maintenance| (index, maintenance))
+        })
+    }
+
+    /// Complete wall-clock time for the sequential collect-all batch.
+    #[must_use]
+    pub const fn total(&self) -> Duration {
+        self.total
+    }
+
+    /// Whether every specification completed successfully.
+    #[must_use]
+    pub fn is_success(&self) -> bool {
+        self.results.iter().all(Result::is_ok)
     }
 }
 
@@ -136,60 +151,36 @@ impl WasmBuildBatchConfig {
     }
 }
 
-impl WasmBuildBatchError {
-    /// Zero-based index of the failed independent specification.
-    #[must_use]
-    pub const fn failed_index(&self) -> usize {
-        self.failed_index
-    }
-
-    /// Successful outcomes completed before the failure.
-    #[must_use]
-    pub fn completed(&self) -> &[WasmBuildOutcome] {
-        &self.completed
-    }
-
-    /// Consume the failure and return the successful prefix and root cause.
-    #[must_use]
-    pub fn into_parts(self) -> (Vec<WasmBuildOutcome>, WasmBuildError) {
-        (self.completed, self.source)
-    }
-
-    /// Wall-clock time through the failure.
-    #[must_use]
-    pub const fn total(&self) -> Duration {
-        self.total
-    }
-}
-
-impl std::fmt::Display for WasmBuildBatchOutcome {
+impl std::fmt::Display for WasmBuildBatchReport {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let succeeded = self.results.iter().filter(|result| result.is_ok()).count();
         let reused = self
-            .outcomes
+            .results
             .iter()
+            .filter_map(|result| result.as_ref().ok())
             .filter(|outcome| outcome.is_reused())
             .count();
         write!(
             formatter,
-            "builds={} built={} reused={} total={:?}",
-            self.outcomes.len(),
-            self.outcomes.len().saturating_sub(reused),
+            "builds={} succeeded={} failed={} built={} reused={} total={:?}",
+            self.results.len(),
+            succeeded,
+            self.results.len().saturating_sub(succeeded),
+            succeeded.saturating_sub(reused),
             reused,
             self.total,
         )
     }
 }
 
-/// Build or reuse multiple Wasm specifications as independent Cargo invocations.
+/// Build every Wasm specification as an independent Cargo invocation.
 ///
-/// Specifications run sequentially and fail fast. Each entry retains its own
-/// package set, profile arguments, feature resolution, fingerprint, locks, and
-/// cache policy. The implementation deliberately never combines packages into
-/// one Cargo command, because doing so can unify shared dependency features.
-/// Completed outcomes remain valid when a later entry fails.
-pub fn build_wasm_canisters_cached_batch(
-    specs: &[WasmBuildSpec],
-) -> Result<WasmBuildBatchOutcome, WasmBuildBatchError> {
+/// Specifications run sequentially and every result is retained. Each entry
+/// keeps its own package set, profile arguments, feature resolution,
+/// fingerprint, locks, and cache policy. Packages are never combined into one
+/// Cargo command because doing so can unify shared dependency features.
+#[must_use]
+pub fn build_wasm_canisters_cached_batch(specs: &[WasmBuildSpec]) -> WasmBuildBatchReport {
     build_wasm_canisters_cached_batch_with_config(specs, WasmBuildBatchConfig::new())
 }
 
@@ -197,15 +188,16 @@ pub fn build_wasm_canisters_cached_batch(
 ///
 /// Batch-owned maintenance is attached only to the first specification for
 /// each distinct configured shared-target path. Isolated specifications are
-/// unaffected. Mixing batch-owned and per-spec integrated maintenance is
-/// rejected before any build starts because policy ownership would otherwise
-/// be ambiguous.
+/// unaffected. An entry mixing batch-owned and per-spec integrated maintenance
+/// reports an indexed error without preventing later entries from running.
+#[must_use]
 pub fn build_wasm_canisters_cached_batch_with_config(
     specs: &[WasmBuildSpec],
     config: WasmBuildBatchConfig,
-) -> Result<WasmBuildBatchOutcome, WasmBuildBatchError> {
-    build_wasm_batch(specs, config, |spec, _index| {
-        build_wasm_canisters_cached(spec)
+) -> WasmBuildBatchReport {
+    let mut resolver = WasmBuildBatchInputResolver::new(specs);
+    build_wasm_batch(specs, config, |spec, index| {
+        build_wasm_canisters_cached_in_batch(spec, index, &mut resolver)
     })
 }
 
@@ -218,7 +210,7 @@ pub fn build_wasm_canisters_cached_batch_with_progress<F>(
     specs: &[WasmBuildSpec],
     config: WasmBuildProgressConfig,
     observer: F,
-) -> Result<WasmBuildBatchOutcome, WasmBuildBatchError>
+) -> WasmBuildBatchReport
 where
     F: FnMut(WasmBuildBatchProgressEvent),
 {
@@ -236,21 +228,29 @@ pub fn build_wasm_canisters_cached_batch_with_config_and_progress<F>(
     batch_config: WasmBuildBatchConfig,
     progress_config: WasmBuildProgressConfig,
     mut observer: F,
-) -> Result<WasmBuildBatchOutcome, WasmBuildBatchError>
+) -> WasmBuildBatchReport
 where
     F: FnMut(WasmBuildBatchProgressEvent),
 {
     let count = specs.len();
+    let mut resolver = WasmBuildBatchInputResolver::new(specs);
     build_wasm_batch(specs, batch_config, |spec, index| {
         observer(WasmBuildBatchProgressEvent::BuildStarted {
             index,
             total: count,
         });
-        let outcome = build_wasm_canisters_cached_with_progress(spec, progress_config, |event| {
-            observer(WasmBuildBatchProgressEvent::BuildProgress { index, event });
-        })?;
-        observer(WasmBuildBatchProgressEvent::BuildFinished { index });
-        Ok(outcome)
+        let result = build_wasm_canisters_cached_in_batch_with_progress(
+            spec,
+            index,
+            &mut resolver,
+            progress_config,
+            |event| observer(WasmBuildBatchProgressEvent::BuildProgress { index, event }),
+        );
+        observer(match result {
+            Ok(_) => WasmBuildBatchProgressEvent::BuildFinished { index },
+            Err(_) => WasmBuildBatchProgressEvent::BuildFailed { index },
+        });
+        result
     })
 }
 
@@ -258,43 +258,27 @@ fn build_wasm_batch<F>(
     specs: &[WasmBuildSpec],
     config: WasmBuildBatchConfig,
     mut build: F,
-) -> Result<WasmBuildBatchOutcome, WasmBuildBatchError>
+) -> WasmBuildBatchReport
 where
     F: FnMut(&WasmBuildSpec, usize) -> Result<WasmBuildOutcome, WasmBuildError>,
 {
     let started = Instant::now();
-    if let Some(failed_index) = config.shared_incremental_maintenance.and_then(|_| {
-        specs
-            .iter()
-            .position(|spec| spec.shared_incremental_target_maintenance().is_some())
-    }) {
-        return Err(WasmBuildBatchError {
-            failed_index,
-            completed: Vec::new(),
-            total: started.elapsed(),
-            source: batch_maintenance_ownership_error(),
-        });
-    }
-    let mut outcomes = Vec::with_capacity(specs.len());
+    let mut results = Vec::with_capacity(specs.len());
     let mut maintenance = BatchMaintenanceTracker::new(config.shared_incremental_maintenance);
     for (index, spec) in specs.iter().enumerate() {
-        let configured = maintenance.prepare_spec(spec);
-        match build(configured.as_ref().unwrap_or(spec), index) {
-            Ok(outcome) => outcomes.push(outcome),
-            Err(source) => {
-                return Err(WasmBuildBatchError {
-                    failed_index: index,
-                    completed: outcomes,
-                    total: started.elapsed(),
-                    source,
-                });
-            }
+        if config.shared_incremental_maintenance.is_some()
+            && spec.shared_incremental_target_maintenance().is_some()
+        {
+            results.push(Err(batch_maintenance_ownership_error()));
+            continue;
         }
+        let configured = maintenance.prepare_spec(spec);
+        results.push(build(configured.as_ref().unwrap_or(spec), index));
     }
-    Ok(WasmBuildBatchOutcome {
-        outcomes,
+    WasmBuildBatchReport {
+        results,
         total: started.elapsed(),
-    })
+    }
 }
 
 struct BatchMaintenanceTracker {
@@ -331,24 +315,6 @@ fn batch_maintenance_ownership_error() -> WasmBuildError {
         message:
             "batch-owned shared-target maintenance cannot be combined with per-spec maintenance"
                 .to_owned(),
-    }
-}
-
-impl std::fmt::Display for WasmBuildBatchError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "independent Wasm build {} failed after {} successful build(s): {}",
-            self.failed_index,
-            self.completed.len(),
-            self.source,
-        )
-    }
-}
-
-impl std::error::Error for WasmBuildBatchError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(&self.source)
     }
 }
 

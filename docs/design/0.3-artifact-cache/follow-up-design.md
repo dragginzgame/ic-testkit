@@ -152,7 +152,7 @@ last. Partial public materialization is never considered reusable without its
 matching final stamps. The core reuses the `0.3.5` failure cleanup,
 `CACHEDIR.TAG`, process-lock, last-use, and age/size retention behavior.
 
-## Relationship to existing APIs
+## Relationship to the public APIs
 
 The shared implementation should be extracted underneath existing APIs rather
 than copied beside them:
@@ -160,16 +160,15 @@ than copied beside them:
 - `WatchedInputSnapshot` delegates to the common labeled input snapshot;
 - `WasmBuildSpec` composes Cargo input resolution with the artifact
   transaction;
-- `build_wasm_canisters_cached` preserves its current signature and typed
-  `Built`/`Reused` result;
-- `prune_wasm_build_cache` remains a compatibility entry point over generic
-  namespaced pruning;
+- `build_wasm_canisters_cached` returns its typed `Built`/`Reused` result;
+- `prune_wasm_build_cache` applies the shared retention types to the Wasm
+  cache's fingerprint-entry layout;
 - transform and external batch callers use the same transaction, manifest,
   errors, timings, and retention types.
 
-Compatibility adapters should be implemented before exposing a broad new API.
-This prevents two stamp formats or two pruning implementations from becoming
-public contracts.
+One shared implementation should back each public behavior. Pre-`1.0` changes
+replace old entry points directly instead of adding adapters, and internal
+formats remain at `v1` while their semantics evolve in place.
 
 ## Shared Cargo incremental mode
 

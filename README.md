@@ -300,7 +300,7 @@ selecting the exact sender for each canister:
 
 ```rust,no_run
 use ic_testkit::pic::{
-    CanisterSnapshotTarget, PocketIcCapturedSnapshotExt, PocketIcSnapshotExt,
+    CanisterSnapshotTarget, PocketIcSnapshotExt,
 };
 
 let snapshots = pocket_ic.capture_snapshots_with_senders([
@@ -358,7 +358,7 @@ use ic_testkit::pic::{
 static POOL: CachedStandaloneCanisterFixturePool<8> =
     CachedStandaloneCanisterFixturePool::new();
 
-let (fixture, outcome) = POOL.acquire_with_outcome(build_fixture)?;
+let (fixture, outcome) = POOL.acquire(build_fixture)?;
 let value: u64 = fixture.query_candid("get", ())?;
 assert!(matches!(
     outcome,
@@ -370,12 +370,10 @@ assert!(matches!(
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-`acquire_with_outcome` reports queue wait, fixture build and snapshot capture,
-restore, stale teardown, and total time. Snapshot failures retain their partial
-timings, while dead-transport recovery preserves both the restore and rebuild
-failure when replacement capture also fails. Existing callers can continue to
-use `acquire`; its boolean remains `true` only for a successfully restored slot
-and `false` for both builds and rebuilds.
+`acquire` reports queue wait, fixture build and snapshot capture, restore,
+stale teardown, and total time. Snapshot failures retain their partial timings,
+while dead-transport recovery preserves both the restore and rebuild failure
+when replacement capture also fails.
 
 One pool must represent one fixture recipe. Pass a builder with the same Wasm,
 init arguments, topology, and seeded state on every acquisition; use a separate
@@ -501,7 +499,7 @@ and exact generated-artifact freshness checks:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
-    WasmBuildCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
+    ArtifactCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
     build_wasm_canisters_cached, read_wasm, test_target_dir, workspace_root_for,
 };
 use std::time::Duration;
@@ -514,16 +512,17 @@ let spec = WasmBuildSpec::new(
     &["counter_canister"],
     "release",
 )
-.with_cargo_profile_args(&["--release", "--locked"])
-.with_inherited_env(&["COUNTER_SCHEMA_MODE"])
-.with_additional_inputs(&["config/counter-schema.json"])
+.with_cargo_profile_args(["--release", "--locked"])
+.with_inherited_env(["COUNTER_SCHEMA_MODE"])
+.with_additional_inputs(["config/counter-schema.json"])
 .with_prune_policy(
-    WasmBuildCachePrunePolicy::new()
+    ArtifactCachePrunePolicy::new()
         .with_max_age(Duration::from_secs(14 * 24 * 60 * 60))
         .with_max_size_bytes(10 * 1024 * 1024 * 1024),
 );
 
 let outcome = build_wasm_canisters_cached(&spec)?;
+eprintln!("immutable cache: {}", outcome.record().exact_cache_path().display());
 match &outcome {
     WasmBuildOutcome::Built(record) => {
         eprintln!("built {} in {:?}", record.fingerprint(), record.timings().total());
@@ -569,8 +568,8 @@ hit requires every expected nonempty Wasm artifact to carry the exact atomic
 stamp for both the current fingerprint and artifact content. Exact builds are
 retained under fingerprint-specific Cargo target directories, so a prior spec
 can be materialized again after another spec used the caller-facing output.
-`build_wasm_canisters` remains as the panicking convenience API and uses the
-same cache automatically.
+`WasmBuildRecord::exact_cache_path` exposes the selected immutable directory;
+CI cache collection does not need to reconstruct its private on-disk layout.
 
 Failed builds remove their incomplete fingerprint directory before returning;
 if cleanup also fails, `WasmBuildError::FailedBuildCleanup` preserves both
@@ -583,7 +582,7 @@ children below `.ic-testkit/wasm-targets`; public artifacts and unrelated Cargo
 target contents remain caller-owned. `WasmBuildSpec::with_prune_policy` performs
 the same maintenance without reacquiring the lock, protects the active
 fingerprint even when it exceeds the configured bound, and reports a nonfatal
-`WasmBuildCacheMaintenance` result plus its duration on the successful build
+`ArtifactCacheMaintenance` result plus its duration on the successful build
 record. The standalone pruning function remains available when maintenance
 failure should be returned directly.
 
@@ -592,9 +591,8 @@ same limits while replacing repeated hit-path directory scans with a small
 namespace marker check. The original `with_prune_policy` continues to run on
 every successful acquisition.
 
-`WasmBuildTimings::input_resolution_detail` separates Cargo/rustc identity,
-Cargo metadata, input discovery, and content hashing. The existing
-`input_resolution` accessor remains the aggregate for compatibility.
+`WasmBuildTimings::input_resolution` returns the structured Cargo/rustc
+identity, Cargo metadata, input discovery, content hashing, and total timing.
 
 Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
 retaining exact immutable final Wasm entries:
@@ -731,10 +729,9 @@ eprintln!("{outcome}");
 
 Observers run synchronously on the build thread and should return promptly.
 Raw output events preserve non-UTF-8 bytes; output is still captured in
-`WasmBuildError` when forwarding is disabled. `CargoHeartbeat` remains as a
-compatibility event and accompanies each phase-aware Cargo-build heartbeat.
-An observer panic joins active phase work, terminates and waits for a running
-Cargo build, and then performs normal lock and incomplete-entry cleanup.
+`WasmBuildError` when forwarding is disabled. An observer panic joins active
+phase work, terminates and waits for a running Cargo build, and then performs
+normal lock and incomplete-entry cleanup.
 
 Suites that require standalone feature resolution for several variants can
 batch independent specs without changing Cargo feature semantics:
@@ -748,19 +745,36 @@ let specs = [
     WasmBuildSpec::new(&workspace, &target, &["role_a"], "debug"),
     WasmBuildSpec::new(&workspace, &target, &["role_b"], "debug"),
 ];
-let batch = build_wasm_canisters_cached_batch(&specs)?;
+let batch = build_wasm_canisters_cached_batch(&specs);
 eprintln!("{batch}");
+for (index, error) in batch.failures() {
+    eprintln!("build {index} failed: {error}");
+}
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The batch is sequential and fail-fast. Every entry uses the ordinary
-single-spec implementation and its own exact identity, locks, policy, and
-Cargo command; packages are never collapsed into one invocation that could
-unify shared dependency features. A failure exposes the already-completed
-prefix, whose artifacts remain valid. When several packages are intentionally
-built together with Cargo's normal shared feature resolution, keep them in one
-multi-package `WasmBuildSpec`; splitting that build into per-package batch
-entries would repeat Cargo work and may change feature resolution.
+The batch is sequential and collect-all. Its `WasmBuildBatchReport` retains one
+ordered `Result` per specification and provides indexed `outcomes` and
+`failures` iterators. Every entry uses the ordinary single-spec implementation
+and its own exact identity, locks, policy, and Cargo command; packages are never
+collapsed into one invocation that could unify shared dependency features.
+When several packages are intentionally built together with Cargo's normal
+shared feature resolution, keep them in one multi-package `WasmBuildSpec`;
+splitting that build into per-package batch entries would repeat Cargo work and
+may change feature resolution.
+
+Resolution-compatible entries share one workspace/toolchain snapshot: Cargo
+and rustc identity, Cargo metadata, input discovery, and memoized per-root
+content digests are reused while each spec retains its standalone fingerprint
+and Cargo invocation. A different workspace, tool environment, or
+metadata-affecting feature argument starts a separate snapshot so independent
+feature semantics remain intact.
+
+The batch remains sequential. Shared incremental Cargo targets already
+serialize access, so parallel scheduling would add lock contention. A future
+parallel API should be restricted to isolated target directories and supported
+by benchmarks first; measured consumers can separately apply bounded
+parallelism to isolated single-spec calls.
 
 When independent specs share incremental targets, batch-owned maintenance
 removes the caller convention of modifying the first spec:
@@ -783,7 +797,7 @@ let maintenance = SharedIncrementalTargetMaintenanceConfig::new(
 let batch = build_wasm_canisters_cached_batch_with_config(
     &specs,
     WasmBuildBatchConfig::new().with_shared_incremental_target_maintenance(maintenance),
-)?;
+);
 for (index, outcome) in batch.shared_incremental_maintenance_outcomes() {
     eprintln!("build {index}: {outcome}");
 }
@@ -791,13 +805,13 @@ for (index, outcome) in batch.shared_incremental_maintenance_outcomes() {
 ```
 
 Maintenance is attached to the first specification for each distinct
-configured shared-target path. Isolated specs are unaffected, and mixing
-batch-owned with per-spec integrated maintenance is rejected as ambiguous
-before any batch entry runs.
+configured shared-target path. Isolated specs are unaffected. A specification
+that also configures per-spec integrated maintenance receives an indexed error,
+and later entries still run.
 
 `ResolvedCargoBuildInputs::is_current` provides the same before/after identity
-check for external Cargo-derived workflows. OS-native iterator builders ending
-in `_os` preserve dynamic and non-UTF-8 argument and environment bytes. Use
+check for external Cargo-derived workflows. The generic builders preserve
+dynamic and non-UTF-8 argument and environment bytes. Use
 `resolve_executable` to turn a bare `PATH` program into a canonical executable
 file before declaring it through `ArtifactCacheSpec::with_tool`.
 

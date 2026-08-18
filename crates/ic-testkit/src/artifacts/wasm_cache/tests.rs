@@ -1,7 +1,7 @@
 use super::{
     IncompleteBuildDirectory, ProgressReporter, SharedIncrementalTargetMaintenanceConfig,
     SharedIncrementalTargetMaintenanceFailureMode, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildCachePrunePolicy, WasmBuildError,
+    SharedIncrementalTargetPrunePolicy, WasmBuildBatchInputResolver, WasmBuildError,
     WasmBuildOutcome, WasmBuildOutputStream, WasmBuildProgressConfig, WasmBuildProgressEvent,
     WasmBuildProgressPhase, WasmBuildSpec, append_cargo_configuration_inputs,
     build_wasm_canisters_cached_with_progress, ensure_cache_directory_tag,
@@ -13,7 +13,8 @@ use super::{
     prune_wasm_build_cache_locked, resolve_cargo_build_inputs, run_cargo_build, validate_spec,
 };
 use crate::artifacts::cache_fs::{
-    CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size, write_last_used,
+    ArtifactCachePrunePolicy, CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size,
+    write_last_used,
 };
 use crate::artifacts::test_support::unique_temp_directory;
 use std::{
@@ -54,12 +55,12 @@ fn metadata_receives_only_resolution_arguments() {
 }
 
 #[test]
-fn os_native_builders_preserve_dynamic_values() {
+fn builders_preserve_os_native_values() {
     let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
-        .with_cargo_profile_args_os([OsString::from("--locked")])
-        .with_extra_env_os([(OsString::from("MODE"), OsString::from("exact"))])
-        .with_inherited_env_os([OsString::from("RUSTFLAGS")])
-        .with_additional_input_paths([PathBuf::from("schema")]);
+        .with_cargo_profile_args([OsString::from("--locked")])
+        .with_extra_env([(OsString::from("MODE"), OsString::from("exact"))])
+        .with_inherited_env([OsString::from("RUSTFLAGS")])
+        .with_additional_inputs([PathBuf::from("schema")]);
 
     assert_eq!(spec.cargo_profile_args, [OsString::from("--locked")]);
     assert_eq!(
@@ -151,6 +152,82 @@ fn public_cargo_input_snapshot_detects_local_source_changes() {
         Err(WasmBuildError::InvalidSpec { .. })
     ));
     fs::remove_dir_all(root).expect("remove Cargo input fixture");
+}
+
+#[test]
+#[cfg(unix)]
+fn batch_input_snapshot_reuses_compatible_toolchain_and_metadata_resolution() {
+    let root = unique_temp_directory("batch-input-snapshot");
+    for package in ["fixture_a", "fixture_b"] {
+        fs::create_dir_all(root.join(package).join("src")).expect("create batch fixture package");
+        fs::write(
+            root.join(package).join("Cargo.toml"),
+            format!("[package]\nname = \"{package}\"\nversion = \"0.0.0\"\nedition = \"2024\"\n"),
+        )
+        .expect("write batch fixture manifest");
+        fs::write(
+            root.join(package).join("src/lib.rs"),
+            "pub fn fixture() {}\n",
+        )
+        .expect("write batch fixture source");
+    }
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fixture_a\", \"fixture_b\"]\nresolver = \"2\"\n",
+    )
+    .expect("write batch fixture workspace");
+    let invocation_log = root.join("cargo-invocations");
+    let cargo_wrapper = root.join("cargo-wrapper.sh");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    write_executable_script(
+        &cargo_wrapper,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\nexec '{}' \"$@\"\n",
+            invocation_log.display(),
+            PathBuf::from(cargo).display(),
+        ),
+    );
+    let target = root.join("exact");
+    let specs = [
+        WasmBuildSpec::new(&root, &target, &["fixture_a"], "debug")
+            .with_cargo_program(&cargo_wrapper),
+        WasmBuildSpec::new(&root, &target, &["fixture_b"], "debug")
+            .with_cargo_program(&cargo_wrapper),
+    ];
+    let mut resolver = WasmBuildBatchInputResolver::new(&specs);
+    let mut progress = ProgressReporter::silent();
+
+    let first = resolver
+        .resolve(0, &mut progress)
+        .expect("resolve first batched input");
+    let second = resolver
+        .resolve(1, &mut progress)
+        .expect("reuse batched input snapshot");
+
+    let invocations = fs::read_to_string(&invocation_log).expect("read Cargo invocation log");
+    assert_eq!(
+        invocations
+            .lines()
+            .filter(|line| *line == "--version")
+            .count(),
+        1
+    );
+    assert_eq!(
+        invocations
+            .lines()
+            .filter(|line| *line == "metadata")
+            .count(),
+        1
+    );
+    assert_eq!(
+        first.fingerprint(),
+        resolve_cargo_build_inputs(&specs[0])
+            .expect("resolve equivalent standalone inputs")
+            .fingerprint(),
+        "batch membership must not change an individual exact fingerprint",
+    );
+    assert_ne!(first.fingerprint(), second.fingerprint());
+    fs::remove_dir_all(root).expect("remove batch input snapshot fixture");
 }
 
 #[test]
@@ -354,7 +431,7 @@ fn maintenance_configuration_is_readable_and_strict_by_default() {
     let shared_interval = Duration::from_secs(60 * 60);
     let shared_config =
         SharedIncrementalTargetMaintenanceConfig::new(shared_policy, shared_interval);
-    let exact_policy = WasmBuildCachePrunePolicy::new().with_max_size_bytes(2 * 1024 * 1024);
+    let exact_policy = ArtifactCachePrunePolicy::new().with_max_size_bytes(2 * 1024 * 1024);
     let exact_interval = Duration::from_secs(30 * 60);
     let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
         .with_shared_incremental_target("target/shared")
@@ -457,11 +534,6 @@ fn observed_phase_emits_phase_aware_heartbeats() {
             elapsed,
         } if *elapsed >= Duration::from_millis(5)
     )));
-    assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, WasmBuildProgressEvent::CargoHeartbeat { .. }))
-    );
 }
 
 #[test]
@@ -550,11 +622,6 @@ fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
     }
     assert_eq!(stdout, b"observed-stdout");
     assert_eq!(stderr, b"observed-stderr");
-    assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, WasmBuildProgressEvent::CargoHeartbeat { .. }))
-    );
     assert!(events.iter().any(|event| matches!(
         event,
         WasmBuildProgressEvent::Heartbeat {
@@ -658,7 +725,7 @@ fn age_pruning_removes_only_stale_fingerprint_directories() {
 
     let report = prune_wasm_build_cache(
         &target_dir,
-        WasmBuildCachePrunePolicy::new().with_max_age(Duration::from_secs(60)),
+        ArtifactCachePrunePolicy::new().with_max_age(Duration::from_secs(60)),
     )
     .expect("prune old cache entry");
 
@@ -683,7 +750,7 @@ fn size_pruning_removes_least_recently_used_entries_first() {
 
     let report = prune_wasm_build_cache(
         &target_dir,
-        WasmBuildCachePrunePolicy::new().with_max_size_bytes(newest_bytes),
+        ArtifactCachePrunePolicy::new().with_max_size_bytes(newest_bytes),
     )
     .expect("prune cache to size");
 
@@ -706,7 +773,7 @@ fn in_build_pruning_protects_the_active_fingerprint() {
 
     let report = prune_wasm_build_cache_locked(
         &target_dir,
-        WasmBuildCachePrunePolicy::new()
+        ArtifactCachePrunePolicy::new()
             .with_max_age(Duration::ZERO)
             .with_max_size_bytes(0),
         Some(&active),
@@ -762,7 +829,7 @@ fn cargo_configuration_discovery_matches_cargo_search_and_include_rules() {
 
     let cargo_home_text = cargo_home.to_str().expect("temporary path is UTF-8");
     let spec = WasmBuildSpec::new(&workspace, &root.join("target"), &["fixture"], "debug")
-        .with_extra_env(&[("CARGO_HOME", cargo_home_text)]);
+        .with_extra_env([("CARGO_HOME", cargo_home_text)]);
     let mut inputs = Vec::new();
     append_cargo_configuration_inputs(&mut inputs, &spec, &workspace)
         .expect("discover effective Cargo configuration");
@@ -795,7 +862,7 @@ fn required_cargo_configuration_include_is_an_exact_input() {
     let isolated_home = root.join("isolated-cargo-home");
     let isolated_home_text = isolated_home.to_str().expect("temporary path is UTF-8");
     let spec = WasmBuildSpec::new(&workspace, &root.join("target"), &["fixture"], "debug")
-        .with_extra_env(&[("CARGO_HOME", isolated_home_text)]);
+        .with_extra_env([("CARGO_HOME", isolated_home_text)]);
 
     let error = append_cargo_configuration_inputs(&mut Vec::new(), &spec, &workspace)
         .expect_err("required missing include must fail input discovery");

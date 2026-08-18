@@ -31,9 +31,9 @@ pub use transaction::{
 pub use transaction_batch::{
     ArtifactCacheBatchError, ArtifactCacheBatchOutcome, build_artifact_caches_batch,
 };
-pub use wasm::{build_wasm_canisters, read_wasm, wasm_artifacts_ready, wasm_path};
+pub use wasm::{read_wasm, wasm_artifacts_ready, wasm_path};
 pub use wasm_batch::{
-    WasmBuildBatchConfig, WasmBuildBatchError, WasmBuildBatchOutcome, WasmBuildBatchProgressEvent,
+    WasmBuildBatchConfig, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
     build_wasm_canisters_cached_batch, build_wasm_canisters_cached_batch_with_config,
     build_wasm_canisters_cached_batch_with_config_and_progress,
     build_wasm_canisters_cached_batch_with_progress,
@@ -42,8 +42,7 @@ pub use wasm_cache::{
     CargoBuildInput, ResolvedCargoBuildInputs, SharedIncrementalTargetInspection,
     SharedIncrementalTargetMaintenance, SharedIncrementalTargetMaintenanceConfig,
     SharedIncrementalTargetMaintenanceFailureMode, SharedIncrementalTargetMaintenanceOutcome,
-    SharedIncrementalTargetPrunePolicy, WasmBuildCacheMaintenance, WasmBuildCacheMode,
-    WasmBuildCachePrunePolicy, WasmBuildCachePruneReport, WasmBuildError, WasmBuildOutcome,
+    SharedIncrementalTargetPrunePolicy, WasmBuildCacheMode, WasmBuildError, WasmBuildOutcome,
     WasmBuildOutputStream, WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent,
     WasmBuildProgressOutcome, WasmBuildProgressPhase, WasmBuildRecord, WasmBuildSpec,
     WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached,

@@ -27,13 +27,13 @@ fn os_native_argument_and_environment_builders_affect_identity() {
     let base = ArtifactCacheSpec::new(&root.join("cache"), "native", "recipe/v1")
         .with_input("input", &input)
         .with_output("output", &root.join("output"));
-    let arguments = base.clone().with_arguments_os([OsString::from("--exact")]);
+    let arguments = base.clone().with_arguments([OsString::from("--exact")]);
     let environment = base
         .clone()
-        .with_environment_os([(OsString::from("MODE"), OsString::from("exact"))]);
+        .with_environment([(OsString::from("MODE"), OsString::from("exact"))]);
     let unset = base
         .clone()
-        .with_unset_environment_os([OsString::from("MODE")]);
+        .with_unset_environment([OsString::from("MODE")]);
 
     let base_key = resolve_key(&base).unwrap().key;
     assert_ne!(base_key, resolve_key(&arguments).unwrap().key);
@@ -55,8 +55,8 @@ fn non_utf8_argument_bytes_affect_artifact_identity_exactly() {
         .with_output("output", &root.join("output"));
     let first = base
         .clone()
-        .with_arguments_os([OsString::from_vec(vec![b'a', 0xff])]);
-    let second = base.with_arguments_os([OsString::from_vec(vec![b'a', 0xfe])]);
+        .with_arguments([OsString::from_vec(vec![b'a', 0xff])]);
+    let second = base.with_arguments([OsString::from_vec(vec![b'a', 0xfe])]);
 
     assert_ne!(
         resolve_key(&first).unwrap().key,
@@ -73,7 +73,7 @@ fn one_output_is_built_materialized_repaired_and_reused() {
     fs::write(&input, b"raw-wasm").expect("write input");
     let spec = ArtifactCacheSpec::new(&root.join("cache"), "optimizer", "pipeline/v1")
         .with_input("raw-wasm", &input)
-        .with_arguments(&["-O3", "--strip-debug"])
+        .with_arguments(["-O3", "--strip-debug"])
         .with_output("optimized.wasm", &destination);
     assert!(!destination.starts_with(spec.cache_root()));
 
@@ -105,12 +105,12 @@ fn multi_output_commit_is_complete_and_name_order_independent() {
     let root = unique_temp_directory("multi-output");
     let input = root.join("source");
     fs::write(&input, b"source").expect("write input");
-    let spec = ArtifactCacheSpec::new(&root.join("cache"), "release-set", "recipe/v2")
+    let spec = ArtifactCacheSpec::new(&root.join("cache"), "release-set", "recipe/v1")
         .with_input("source", &input)
         .with_output("role-b.wasm", &root.join("public/role-b.wasm"))
         .with_output("metadata.json", &root.join("public/metadata.json"))
         .with_output("root.wasm", &root.join("public/root.wasm"));
-    let reordered = ArtifactCacheSpec::new(&root.join("cache"), "release-set", "recipe/v2")
+    let reordered = ArtifactCacheSpec::new(&root.join("cache"), "release-set", "recipe/v1")
         .with_input("source", &input)
         .with_output("root.wasm", &root.join("public/root.wasm"))
         .with_output("role-b.wasm", &root.join("public/role-b.wasm"))
@@ -239,26 +239,26 @@ fn every_declared_identity_dimension_changes_the_content_key() {
     let base = ArtifactCacheSpec::new(&root.join("cache"), "identity", "recipe/v1")
         .with_input("input", &input)
         .with_tool("optimizer", &tool)
-        .with_arguments(&["-O2"])
-        .with_environment(&[("MODE", "release")])
+        .with_arguments(["-O2"])
+        .with_environment([("MODE", "release")])
         .with_identity_bytes("pipeline", b"one")
         .with_output("output", &root.join("output"));
     let original = resolve_key(&base).unwrap().key;
     let mut changed_namespace_spec = base.clone();
     changed_namespace_spec.namespace = "identity-other".to_owned();
     let changed_namespace = resolve_key(&changed_namespace_spec).unwrap().key;
-    let changed_argument = resolve_key(&base.clone().with_arguments(&["-O3"]))
+    let changed_argument = resolve_key(&base.clone().with_arguments(["-O3"]))
         .unwrap()
         .key;
     let changed_environment =
-        resolve_key(&base.clone().with_environment(&[("MODE", "size-optimized")]))
+        resolve_key(&base.clone().with_environment([("MODE", "size-optimized")]))
             .unwrap()
             .key;
-    let changed_unset_environment = resolve_key(&base.clone().with_unset_environment(&["MODE"]))
+    let changed_unset_environment = resolve_key(&base.clone().with_unset_environment(["MODE"]))
         .unwrap()
         .key;
     let changed_recipe = resolve_key(&ArtifactCacheSpec {
-        recipe_id: "recipe/v2".to_owned(),
+        recipe_id: "recipe/changed".to_owned(),
         ..base.clone()
     })
     .unwrap()
@@ -278,10 +278,10 @@ fn every_declared_identity_dimension_changes_the_content_key() {
     let mut changed_output_name_spec = base.clone();
     changed_output_name_spec.outputs[0].name = "renamed-output".to_owned();
     let changed_output_name = resolve_key(&changed_output_name_spec).unwrap().key;
-    fs::write(&tool, b"tool-v2").expect("change tool bytes");
+    fs::write(&tool, b"changed-tool").expect("change tool bytes");
     let changed_tool = resolve_key(&base).unwrap().key;
     fs::write(&tool, b"tool-v1").expect("restore tool bytes");
-    fs::write(&input, b"input-v2").expect("change input bytes");
+    fs::write(&input, b"changed-input").expect("change input bytes");
     let changed_input = resolve_key(&base).unwrap().key;
 
     for changed in [
@@ -403,10 +403,10 @@ fn pruning_protects_active_entry_and_removes_older_key() {
     let base = ArtifactCacheSpec::new(&root.join("cache"), "prune", "recipe/v1")
         .with_input("input", &input)
         .with_output("output", &root.join("output"));
-    build_output(&base.clone().with_arguments(&["old"]), b"old");
+    build_output(&base.clone().with_arguments(["old"]), b"old");
     let active = base
         .clone()
-        .with_arguments(&["active"])
+        .with_arguments(["active"])
         .with_prune_policy(ArtifactCachePrunePolicy::new().with_max_size_bytes(0));
 
     let outcome = build_output(&active, b"active");
@@ -420,7 +420,7 @@ fn pruning_protects_active_entry_and_removes_older_key() {
     assert_eq!(report.entries_removed(), 1);
     assert_eq!(report.entries_retained(), 1);
     assert!(matches!(
-        prepare_artifact_cache(&base.with_arguments(&["old"])).unwrap(),
+        prepare_artifact_cache(&base.with_arguments(["old"])).unwrap(),
         ArtifactCachePreparation::Build(_)
     ));
     assert!(matches!(
@@ -573,7 +573,7 @@ fn different_keys_sharing_a_coordination_scope_do_not_overlap() {
     let active = Arc::new(AtomicUsize::new(0));
     let maximum = Arc::new(AtomicUsize::new(0));
     let workers = ["first", "second"].map(|argument| {
-        let spec = base.clone().with_arguments(&[argument]);
+        let spec = base.clone().with_arguments([argument]);
         let start = Arc::clone(&start);
         let active = Arc::clone(&active);
         let maximum = Arc::clone(&maximum);
@@ -613,7 +613,7 @@ fn content_identity_is_independent_of_checkout_and_destination_paths() {
         ArtifactCacheSpec::new(&root.join("cache"), "portable", "recipe/v1")
             .with_input("source", &root.join("source"))
             .with_tool("optimizer", &root.join("tool"))
-            .with_arguments(&["--exact"])
+            .with_arguments(["--exact"])
             .with_output("output", &root.join("different/public/output"))
     };
 
@@ -636,7 +636,7 @@ fn import_helper_and_debug_output_do_not_expose_identity_values() {
     fs::write(&external, b"external-output").expect("write external output");
     let spec = ArtifactCacheSpec::new(&root.join("cache"), "import", "recipe/v1")
         .with_input("input", &input)
-        .with_environment(&[("SECRET_TOKEN", "do-not-render")])
+        .with_environment([("SECRET_TOKEN", "do-not-render")])
         .with_identity_bytes("private-ish", b"also-do-not-render")
         .with_output("output", &root.join("public/output"));
     let debug = format!("{spec:?}");
@@ -738,7 +738,7 @@ fn invalid_specifications_are_rejected_before_acquisition() {
             .with_identity_bytes("identity", b"two")
             .with_output("output", &output),
         ArtifactCacheSpec::new(&cache, "namespace", "recipe/v1")
-            .with_environment(&[("", "value")])
+            .with_environment([("", "value")])
             .with_output("output", &output),
         ArtifactCacheSpec::new(&cache, "namespace", "recipe/v1")
             .with_output("same", &output)

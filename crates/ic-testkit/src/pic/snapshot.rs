@@ -149,10 +149,7 @@ pub trait PocketIcSnapshotExt {
         snapshots: &ControllerSnapshots,
         funding: SnapshotRestoreFunding,
     ) -> Result<(), ControllerSnapshotError>;
-}
 
-/// Exact-sender restoration for snapshots that retained their capture sender.
-pub trait PocketIcCapturedSnapshotExt {
     /// Restore every snapshot with exactly the sender retained during capture.
     ///
     /// This performs no fallback attempts. In particular, a captured
@@ -247,9 +244,7 @@ impl PocketIcSnapshotExt for PocketIc {
         }
         Ok(())
     }
-}
 
-impl PocketIcCapturedSnapshotExt for PocketIc {
     fn restore_snapshots_with_captured_senders(
         &self,
         snapshots: &ControllerSnapshots,

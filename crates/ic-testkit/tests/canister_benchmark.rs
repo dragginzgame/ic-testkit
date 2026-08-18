@@ -9,14 +9,13 @@ mod wait_support;
 use candid::Principal;
 use ic_testkit::{
     artifacts::{
-        ArtifactCacheError, ArtifactCachePreparation, ArtifactCacheSpec,
-        SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
-        WasmBuildCacheMaintenance, WasmBuildCachePrunePolicy, WasmBuildOutcome,
-        WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSpec,
-        build_wasm_canisters_cached, build_wasm_canisters_cached_batch,
-        build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
-        prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
-        wasm_path, workspace_root_for,
+        ArtifactCacheError, ArtifactCacheMaintenance, ArtifactCachePreparation,
+        ArtifactCachePrunePolicy, ArtifactCacheSpec, SharedIncrementalTargetMaintenanceOutcome,
+        SharedIncrementalTargetPrunePolicy, WasmBuildOutcome, WasmBuildProgressConfig,
+        WasmBuildProgressEvent, WasmBuildSpec, build_wasm_canisters_cached,
+        build_wasm_canisters_cached_batch, build_wasm_canisters_cached_with_progress,
+        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
+        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -92,29 +91,56 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         WasmBuildSpec::new(&workspace, &target, &["feature_b"], "debug"),
     ];
 
-    let batch = build_wasm_canisters_cached_batch(&specs)
-        .expect("independent feature builds must not be combined");
+    let batch = build_wasm_canisters_cached_batch(&specs);
 
-    assert_eq!(batch.outcomes().len(), 2);
+    assert!(batch.is_success());
+    assert_eq!(batch.outcomes().count(), 2);
     assert!(
         batch
             .outcomes()
-            .iter()
-            .all(|outcome| matches!(outcome, WasmBuildOutcome::Built(_)))
+            .all(|(_index, outcome)| matches!(outcome, WasmBuildOutcome::Built(_)))
     );
     assert!(wasm_path(&target, "feature_a", "debug").is_file());
     assert!(wasm_path(&target, "feature_b", "debug").is_file());
+    assert!(
+        batch
+            .outcomes()
+            .all(|(_index, outcome)| outcome.record().exact_cache_path().is_dir())
+    );
+    let first_exact_cache = batch
+        .outcomes()
+        .next()
+        .expect("first batch outcome")
+        .1
+        .record()
+        .exact_cache_path()
+        .to_owned();
+    fs::remove_dir_all(&first_exact_cache).expect("remove exact entry reconstruction fixture");
 
-    let with_invalid_tail = [
+    let with_invalid_middle = [
         specs[0].clone(),
-        specs[1].clone(),
         WasmBuildSpec::new(&workspace, &target, &[], "debug"),
+        specs[1].clone(),
     ];
-    let error = build_wasm_canisters_cached_batch(&with_invalid_tail)
-        .expect_err("invalid trailing spec must fail after reusable prefix");
-    assert_eq!(error.failed_index(), 2);
-    assert_eq!(error.completed().len(), 2);
-    assert!(error.completed().iter().all(WasmBuildOutcome::is_reused));
+    let with_failure = build_wasm_canisters_cached_batch(&with_invalid_middle);
+    assert!(!with_failure.is_success());
+    assert_eq!(with_failure.outcomes().count(), 2);
+    assert!(
+        with_failure
+            .outcomes()
+            .all(|(_index, outcome)| outcome.is_reused())
+    );
+    assert_eq!(
+        with_failure
+            .failures()
+            .map(|(index, _error)| index)
+            .collect::<Vec<_>>(),
+        [1]
+    );
+    assert!(
+        first_exact_cache.is_dir(),
+        "a validated caller-facing hit must recreate its immutable cache directory"
+    );
     fs::remove_dir_all(root).expect("remove independent feature fixture");
 }
 
@@ -132,7 +158,7 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
 
     let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
         .with_prune_policy_at_most_every(
-            WasmBuildCachePrunePolicy::new(),
+            ArtifactCachePrunePolicy::new(),
             std::time::Duration::from_secs(60 * 60),
         );
     let first = build_wasm_canisters_cached(&spec).expect("first exact Wasm build");
@@ -162,7 +188,7 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
 
     let changed_environment = spec
         .clone()
-        .with_extra_env(&[("IC_TESTKIT_CACHE_PROBE", "changed")]);
+        .with_extra_env([("IC_TESTKIT_CACHE_PROBE", "changed")]);
     let rebuilt = build_wasm_canisters_cached(&changed_environment)
         .expect("declared environment should invalidate Wasm build");
     assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
@@ -325,9 +351,7 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
     assert!(inspection.logical_size_bytes() > 0);
     let last_used = inspection.last_used();
 
-    let cache_entry = target_dir
-        .join(".ic-testkit/wasm-targets")
-        .join(first.record().fingerprint().to_hex());
+    let cache_entry = first.record().exact_cache_path();
     assert!(cache_entry.is_dir());
     assert!(
         !cache_entry
@@ -356,7 +380,7 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
 
     let changed = spec
         .clone()
-        .with_extra_env(&[("IC_TESTKIT_SHARED_INCREMENTAL_PROBE", "changed")]);
+        .with_extra_env([("IC_TESTKIT_SHARED_INCREMENTAL_PROBE", "changed")]);
     let rebuilt = build_wasm_canisters_cached(&changed).expect("build changed exact identity");
     assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
     assert_ne!(first.record().fingerprint(), rebuilt.record().fingerprint());
@@ -368,7 +392,7 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
 
     prune_wasm_build_cache(
         &target_dir,
-        WasmBuildCachePrunePolicy::new().with_max_size_bytes(0),
+        ArtifactCachePrunePolicy::new().with_max_size_bytes(0),
     )
     .expect("prune exact output entries");
     assert!(marker.is_file(), "retention must not own the shared target");
@@ -510,7 +534,7 @@ fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
     let destination = workspace.join("target/public/transformed.wasm");
     let mismatched_build_spec = wasm_spec
         .clone()
-        .with_extra_env(&[("IC_TESTKIT_BRIDGE_MODE", "changed")]);
+        .with_extra_env([("IC_TESTKIT_BRIDGE_MODE", "changed")]);
     let mismatched = ArtifactCacheSpec::new(
         &workspace.join("target/artifact-cache"),
         "cargo-bridge",
@@ -566,7 +590,7 @@ fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
         transaction
             .output_path("transformed.wasm")
             .expect("resolve refreshed transformed output path"),
-        b"transformed-v2",
+        b"transformed-updated",
     )
     .expect("write refreshed transformed output");
     transaction.commit().expect("commit refreshed artifact");
@@ -593,7 +617,7 @@ fn failed_shared_incremental_build_preserves_cargo_state_without_publishing_an_e
     fs::write(&marker, b"preserve").expect("write failed-build marker");
     let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
         .with_shared_incremental_target(&shared_target)
-        .with_cargo_profile_args(&["--definitely-not-a-cargo-build-option"]);
+        .with_cargo_profile_args(["--definitely-not-a-cargo-build-option"]);
     let fingerprint = resolve_cargo_build_inputs(&spec)
         .expect("resolve failing build identity")
         .fingerprint();
@@ -652,7 +676,7 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
     )
     .with_shared_incremental_target(root.join("shared-target"))
     .with_cargo_program(&wrapper)
-    .with_extra_env_os([
+    .with_extra_env([
         (OsString::from("REAL_CARGO"), real_cargo),
         (
             OsString::from("IC_TESTKIT_BUILD_STARTED"),
@@ -710,11 +734,10 @@ exec \"$REAL_CARGO\" \"$@\"\n",
 fn assert_cache_observability(outcome: &WasmBuildOutcome) {
     assert!(matches!(
         outcome.record().maintenance(),
-        Some(WasmBuildCacheMaintenance::Pruned(_))
+        Some(ArtifactCacheMaintenance::Pruned(_))
     ));
     let timings = outcome.record().timings();
-    let input = timings.input_resolution_detail();
-    assert_eq!(timings.input_resolution(), input.total());
+    let input = timings.input_resolution();
     assert!(input.total() >= input.tool_identity());
     assert!(input.total() >= input.cargo_metadata());
     assert!(input.total() >= input.input_discovery());

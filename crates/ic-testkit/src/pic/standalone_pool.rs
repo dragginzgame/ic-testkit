@@ -7,8 +7,8 @@ use std::{
 };
 
 use super::{
-    ControllerSnapshotError, ControllerSnapshots, PocketIcCapturedSnapshotExt, PocketIcSnapshotExt,
-    SnapshotRestoreFunding, StandaloneCanisterFixture,
+    ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt, SnapshotRestoreFunding,
+    StandaloneCanisterFixture,
     bounded_pool::{BoundedSlotLease, BoundedSlotPool},
     transport,
 };
@@ -194,34 +194,14 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
     /// the affected slot. Other snapshot failures are returned unchanged and
     /// invalidate the possibly partially restored slot for the next lease.
     ///
-    /// # Errors
-    ///
-    /// Returns the structured snapshot capture or restore failure for the
-    /// selected slot.
-    pub fn acquire<B>(
-        &self,
-        build: B,
-    ) -> Result<(CachedStandaloneCanisterFixtureGuard<'_>, bool), ControllerSnapshotError>
-    where
-        B: Fn() -> StandaloneCanisterFixture,
-    {
-        self.acquire_with_outcome(build)
-            .map(|(guard, outcome)| (guard, outcome.is_reused()))
-            .map_err(StandaloneFixturePoolError::into_snapshot_error)
-    }
-
-    /// Acquire one fixture with structured lifecycle outcome and phase timings.
-    ///
-    /// This is the diagnostic counterpart to [`acquire`](Self::acquire). It
-    /// distinguishes a new slot from restoration and reconstruction while the
-    /// compatibility method continues to report restoration as a boolean.
+    /// Acquire one fixture with a structured lifecycle outcome and phase timings.
     ///
     /// # Errors
     ///
     /// Returns the failed preparation stage, the structured snapshot error,
     /// and all phase timings completed before failure. If dead-transport
     /// restoration and replacement capture both fail, both errors are retained.
-    pub fn acquire_with_outcome<B>(
+    pub fn acquire<B>(
         &self,
         build: B,
     ) -> Result<
@@ -513,13 +493,6 @@ impl StandaloneFixturePoolError {
     pub const fn timings(&self) -> StandaloneFixturePoolTimings {
         match self {
             Self::Preparation { timings, .. } | Self::RecoveryFailed { timings, .. } => **timings,
-        }
-    }
-
-    fn into_snapshot_error(self) -> ControllerSnapshotError {
-        match self {
-            Self::Preparation { source, .. } => *source,
-            Self::RecoveryFailed { rebuild, .. } => *rebuild,
         }
     }
 }

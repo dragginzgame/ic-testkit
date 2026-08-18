@@ -159,9 +159,124 @@ pub(super) fn digest_labeled_paths(
             &excluded_roots,
             &mut visited_directories,
             true,
+            None,
         )?;
     }
     Ok(hasher.finish())
+}
+
+#[derive(Default)]
+pub(super) struct LabeledPathDigestCache {
+    entries: Vec<LabeledPathDigestCacheEntry>,
+}
+
+struct LabeledPathDigestCacheEntry {
+    domain: String,
+    label: PathBuf,
+    path: PathBuf,
+    canonical_root: PathBuf,
+    excluded_roots: Vec<PathBuf>,
+    traversed_external_path: bool,
+    digest: InputDigest,
+}
+
+struct HashPathTrace {
+    canonical_root: PathBuf,
+    traversed_external_path: bool,
+}
+
+pub(super) fn digest_labeled_paths_composable(
+    domain: &str,
+    paths: &[(PathBuf, PathBuf)],
+    excluded_roots: &[PathBuf],
+    cache: &mut LabeledPathDigestCache,
+) -> io::Result<InputDigest> {
+    let mut paths = paths.to_vec();
+    paths.sort_by(|(left, _), (right, _)| {
+        os_bytes(left.as_os_str()).cmp(&os_bytes(right.as_os_str()))
+    });
+    let excluded_roots = excluded_roots
+        .iter()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect::<Vec<_>>();
+    let mut hasher = InputHasher::new(&format!("{domain}/composable-v1"));
+    for (label, path) in paths {
+        let digest = cache.digest_root(domain, &label, &path, &excluded_roots)?;
+        hasher.field("input-label", &os_bytes(label.as_os_str()));
+        hasher.field("input-digest", digest.as_bytes());
+    }
+    Ok(hasher.finish())
+}
+
+impl LabeledPathDigestCache {
+    fn digest_root(
+        &mut self,
+        domain: &str,
+        label: &Path,
+        path: &Path,
+        excluded_roots: &[PathBuf],
+    ) -> io::Result<InputDigest> {
+        let canonical_root = path.canonicalize()?;
+        if let Some(entry) = self.entries.iter().find(|entry| {
+            entry.domain == domain
+                && entry.label == label
+                && entry.path == path
+                && entry.excluded_roots
+                    == effective_root_exclusions(
+                        &entry.canonical_root,
+                        excluded_roots,
+                        entry.traversed_external_path,
+                    )
+        }) {
+            return Ok(entry.digest);
+        }
+        let mut hasher = InputHasher::new(&format!("{domain}/root-v1"));
+        let mut trace = HashPathTrace {
+            canonical_root: canonical_root.clone(),
+            traversed_external_path: false,
+        };
+        hash_path(
+            &mut hasher,
+            label,
+            path,
+            excluded_roots,
+            &mut BTreeSet::new(),
+            true,
+            Some(&mut trace),
+        )?;
+        let digest = hasher.finish();
+        self.entries.push(LabeledPathDigestCacheEntry {
+            domain: domain.to_owned(),
+            label: label.to_owned(),
+            path: path.to_owned(),
+            canonical_root,
+            excluded_roots: effective_root_exclusions(
+                &trace.canonical_root,
+                excluded_roots,
+                trace.traversed_external_path,
+            ),
+            traversed_external_path: trace.traversed_external_path,
+            digest,
+        });
+        Ok(digest)
+    }
+}
+
+fn effective_root_exclusions(
+    canonical_root: &Path,
+    excluded_roots: &[PathBuf],
+    traversed_external_path: bool,
+) -> Vec<PathBuf> {
+    if traversed_external_path {
+        return excluded_roots.to_vec();
+    }
+    excluded_roots
+        .iter()
+        .filter(|excluded| {
+            excluded.starts_with(canonical_root) || canonical_root.starts_with(excluded)
+        })
+        .cloned()
+        .collect()
 }
 
 fn hash_path(
@@ -171,8 +286,14 @@ fn hash_path(
     excluded_roots: &[PathBuf],
     visited_directories: &mut BTreeSet<PathBuf>,
     declared_root: bool,
+    mut trace: Option<&mut HashPathTrace>,
 ) -> io::Result<()> {
     let canonical = path.canonicalize()?;
+    if let Some(trace) = &mut trace
+        && !canonical.starts_with(&trace.canonical_root)
+    {
+        trace.traversed_external_path = true;
+    }
     if excluded_roots
         .iter()
         .any(|excluded| canonical.starts_with(excluded))
@@ -222,6 +343,7 @@ fn hash_path(
             excluded_roots,
             visited_directories,
             false,
+            trace.as_deref_mut(),
         )?;
     }
     Ok(())
@@ -311,9 +433,12 @@ pub(super) fn os_bytes(value: &OsStr) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{copy_file_atomic, digest_bytes, digest_file, write_atomic};
+    use super::{
+        LabeledPathDigestCache, copy_file_atomic, digest_bytes, digest_file,
+        digest_labeled_paths_composable, write_atomic,
+    };
     use crate::artifacts::test_support::unique_temp_directory;
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     #[test]
     fn streaming_digest_and_atomic_copy_preserve_exact_bytes() {
@@ -349,5 +474,36 @@ mod tests {
         assert!(message.contains(&missing.display().to_string()));
         assert!(message.contains(&destination.display().to_string()));
         fs::remove_dir_all(root).expect("remove streaming-digest test directory");
+    }
+
+    #[test]
+    fn composable_digest_reuses_roots_across_irrelevant_exclusion_changes() {
+        let root = unique_temp_directory("composable-digest-cache");
+        let input = root.join("input");
+        fs::create_dir_all(&input).expect("create composable input");
+        fs::create_dir_all(root.join("generated-a")).expect("create first generated root");
+        fs::create_dir_all(root.join("generated-b")).expect("create second generated root");
+        fs::write(input.join("source"), b"source").expect("write composable input");
+        let paths = [(PathBuf::from("shared"), input)];
+        let mut cache = LabeledPathDigestCache::default();
+
+        let first = digest_labeled_paths_composable(
+            "composable-test-v1",
+            &paths,
+            &[root.join("generated-a")],
+            &mut cache,
+        )
+        .expect("hash first composable input");
+        let second = digest_labeled_paths_composable(
+            "composable-test-v1",
+            &paths,
+            &[root.join("generated-b")],
+            &mut cache,
+        )
+        .expect("reuse composable input root");
+
+        assert_eq!(first, second);
+        assert_eq!(cache.entries.len(), 1);
+        fs::remove_dir_all(root).expect("remove composable digest fixture");
     }
 }

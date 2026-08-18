@@ -267,38 +267,23 @@ impl ArtifactCacheSpec {
         self
     }
 
-    /// Set ordered command arguments that contribute to the content key.
-    #[must_use]
-    pub fn with_arguments(mut self, arguments: &[&str]) -> Self {
-        self.arguments = arguments.iter().map(OsString::from).collect();
-        self
-    }
-
     /// Set OS-native ordered command arguments that contribute to the content key.
     #[must_use]
-    pub fn with_arguments_os<I, S>(mut self, arguments: I) -> Self
+    pub fn with_arguments<I, S>(mut self, arguments: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<OsString>,
+        S: AsRef<OsStr>,
     {
-        self.arguments = arguments.into_iter().map(Into::into).collect();
-        self
-    }
-
-    /// Set environment values that contribute to the content key.
-    #[must_use]
-    pub fn with_environment(mut self, environment: &[(&str, &str)]) -> Self {
-        self.environment.extend(
-            environment
-                .iter()
-                .map(|(name, value)| (OsString::from(name), Some(OsString::from(value)))),
-        );
+        self.arguments = arguments
+            .into_iter()
+            .map(|argument| argument.as_ref().to_owned())
+            .collect();
         self
     }
 
     /// Set OS-native environment values that contribute to the content key.
     #[must_use]
-    pub fn with_environment_os<I, K, V>(mut self, environment: I) -> Self
+    pub fn with_environment<I, K, V>(mut self, environment: I) -> Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: Into<OsString>,
@@ -312,17 +297,9 @@ impl ArtifactCacheSpec {
         self
     }
 
-    /// Record environment variables whose unset state contributes to the content key.
-    #[must_use]
-    pub fn with_unset_environment(mut self, names: &[&str]) -> Self {
-        self.environment
-            .extend(names.iter().map(|name| (OsString::from(name), None)));
-        self
-    }
-
     /// Record OS-native environment names whose unset state contributes to the content key.
     #[must_use]
-    pub fn with_unset_environment_os<I, S>(mut self, names: I) -> Self
+    pub fn with_unset_environment<I, S>(mut self, names: I) -> Self
     where
         I: IntoIterator<Item = S>,
         S: Into<OsString>,

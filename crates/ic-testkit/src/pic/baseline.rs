@@ -6,8 +6,8 @@ use std::{
 };
 
 use super::{
-    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots,
-    PocketIcCapturedSnapshotExt, PocketIcSnapshotExt, SnapshotRestoreFunding, transport,
+    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
+    SnapshotRestoreFunding, transport,
 };
 
 /// One owned PocketIC instance with captured snapshots and caller metadata.
