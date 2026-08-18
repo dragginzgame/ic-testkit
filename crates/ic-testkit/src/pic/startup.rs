@@ -35,6 +35,9 @@ pub struct PocketIcStartupConfig {
 /// Dropping the handle terminates and waits for the managed child. Callers may
 /// create several instances through [`Self::url`] and
 /// [`PocketIcStartupConfig::connect`] while retaining explicit server ownership.
+/// The handle is process-local and does not coordinate ownership across Cargo
+/// or test-runner processes; use an externally owned server with bounded
+/// connect mode for that topology.
 /// The handle owns no binary discovery, download, cache, or compatibility policy.
 pub struct PocketIcManagedServer {
     server: ManagedServer,

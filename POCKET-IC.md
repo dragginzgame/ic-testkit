@@ -78,7 +78,9 @@ without constructing an instance. The returned `PocketIcManagedServer` retains
 the URL and bounded lossy output and terminates and waits for the child on drop.
 Serial runners can keep that handle alive and use bounded connect-mode builders
 without reimplementing process ownership. This remains explicit caller scope,
-not a process-global singleton.
+not a process-global singleton. The handle cannot transfer ownership across
+Cargo or test-runner processes; multi-process CI should retain a runner-owned
+external server and pass its URL to bounded connect mode in each process.
 
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a

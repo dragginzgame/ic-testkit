@@ -152,15 +152,16 @@ impl LabeledWasmBuildSpec {
 }
 
 impl<'guard> WasmBuildSession<'guard> {
-    /// Bind a reusable input snapshot to a caller-owned source write-exclusion guard.
+    /// Assert source immutability and bind reuse to the supplied guard's lifetime.
     ///
     /// The guard must prevent mutation of every Cargo/rustc executable,
     /// manifest, configuration file, discovered source, declared additional
     /// input, and relevant environment value used by every specification sent
     /// through this session. The guard must remain held until the session is
-    /// dropped. Supplying an unrelated value can permit stale cache reuse.
+    /// dropped. This method cannot verify the guard's provenance; supplying an
+    /// unrelated value can permit stale cache reuse.
     #[must_use]
-    pub fn new<Guard: ?Sized>(_source_write_guard: &'guard Guard) -> Self {
+    pub fn assume_sources_immutable<Guard: ?Sized>(_source_write_guard: &'guard Guard) -> Self {
         Self {
             state: WasmBuildSessionState::new(),
             _source_guard: PhantomData,

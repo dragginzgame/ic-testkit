@@ -248,7 +248,10 @@ fn run_serial_suite(server_binary: &Path) -> Result<(), ic_testkit::pic::PocketI
 Managed startup creates a unique private temporary directory but leaves the
 actual `--port-file` path absent for PocketIC to create. Output is retained as
 bounded lossy UTF-8 for the handle lifetime. Keep the handle alive until every
-instance connected through its URL has been dropped.
+instance connected through its URL has been dropped. The handle is
+process-local: a CI topology spanning several Cargo or test-runner processes
+should keep one runner-owned external server and give each process its URL via
+bounded `PocketIcStartupConfig::connect` instead.
 
 ic-testkit does not discover, download, cache, or validate server binaries.
 Resolve the exact compatible executable before `spawn`, hash it when runtime
@@ -881,7 +884,9 @@ for failure in batch.failures() {
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The batch is sequential and collect-all. Every `LabeledWasmBuildSpec` label
+The batch is sequential and collect-all: every independent failure is returned
+in one report, but entries are not run simultaneously. Every
+`LabeledWasmBuildSpec` label
 must be nonempty and unique; invalid structure returns
 `WasmBuildBatchContractError` before resolution, progress, or build work. Its
 `WasmBuildBatchReport` retains canonical ordered entries and provides
@@ -926,19 +931,21 @@ use std::sync::Mutex;
 // Every source/config/tool/environment writer must coordinate on this lock.
 let source_write_exclusion = Mutex::new(());
 let source_guard = source_write_exclusion.lock().expect("acquire source lease");
-let mut session = WasmBuildSession::new(&source_guard);
+let mut session = WasmBuildSession::assume_sources_immutable(&source_guard);
 let first = session.build_batch(&specs, WasmBuildBatchConfig::new())?;
 let second = session.build_batch(&specs, WasmBuildBatchConfig::new())?;
 eprintln!("first={first}; second={second}; session={:?}", session.metrics());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The borrowed guard is a lifetime boundary, not filesystem locking performed by
-`ic-testkit`. Supplying an unrelated value violates the contract and can reuse
-stale inputs. The lease covers Cargo and rustc executables, manifests, Cargo
-configuration, discovered sources, declared additional inputs, and relevant
-environment values. A detected input race permanently invalidates the session,
-clears pending snapshots, and makes later calls return
+The `assume_sources_immutable` name is an explicit caller assertion. The
+borrowed guard is only a lifetime boundary, not filesystem locking or guard
+provenance validation performed by `ic-testkit`; supplying an unrelated value
+violates the contract and can reuse stale inputs. The lease covers Cargo and
+rustc executables, manifests, Cargo configuration, discovered sources,
+declared additional inputs, and relevant environment values. A detected input
+race permanently invalidates the session, clears pending snapshots, and makes
+later calls return
 `SourceLeaseInvalidated`. Ordinary batch functions still resolve current inputs
 per call, and there is no silent process-global cache. The complete contract is
 recorded in the

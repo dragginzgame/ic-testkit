@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-08-18 - Explicit Wasm source assumptions
+
+### Changed
+
+- Hard-cuts the ambiguous `WasmBuildSession::new(&guard)` constructor to
+  `WasmBuildSession::assume_sources_immutable(&guard)`. The new name exposes
+  that source immutability is a caller assertion and that an arbitrary borrowed
+  token is not a valid lease. No old-name alias is retained.
+
+### Documentation
+
+- Records a future prepared immutable resolution snapshot for concurrent
+  readers as a separate design requiring a genuine source lease, shared
+  invalidation, declared specifications, isolated or already-coordinated Cargo
+  targets, and consumer benchmarks. Current batches and sessions remain
+  sequential.
+
 ## [0.8.7] - 2026-08-18 - Explicit Wasm sessions and reliable PocketIC ownership
 
 ### Added
@@ -51,7 +68,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Documents partial failed-phase timing access and the hard-cut report-entry
   migration in the packaged changelog.
 - Documents shared serial-suite server ownership through the managed handle
-  and bounded `PocketIcStartupConfig::connect` calls.
+  and bounded `PocketIcStartupConfig::connect` calls, including the intentional
+  process-local ownership boundary and external-server guidance for
+  multi-process CI.
 - Refreshes `POCKET-IC.md` and the concurrency, baseline-pool, and artifact
   orchestration designs so their current-state sections reflect managed-server
   ownership, PocketIC 15 port-file semantics, session digest reuse, and failed

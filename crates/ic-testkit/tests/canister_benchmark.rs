@@ -67,7 +67,7 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
     let source_guard = source_write_exclusion
         .lock()
         .expect("lock immutable source fixture");
-    let mut session = WasmBuildSession::new(&source_guard);
+    let mut session = WasmBuildSession::assume_sources_immutable(&source_guard);
     let batch = session
         .build_batch(&specs, ic_testkit::artifacts::WasmBuildBatchConfig::new())
         .expect("valid leased Wasm batch");
@@ -760,7 +760,7 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
         let source_guard = source_write_exclusion
             .lock()
             .expect("lock race-test source lease");
-        let mut session = WasmBuildSession::new(&source_guard);
+        let mut session = WasmBuildSession::assume_sources_immutable(&source_guard);
         let specs = [LabeledWasmBuildSpec::new("race", spec)];
         let report = session
             .build_batch(&specs, WasmBuildBatchConfig::new())

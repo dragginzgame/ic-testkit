@@ -4,6 +4,21 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.8
+
+`WasmBuildSession::new(&guard)` is hard-cut to
+`WasmBuildSession::assume_sources_immutable(&guard)`. The constructor name now
+makes the caller assertion explicit: `ic-testkit` lifetime-binds the session to
+the supplied reference but cannot prove that the value is a genuine workspace
+write-exclusion guard. An unrelated token still violates the contract and can
+permit stale reuse. There is no `new` alias or deprecated bridge.
+
+A concurrent-reader resolution snapshot remains a documented future design,
+not an ambient cache or parallel batch mode. It would prepare a declared spec
+set under one genuine source lease, freeze resolution state before sharing,
+propagate invalidation to every reader, retain existing Cargo target locking,
+and require consumer benchmarks before implementation.
+
 ## 0.8.7
 
 Managed spawn now allocates stdout, stderr, and the server-owned port path
@@ -19,7 +34,9 @@ exists.
 the first 16 KiB of lossy stdout/stderr per stream with an omitted-byte marker,
 and dropping the handle terminates and waits for the managed child. Keep the
 handle alive until its connected instances are dropped. This is explicit
-ownership rather than a process-global server or an implicit retry path.
+process-local ownership rather than a process-global server or an implicit
+retry path. CI spanning multiple Cargo or test-runner processes should retain
+an external runner-owned server and use bounded connect mode in each process.
 
 An ignored real-server regression test accepts the exact caller-resolved
 binary through `IC_TESTKIT_POCKET_IC_SERVER`. It verifies port publication,
