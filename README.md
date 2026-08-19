@@ -912,11 +912,12 @@ feature semantics remain intact.
 counts; input-resolution runs and compatible-snapshot reuses; and summed
 successful acquisition timings. The structured input-resolution total makes
 distinct feature-resolution costs visible while reused snapshots remain
-counted explicitly, including reuse from an explicit session. `entry_elapsed`
-retains wall time for every ordered entry, including failures; `failures`
-returns structured entries that bundle the label, index, error, primary failed
-phase, partial phase timings, and elapsed time. Successful entries continue to
-expose detailed phase timings through their build records.
+counted explicitly, including reuse from an explicit session or prepared
+concurrent snapshot. `entry_elapsed` retains wall time for every ordered entry,
+including failures; `failures` returns structured entries that bundle the
+label, index, error, primary failed phase, partial phase timings, and elapsed
+time. Successful entries continue to expose detailed phase timings through
+their build records.
 
 Repeated batches can reuse exact input snapshots when the caller owns a real
 write-exclusion boundary for every build input:
@@ -951,11 +952,63 @@ per call, and there is no silent process-global cache. The complete contract is
 recorded in the
 [`0.7` orchestration design](docs/design/0.7-artifact-orchestration/0.7-design.md#explicit-cross-call-immutable-build-session).
 
-The batch remains sequential. Shared incremental Cargo targets already
-serialize access, so parallel scheduling would add lock contention. A future
-parallel API should be restricted to isolated target directories and supported
-by benchmarks first; measured consumers can separately apply bounded
-parallelism to isolated single-spec calls.
+When independent callers need the same resolution concurrently, prepare their
+complete exact specification set before starting readers:
+
+```rust,no_run
+use ic_testkit::artifacts::{
+    LabeledWasmBuildSpec, WasmBuildBatchConfig, WasmBuildInputSnapshot,
+    WasmBuildSpec,
+};
+use std::sync::Mutex;
+
+# let local_test: Vec<LabeledWasmBuildSpec> = Vec::new();
+# let production: Vec<LabeledWasmBuildSpec> = Vec::new();
+let prepared_specs = local_test
+    .iter()
+    .chain(&production)
+    .map(|entry| entry.spec().clone())
+    .collect::<Vec<WasmBuildSpec>>();
+// Every source/config/tool/environment writer must coordinate on this lock.
+let source_write_exclusion = Mutex::new(());
+let source_guard = source_write_exclusion.lock().expect("acquire source lease");
+let snapshot = WasmBuildInputSnapshot::prepare_assuming_sources_immutable(
+    &source_guard,
+    &prepared_specs,
+)?;
+let (local_report, production_report) = std::thread::scope(|scope| {
+    let local = scope.spawn(|| {
+        snapshot.build_batch(&local_test, WasmBuildBatchConfig::new())
+    });
+    let production = scope.spawn(|| {
+        snapshot.build_batch(&production, WasmBuildBatchConfig::new())
+    });
+    (
+        local.join().expect("join LocalTest reader"),
+        production.join().expect("join Production reader"),
+    )
+});
+local_report?;
+production_report?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Preparation is closed: a reader requesting an exact spec absent from
+`prepared_specs` receives `SpecificationNotPrepared` before progress or build
+work; it never extends the snapshot or hashes a new path. A detected post-build
+source race invalidates the snapshot for every later reader. Publication takes
+a shared read boundary against invalidation, so a publication already at that
+boundary completes before invalidation while every later publication is
+rejected. `WasmBuildInputSnapshot::metrics` exposes preparation work,
+cumulative reader reuse, and invalidation; batch metrics count
+`input_resolution_prepared_reuses` separately.
+
+Each batch remains sequential. Separate snapshot readers may overlap, but
+shared incremental Cargo targets still participate in their existing locks;
+use isolated targets to retain useful Cargo parallelism. There is no built-in
+parallel scheduler, ambient cache, or mutation-owning workspace abstraction.
+Callers without a genuine source write-exclusion guard—including IcyDB today—
+must keep ordinary per-call resolution.
 
 When independent specs share incremental targets, batch-owned maintenance
 removes the caller convention of modifying the first spec:

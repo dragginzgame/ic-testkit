@@ -4,6 +4,23 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.8.9
+
+`WasmBuildInputSnapshot::prepare_assuming_sources_immutable` resolves a fixed
+set of exact `WasmBuildSpec` values once under a caller-held source
+write-exclusion guard. Its `build_batch` and `build_batch_with_progress`
+methods take `&self`, so separate sequential batches may read the prepared
+inputs concurrently. Reader metrics distinguish prepared reuse from ordinary
+batch and mutable-session reuse.
+
+Every reader specification must have been declared during preparation;
+`SpecificationNotPrepared` rejects an undeclared entry before progress or build
+work. A detected post-build input mutation invalidates the snapshot for every
+later reader, and publication is coordinated with that shared invalidation
+boundary. Ordinary batch calls remain independently resolved. Do not construct
+a snapshot with an unrelated token: the borrowed value is a lifetime boundary,
+not guard-provenance validation performed by `ic-testkit`.
+
 ## 0.8.8
 
 `WasmBuildSession::new(&guard)` is hard-cut to
@@ -73,7 +90,7 @@ Successful build-record timing remains unchanged.
 | --- | --- |
 | `WasmBuildBatchEntry::into_parts() -> (usize, String, Result<_, _>, Duration)` | Destructure `(index, label, result, failure_details, entry_elapsed)`; failed entries carry `Some(WasmBuildFailureDetails)` |
 | `WasmBuildBatchFailure` exposes only label/index/error/elapsed | Use `phase()` and `timings()` for the primary failed phase and partial work |
-| Separate batch calls always resolve their inputs independently | Hold the real source write-exclusion guard and call `WasmBuildSession::new(&guard)` when the immutable-source contract can be guaranteed |
+| Separate batch calls always resolve their inputs independently | Hold the real source write-exclusion guard and call `WasmBuildSession::assume_sources_immutable(&guard)` when the immutable-source contract can be guaranteed |
 
 There is no four-field `into_parts` alias, deprecated session-free overload,
 implicit guard, global cache, or reset-after-race shim. Batches remain

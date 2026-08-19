@@ -8,6 +8,40 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-08-19 - Concurrent Wasm input snapshots
+
+### Added
+
+- Adds `WasmBuildInputSnapshot`, a caller-owned immutable input-resolution
+  snapshot prepared for a fixed set of exact Wasm specifications under a
+  genuine source write-exclusion lease. Separate sequential batches can read
+  it concurrently without repeating warm Cargo/rustc identity, metadata,
+  discovery, or content hashing.
+- Adds preparation and cumulative reader-reuse metrics plus a distinct
+  per-batch prepared-reuse counter.
+
+### Changed
+
+- Skips the second shared-target input-resolution pass when a batch is backed
+  by an explicit immutable-source session or prepared snapshot. Ordinary calls
+  retain the existing locked re-resolution.
+- Rejects specifications absent from snapshot preparation before progress or
+  build work. A detected post-build source race invalidates every later reader;
+  publication is coordinated against that shared invalidation boundary.
+
+### Testing
+
+- Covers concurrent warm readers, zero per-reader input-resolution time,
+  undeclared-spec preflight, shared invalidation, and no publication after a
+  deliberately violated source lease.
+
+### Documentation
+
+- Records warm IcyDB profile evidence of roughly 1.54 and 5.24 seconds spent in
+  input resolution as motivation for the concurrent-reader snapshot. IcyDB
+  must continue using ordinary per-call resolution until it owns a genuine
+  source write-exclusion guard.
+
 ## [0.8.8] - 2026-08-18 - Explicit Wasm source assumptions
 
 ### Changed

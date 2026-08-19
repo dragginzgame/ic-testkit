@@ -2,8 +2,10 @@
 //!
 //! These functions keep integration-test artifacts in caller-selected target
 //! directories and contain no application-specific package or profile policy.
-//! Independent Wasm batches remain sequential; [`WasmBuildSession`] adds only
-//! explicit cross-call resolution reuse under a caller-held source lease.
+//! Independent Wasm batches remain sequential; [`WasmBuildSession`] adds
+//! explicit cross-call resolution reuse, while [`WasmBuildInputSnapshot`]
+//! prepares a fixed specification set for concurrent readers. Both require a
+//! caller-held source lease.
 
 mod cache_fs;
 mod digest;
@@ -41,8 +43,9 @@ pub use wasm_batch::{
     LabeledWasmBuildSpec, WasmBuildBatchConfig, WasmBuildBatchContractError, WasmBuildBatchEntry,
     WasmBuildBatchFailure, WasmBuildBatchMaintenanceEntry, WasmBuildBatchMetrics,
     WasmBuildBatchOutcomeEntry, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
-    WasmBuildFailureDetails, WasmBuildSession, WasmBuildSessionMetrics,
-    build_wasm_canisters_cached_batch, build_wasm_canisters_cached_batch_with_config,
+    WasmBuildFailureDetails, WasmBuildInputSnapshot, WasmBuildInputSnapshotMetrics,
+    WasmBuildSession, WasmBuildSessionMetrics, build_wasm_canisters_cached_batch,
+    build_wasm_canisters_cached_batch_with_config,
     build_wasm_canisters_cached_batch_with_config_and_progress,
     build_wasm_canisters_cached_batch_with_progress,
 };
