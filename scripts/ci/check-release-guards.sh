@@ -11,7 +11,7 @@ fail() {
   exit 1
 }
 
-if rg -n -- 'cargo[[:space:]]+clean' \
+if grep -R -n -E -- 'cargo[[:space:]]+clean' \
   "${repo_root}/.github/workflows" \
   "${repo_root}/scripts/ci" \
   "${repo_root}/scripts/release" >/dev/null; then
@@ -19,7 +19,7 @@ if rg -n -- 'cargo[[:space:]]+clean' \
 fi
 
 mapfile -t makefile_cargo_clean < <(
-  rg -n -- 'cargo[[:space:]]+clean' "${repo_root}/Makefile"
+  grep -n -E -- 'cargo[[:space:]]+clean' "${repo_root}/Makefile"
 )
 [[ "${#makefile_cargo_clean[@]}" -eq 1 ]] \
   || fail "Cargo clean must exist only as the standalone Make target"
