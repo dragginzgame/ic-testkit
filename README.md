@@ -1295,6 +1295,10 @@ The release gate includes formatting, native and Wasm checks, warnings-denied
 Clippy, rustdoc, unit and live PocketIC tests, canister fixture builds, package
 verification, publish dry-run, and the Rust 1.88 MSRV check.
 
+CI, release, and publish flows preserve Cargo build artifacts for incremental
+reuse. Only the standalone, manually invoked `make clean` target runs
+`cargo clean`; it is not part of `CI_TARGETS` or any release recipe.
+
 To exercise bounded managed startup against one exact caller-provided PocketIC
 server binary without invoking any downloader or resolver:
 

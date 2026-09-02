@@ -4,6 +4,15 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## Unreleased
+
+Release CI no longer runs `cargo clean` after a successful gate. Cargo build
+artifacts are preserved for incremental reuse after success as well as for
+diagnosis after failure; only the release wrapper's isolated temporary
+directory is removed. Release-flow guards keep the standalone `make clean`
+target outside CI and reject Cargo cleanup from CI, release, and publish
+scripts.
+
 ## 0.9.0
 
 The workspace now uses PocketIC 16. Managed servers started through

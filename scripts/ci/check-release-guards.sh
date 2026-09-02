@@ -11,6 +11,32 @@ fail() {
   exit 1
 }
 
+if rg -n -- 'cargo[[:space:]]+clean' \
+  "${repo_root}/.github/workflows" \
+  "${repo_root}/scripts/ci" \
+  "${repo_root}/scripts/release" >/dev/null; then
+  fail "a CI, release, or publish script invokes the Cargo clean subcommand"
+fi
+
+mapfile -t makefile_cargo_clean < <(
+  rg -n -- 'cargo[[:space:]]+clean' "${repo_root}/Makefile"
+)
+[[ "${#makefile_cargo_clean[@]}" -eq 1 ]] \
+  || fail "Cargo clean must exist only as the standalone Make target"
+expected_manual_clean_recipe=$'\tcargo '"clean"
+[[ "${makefile_cargo_clean[0]#*:}" == "${expected_manual_clean_recipe}" ]] \
+  || fail "the standalone Make clean target has an unexpected recipe"
+
+ci_targets_block="$(awk '
+  /^CI_TARGETS :=/ { found = 1 }
+  found { print }
+  found && $0 !~ /\\$/ { exit }
+' "${repo_root}/Makefile")"
+for ci_target in ${ci_targets_block//\\/}; do
+  [[ "${ci_target}" != "clean" ]] \
+    || fail "the standalone clean target is reachable from make ci"
+done
+
 version_case="${work_dir}/version"
 mkdir -p "${version_case}"
 printf '[workspace.package]\nversion = "0.8.3"\n' >"${version_case}/Cargo.toml"
@@ -139,7 +165,7 @@ mapfile -t ci_trace <"${bump_case}/trace"
 [[ "${ci_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
   || fail "the bump script did not check cleanliness before CI"
 [[ "${ci_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
-  || fail "the bump script did not run cleanable release CI before editing version metadata"
+  || fail "the bump script did not run release CI before editing version metadata"
 
 : >"${bump_case}/trace"
 (
@@ -156,7 +182,7 @@ mapfile -t minor_trace <"${bump_case}/trace"
 [[ "${minor_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
   || fail "the minor bump script did not check cleanliness before CI"
 [[ "${minor_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
-  || fail "the minor bump script did not run cleanable release CI before editing version metadata"
+  || fail "the minor bump script did not run release CI before editing version metadata"
 
 cleanup_case="${work_dir}/cleanup"
 mkdir -p "${cleanup_case}/bin" "${cleanup_case}/tmp"
@@ -171,7 +197,7 @@ EOF
 cat >"${cleanup_case}/bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 printf 'cargo %s\n' "$*" >>"${TRACE_FILE}"
-[[ "$*" == "clean" ]] || exit 2
+exit 97
 EOF
 chmod +x "${cleanup_case}/bin/make" "${cleanup_case}/bin/cargo"
 set +e
@@ -189,7 +215,7 @@ mapfile -t cleanup_trace <"${cleanup_case}/trace"
 [[ "${cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
   || fail "the release CI wrapper did not run the CI gate"
 [[ "${#cleanup_trace[@]}" -eq 1 ]] \
-  || fail "the release CI wrapper cleaned Cargo artifacts after a CI failure"
+  || fail "the failed release CI wrapper invoked Cargo during cleanup"
 ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
 [[ "${ci_tmp_dir}" == "${cleanup_case}/tmp/ic-testkit-release-ci."* ]] \
   || fail "the release CI wrapper did not isolate temporary artifacts"
@@ -206,10 +232,8 @@ ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
 mapfile -t successful_cleanup_trace <"${cleanup_case}/trace"
 [[ "${successful_cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
   || fail "the successful release CI wrapper did not run the CI gate"
-[[ "${successful_cleanup_trace[1]:-}" == "cargo clean" ]] \
-  || fail "the release CI wrapper did not clean Cargo artifacts after success"
-[[ "${#successful_cleanup_trace[@]}" -eq 2 ]] \
-  || fail "the successful release CI wrapper ran unexpected cleanup commands"
+[[ "${#successful_cleanup_trace[@]}" -eq 1 ]] \
+  || fail "the successful release CI wrapper invoked Cargo during cleanup"
 successful_ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
 [[ ! -e "${successful_ci_tmp_dir}" ]] \
   || fail "the successful release CI wrapper left its temporary directory behind"
@@ -311,3 +335,12 @@ release_minor_block="$(awk '
 expected_minor_block="$(printf '\t+$(MAKE) --no-print-directory minor\n\t+$(MAKE) --no-print-directory release-stage\n\t+$(MAKE) --no-print-directory release-commit\n\t+$(MAKE) --no-print-directory release-push')"
 [[ "${release_minor_block}" == "${expected_minor_block}" ]] \
   || fail "release-minor is not a sequential fail-closed recipe"
+
+ci_block="$(awk '
+  $0 == "ci:" { found = 1; next }
+  found && /^[^[:space:]].*:/ { exit }
+  found { print }
+' "${repo_root}/Makefile")"
+expected_ci_block="$(printf '\t+@set -e; for target in $(CI_TARGETS); do \\\n\t\t$(MAKE) --no-print-directory "$$target"; \\\n\tdone')"
+[[ "${ci_block}" == "${expected_ci_block}" ]] \
+  || fail "ci is not the guarded CI_TARGETS-only recipe"

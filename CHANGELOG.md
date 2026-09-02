@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Removes `cargo clean` from successful release CI cleanup. Cargo build
+  artifacts now remain available for incremental reuse after both successful
+  and failed CI gates; the release wrapper still removes only its own isolated
+  temporary directory.
+
+### Testing
+
+- Updates release-flow guards to reject direct `cargo clean` commands in CI,
+  release, and publish scripts; keep the standalone `make clean` target outside
+  `CI_TARGETS`; and fail if successful or failed release cleanup invokes Cargo.
+
+### Documentation
+
+- Clarifies that build artifacts survive CI, release, and publish flows and
+  that `cargo clean` is available only through the manually invoked standalone
+  target.
+
 ## [0.9.0] - 2026-09-02 - PocketIC 16 and opt-in hard lifetimes
 
 ### Added
