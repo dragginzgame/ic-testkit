@@ -1,6 +1,6 @@
 # PocketIC Upstream Boundary
 
-> Status: maintained against `pocket-ic` 15 and the current ic-testkit API.
+> Status: maintained against `pocket-ic` 16 and the current ic-testkit API.
 > Revalidate these claims whenever the client or server version changes.
 
 This document tracks upstream limitations that currently justify ic-testkit
@@ -10,6 +10,11 @@ harness code. It is not a roadmap for wrapping more of PocketIC.
 crate small, generic, and mostly focused on reusable test-harness ergonomics.
 When a need is broadly useful to PocketIC users, the preferred long-term home is
 upstream.
+
+The complete host-only upstream crate is re-exported at
+`ic_testkit::pocket_ic`. This is a version- and type-preserving access path, not
+a mirrored API; the focused `ic_testkit::pic` exports remain conveniences for
+the testkit extension traits.
 
 ## Maintenance
 
@@ -63,24 +68,28 @@ the child when the complete deadline expires. Connect mode bounds construction
 against an existing caller-owned server. Upstream panics remain unclassified
 structured errors.
 
-PocketIC 15 also requires the `--port-file` path not to exist before spawn. If
-an empty file is pre-created, the server exits successfully and silently rather
-than binding and publishing its port. The local launcher therefore creates a
-unique private directory and output files but deliberately leaves the port path
-absent; `NotFound` remains pending until PocketIC publishes a newline-terminated
-port. Synthetic startup tests reject a pre-existing fourth argument explicitly.
-An ignored live regression test accepts the exact binary through
-`IC_TESTKIT_POCKET_IC_SERVER` and verifies real port publication, bounded
-instance construction, owned shutdown, and temporary-directory cleanup.
+PocketIC 15 and later require the `--port-file` path not to exist before spawn.
+If an empty file is pre-created, the server exits successfully and silently
+rather than binding and publishing its port. The local launcher therefore
+creates a unique private directory and output files but deliberately leaves the
+port path absent; `NotFound` remains pending until PocketIC publishes a
+newline-terminated port. Synthetic startup tests verify both the default
+argument shape and explicit hard-TTL forwarding. An ignored live regression
+test accepts the exact binary through `IC_TESTKIT_POCKET_IC_SERVER` and verifies
+real port publication, bounded instance construction, owned shutdown, and
+temporary-directory cleanup.
 
 `PocketIcStartupConfig::start_managed_server` exposes the same bounded launcher
 without constructing an instance. The returned `PocketIcManagedServer` retains
 the URL and bounded lossy output and terminates and waits for the child on drop.
-Serial runners can keep that handle alive and use bounded connect-mode builders
-without reimplementing process ownership. This remains explicit caller scope,
-not a process-global singleton. The handle cannot transfer ownership across
-Cargo or test-runner processes; multi-process CI should retain a runner-owned
-external server and pass its URL to bounded connect mode in each process.
+Matching PocketIC 16, the launcher relies on the server's activity-based soft
+TTL by default and passes no absolute `--hard-ttl`; callers can opt into one
+explicitly. Serial runners can keep that handle alive and use bounded
+connect-mode builders without reimplementing process ownership. This remains
+explicit caller scope, not a process-global singleton. The handle cannot
+transfer ownership across Cargo or test-runner processes; multi-process CI
+should retain a runner-owned external server and pass its URL to bounded connect
+mode in each process.
 
 Upstream typed errors would make this cleaner and more reliable. In particular,
 `PocketIcBuilder::build` could have a non-panicking counterpart that returns a
@@ -134,7 +143,7 @@ Upstream could expose richer install errors that include:
 
 ### Candid-Aware Call Helpers
 
-PocketIC 15 already provides typed `query_candid`, `update_candid`, and
+PocketIC 16 already provides typed `query_candid`, `update_candid`, and
 caller-aware variants. They panic on Candid encoding and decoding failures and
 return `RejectResponse` for canister rejection. `ic-testkit` therefore does not
 claim typed calls themselves as missing upstream functionality.
@@ -178,7 +187,7 @@ Upstream improvements that would help:
 Test harnesses often need to know which runtime they used when writing reports
 or debugging CI failures.
 
-PocketIC 15 exposes the expected server version through
+PocketIC 16 exposes the expected server version through
 `LATEST_SERVER_VERSION` and the active endpoint through
 `PocketIc::get_server_url()`. ic-testkit re-exports the version constant. A
 built instance does not expose the resolved binary path or its digest, so
@@ -202,7 +211,7 @@ Useful additional upstream APIs are:
 
 ### Independent Test Instances
 
-PocketIC 15 supports many independent IC instances, and the official testing
+PocketIC 16 supports many independent IC instances, and the official testing
 guidance describes parallel execution as one fresh `PocketIc` instance per
 test. The Rust documentation also says sharing one instance among test cases is
 generally not recommended.

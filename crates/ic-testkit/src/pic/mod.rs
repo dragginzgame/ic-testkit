@@ -1,5 +1,9 @@
 //! Direct PocketIC types plus value-adding host-test harness extensions.
 //!
+//! The complete upstream crate is available through [`crate::pocket_ic`]. This
+//! module keeps the common runtime types alongside ic-testkit's focused
+//! extension traits and policy types.
+//!
 //! Construct and own [`PocketIc`] instances normally, then import individual
 //! extension traits or [`prelude`] for Candid calls, installation, diagnostics,
 //! snapshots, fallible startup, and nanosecond time conversion. Native

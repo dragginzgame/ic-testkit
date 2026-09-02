@@ -8,7 +8,7 @@
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
   <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.96.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-15.0-green.svg" alt="PocketIC"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-16.0-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
 </p>
 
@@ -22,6 +22,17 @@ have outgrown one-off PocketIC scripts. It keeps
 building blocks for typed calls, multi-canister fixtures, safe baseline reuse,
 reproducible Wasm pipelines, diagnostics, and performance reports.
 
+Native consumers can import the complete selected upstream crate through
+`ic_testkit::pocket_ic`, while `ic_testkit::pic` keeps the focused convenience
+exports and extension traits:
+
+```rust,no_run
+use ic_testkit::pocket_ic::{
+    CanisterSettings, CreateCanisterParams, PocketIc,
+    common::rest::{BlobCompression, IcpFeatures, IcpFeaturesConfig},
+};
+```
+
 It does not wrap the simulator, mirror PocketIC's API, manage a second server
 binary cache, or serialize independent PocketIC instances.
 
@@ -31,17 +42,18 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.8"
+ic-testkit = "0.9"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
 `[dependencies]` and use `ic_testkit::performance`.
 
-The crate supports Rust 1.88 and uses PocketIC 15.
+The crate supports Rust 1.88 and uses PocketIC 16.
 
-Upgrading from `0.7` requires several pre-1.0 hard cuts. See the packaged
-[`0.8` migration guide](crates/ic-testkit/CHANGELOG.md) for the complete API
-mapping.
+Upgrading from `0.8` changes the managed-server hard lifetime to explicit
+opt-in. See the packaged
+[`0.9` migration guide](crates/ic-testkit/CHANGELOG.md) for the complete API
+mapping and earlier pre-1.0 hard cuts.
 
 ## Features for application-scale test suites
 
@@ -102,7 +114,7 @@ restored or validated.
 
 | Area | Main surface | Value added by ic-testkit |
 | --- | --- | --- |
-| PocketIC runtime | `PocketIc`, `PocketIcBuilder` | Direct upstream re-exports; no wrapper |
+| PocketIC runtime | `pocket_ic`; `pic::{PocketIc, PocketIcBuilder}` | Complete upstream crate escape hatch plus focused convenience re-exports; no wrapper |
 | Startup | `PocketIcBuilderExt`, `PocketIcStartupConfig`, `PocketIcManagedServer` | Explicit bounded spawn/connect policy, owned shared-server lifecycle, and structured failures |
 | Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
 | Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
@@ -210,10 +222,10 @@ instance, and terminates it if the complete deadline expires. A child exit,
 readiness timeout, invalid port, spawn failure, builder panic, and instance
 creation timeout remain distinct `PocketIcStartupError` variants. Captured
 server output retains at most the first 16 KiB per stream as lossy UTF-8 and
-appends an omitted-byte marker when truncated. The default managed-server hard
-TTL is ten minutes and can be changed explicitly with
-`with_server_hard_ttl`. After successful one-shot construction, an internal
-reaper owns the child until it exits.
+appends an omitted-byte marker when truncated. No absolute hard TTL is applied
+by default; PocketIC's activity-based soft TTL still bounds orphaned servers.
+Call `with_server_hard_ttl` to opt into an absolute lifetime. After successful
+one-shot construction, an internal reaper owns the child until it exits.
 
 Use `PocketIcStartupConfig::connect(url, timeout)` for a caller-owned existing
 server. Both modes set the server URL on the builder, preventing its implicit,

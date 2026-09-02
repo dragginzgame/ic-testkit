@@ -6,6 +6,7 @@ This crate is the published Rust package in the `ic-testkit` workspace. It
 provides:
 
 - direct re-exports of `PocketIc` and `PocketIcBuilder`
+- the complete host-only upstream crate at `ic_testkit::pocket_ic`
 - typed Candid query/update helpers with contextual, structured errors
 - canister install and retry helpers
 - explicit bounded PocketIC startup, caller-owned managed-server handles, and
@@ -22,14 +23,16 @@ provides:
 `ic-testkit` does not wrap the PocketIC simulator API, serialize independent
 instances, or own PocketIC's server-binary cache. Tests normally create one
 fresh `PocketIc` each and use its inherent methods for simulator operations;
-focused extension traits provide reusable harness behavior.
+focused extension traits provide reusable harness behavior. Less common
+upstream types remain available through the complete `ic_testkit::pocket_ic`
+re-export instead of an expanding mirrored list.
 
 Most users should read the
 [repository README](https://github.com/dragginzgame/ic-testkit#readme) for
 setup, examples, local checks, and release notes.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
-the `0.8` hard-cut migration tables and batch-report examples.
+the `0.9` managed-server lifetime migration and earlier hard-cut tables.
 
 The repository also includes a complete
 [multi-canister baseline recipe](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/multi_canister_baseline_pool.rs)

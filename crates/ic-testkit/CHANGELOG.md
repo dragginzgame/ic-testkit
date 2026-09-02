@@ -4,6 +4,50 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.9.0
+
+The workspace now uses PocketIC 16. Managed servers started through
+`PocketIcStartupConfig::spawn` no longer receive a ten-minute `--hard-ttl` by
+default, matching the upstream lifetime policy. An active test suite is not
+terminated merely because ten minutes have elapsed; PocketIC's activity-based
+soft TTL still bounds an orphaned server, and a caller-owned
+`PocketIcManagedServer` is still terminated and waited for on drop.
+
+PocketIC 16 also waits for the first certified time update before returning
+from automatic-progress startup, accounts for mocked HTTP response cycle spend,
+rejects mocked HTTP reject messages larger than 1 KiB, and adds flexible HTTP
+mocking plus the `SubnetCoolingDown` and `CanisterStatusAccessDenied` error
+codes. These remain part of the direct upstream runtime surface; ic-testkit
+does not add parallel wrappers for them.
+
+The complete host-only upstream crate is now re-exported as
+`ic_testkit::pocket_ic`. Use that path for native PocketIC types outside the
+focused `ic_testkit::pic` convenience surface:
+
+```rust
+use ic_testkit::pocket_ic::{
+    CanisterSettings, CreateCanisterParams, PocketIc,
+    common::rest::{BlobCompression, IcpFeatures, IcpFeaturesConfig},
+};
+```
+
+These are the types from the exact PocketIC dependency selected by ic-testkit;
+there is no copied type or parallel wrapper. The complete re-export, like
+`ic_testkit::pic`, is unavailable on `wasm32`.
+
+Call `with_server_hard_ttl(duration)` when an absolute server deadline is
+required. Subsecond explicit values remain invalid.
+
+### Hard-cut migration
+
+| 0.8 API | 0.9 API |
+| --- | --- |
+| `PocketIcStartupConfig::server_hard_ttl() -> Duration` returned the default ten-minute hard TTL | `server_hard_ttl() -> Option<Duration>` returns `None` by default and `Some(duration)` after `with_server_hard_ttl(duration)` |
+
+There is no compatibility accessor or implicit ten-minute fallback. Startup
+and instance-creation deadlines remain independently bounded by
+`PocketIcStartupConfig::timeout`.
+
 ## 0.8.9
 
 `WasmBuildInputSnapshot::prepare_assuming_sources_immutable` resolves a fixed

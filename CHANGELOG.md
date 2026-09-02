@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-02 - PocketIC 16 and opt-in hard lifetimes
+
+### Added
+
+- Re-exports the complete host-only upstream crate at
+  `ic_testkit::pocket_ic`. Downstreams can use the exact PocketIC version and
+  type identities selected by ic-testkit without waiting for individual types
+  to be added to `ic_testkit::pic`; the existing focused `pic` conveniences
+  remain available.
+
+### Changed
+
+- Updates the workspace `pocket-ic` dependency from 15.0 to 16.0 and refreshes
+  its compatible transitive dependency graph.
+- Carries PocketIC 16's upstream behavior changes through the directly
+  re-exported runtime: automatic-progress startup waits for its first certified
+  time update, mocked HTTP outcalls account for response-size cycle spend, and
+  oversized mocked reject messages are rejected. Flexible HTTP mocking and the
+  new `SubnetCoolingDown` and `CanisterStatusAccessDenied` error codes remain
+  upstream-native APIs rather than new testkit wrappers.
+- Stops passing a ten-minute `--hard-ttl` to `ic-testkit`-managed PocketIC
+  servers by default, matching PocketIC 16's removal of the implicit absolute
+  server deadline. Long-running active suites are no longer terminated solely
+  because ten minutes have elapsed; PocketIC's activity-based soft TTL and
+  explicit `PocketIcManagedServer` drop ownership remain in effect.
+- Hard-cuts `PocketIcStartupConfig::server_hard_ttl` to return
+  `Option<Duration>`. It returns `None` for the new default; callers that need
+  an absolute server lifetime continue to opt in with
+  `with_server_hard_ttl(duration)`.
+
+### Documentation
+
+- Updates the README, packaged migration guide, concurrency decision record,
+  and upstream-boundary review for PocketIC 16, the complete upstream crate
+  re-export, and the new managed-server lifetime policy.
+
+### Testing
+
+- Covers omission of the default `--hard-ttl`, forwarding of an explicit hard
+  TTL, positive-bound validation, port-file ownership, bounded readiness, and
+  managed-child cleanup with synthetic server processes.
+- Adds consumer-path compile coverage for top-level and nested upstream types
+  through `ic_testkit::pocket_ic` and proves that its `PocketIc` is identical
+  to the existing `ic_testkit::pic::PocketIc` convenience export.
+
 ## [0.8.9] - 2026-08-19 - Concurrent Wasm input snapshots
 
 ### Added

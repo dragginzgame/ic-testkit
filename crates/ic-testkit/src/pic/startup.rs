@@ -16,7 +16,6 @@ use pocket_ic::{PocketIc, PocketIcBuilder};
 
 use super::transport;
 
-const DEFAULT_SERVER_HARD_TTL: Duration = Duration::from_secs(10 * 60);
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const SERVER_OUTPUT_LIMIT: usize = 16 * 1024;
 
@@ -27,7 +26,7 @@ static STARTUP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct PocketIcStartupConfig {
     source: PocketIcStartupSource,
     timeout: Duration,
-    server_hard_ttl: Duration,
+    server_hard_ttl: Option<Duration>,
 }
 
 /// Caller-owned PocketIC server process with bounded startup and output capture.
@@ -143,7 +142,7 @@ impl PocketIcStartupConfig {
                 server_binary: server_binary.into(),
             },
             timeout,
-            server_hard_ttl: DEFAULT_SERVER_HARD_TTL,
+            server_hard_ttl: None,
         }
     }
 
@@ -158,14 +157,14 @@ impl PocketIcStartupConfig {
                 server_url: server_url.into(),
             },
             timeout,
-            server_hard_ttl: DEFAULT_SERVER_HARD_TTL,
+            server_hard_ttl: None,
         }
     }
 
     /// Set the hard lifetime passed to an `ic-testkit`-managed server.
     #[must_use]
     pub const fn with_server_hard_ttl(mut self, hard_ttl: Duration) -> Self {
-        self.server_hard_ttl = hard_ttl;
+        self.server_hard_ttl = Some(hard_ttl);
         self
     }
 
@@ -175,9 +174,9 @@ impl PocketIcStartupConfig {
         self.timeout
     }
 
-    /// Managed server hard lifetime.
+    /// Explicit managed server hard lifetime, or `None` when disabled.
     #[must_use]
-    pub const fn server_hard_ttl(&self) -> Duration {
+    pub const fn server_hard_ttl(&self) -> Option<Duration> {
         self.server_hard_ttl
     }
 
@@ -202,9 +201,10 @@ impl PocketIcStartupConfig {
     /// Start a caller-owned managed server without constructing an instance.
     ///
     /// This requires a configuration created by [`Self::spawn`]. Readiness is
-    /// bounded by [`Self::timeout`], and the configured hard TTL is still
-    /// passed to the child. The returned handle terminates the child on drop;
-    /// use its URL with [`Self::connect`] to construct bounded instances.
+    /// bounded by [`Self::timeout`]. No hard TTL is passed by default; an
+    /// explicit [`Self::with_server_hard_ttl`] value is passed to the child.
+    /// The returned handle terminates the child on drop; use its URL with
+    /// [`Self::connect`] to construct bounded instances.
     pub fn start_managed_server(self) -> Result<PocketIcManagedServer, PocketIcStartupError> {
         self.validate()?;
         let PocketIcStartupSource::Spawn { server_binary } = self.source else {
@@ -232,7 +232,9 @@ impl PocketIcStartupConfig {
             });
         }
         if matches!(&self.source, PocketIcStartupSource::Spawn { .. })
-            && self.server_hard_ttl.as_secs() == 0
+            && self
+                .server_hard_ttl
+                .is_some_and(|hard_ttl| hard_ttl.as_secs() == 0)
         {
             return Err(PocketIcStartupError::InvalidConfiguration {
                 message: "PocketIC server hard TTL must be at least one second".to_owned(),
@@ -404,16 +406,19 @@ enum PortFileState {
 impl ManagedServer {
     fn start(
         binary: PathBuf,
-        hard_ttl: Duration,
+        hard_ttl: Option<Duration>,
         deadline: Instant,
         timeout: Duration,
         started: Instant,
     ) -> Result<(Self, String), PocketIcStartupError> {
         let (files, stdout, stderr) = StartupFiles::create()?;
         let mut command = Command::new(&binary);
+        if let Some(hard_ttl) = hard_ttl {
+            command
+                .arg("--hard-ttl")
+                .arg(hard_ttl.as_secs().to_string());
+        }
         command
-            .arg("--hard-ttl")
-            .arg(hard_ttl.as_secs().to_string())
             .arg("--port-file")
             .arg(&files.port)
             .stdout(Stdio::from(stdout))
@@ -825,6 +830,15 @@ mod tests {
     }
 
     #[test]
+    fn managed_server_hard_ttl_is_opt_in() {
+        let default = PocketIcStartupConfig::spawn("pocket-ic", Duration::from_secs(1));
+        assert_eq!(default.server_hard_ttl(), None);
+
+        let explicit = default.with_server_hard_ttl(Duration::from_secs(17));
+        assert_eq!(explicit.server_hard_ttl(), Some(Duration::from_secs(17)));
+    }
+
+    #[test]
     fn startup_files_leave_the_server_owned_port_path_absent() {
         let (files, stdout, stderr) = StartupFiles::create().expect("allocate startup files");
         let directory = files.directory.clone();
@@ -855,7 +869,7 @@ mod tests {
     fn managed_startup_reports_an_exited_server_with_bounded_output() {
         let script = TestServerScript::new(
             "exit",
-            "#!/bin/sh\nif [ -e \"$4\" ]; then exit 97; fi\nprintf 'synthetic server stdout'\nprintf 'synthetic bind failure' >&2\nexit 23\n",
+            "#!/bin/sh\nif [ \"$1\" != \"--port-file\" ] || [ -e \"$2\" ]; then exit 97; fi\nprintf 'synthetic server stdout'\nprintf 'synthetic bind failure' >&2\nexit 23\n",
         );
 
         let result = PocketIcBuilder::new().with_application_subnet().try_build(
@@ -883,7 +897,7 @@ mod tests {
     fn managed_startup_terminates_a_server_that_never_becomes_ready() {
         let script = TestServerScript::new(
             "timeout",
-            "#!/bin/sh\nif [ -e \"$4\" ]; then exit 97; fi\nexec sleep 30\n",
+            "#!/bin/sh\nif [ \"$1\" != \"--port-file\" ] || [ -e \"$2\" ]; then exit 97; fi\nexec sleep 30\n",
         );
         let timeout = Duration::from_millis(100);
         let started = Instant::now();
@@ -912,7 +926,7 @@ mod tests {
     fn managed_server_handle_exposes_url_output_and_raii_ownership() {
         let script = TestServerScript::new(
             "handle",
-            "#!/bin/sh\nif [ -e \"$4\" ]; then echo 'port path already exists' >&2; exit 97; fi\nprintf 'managed server ready'\nprintf '34567\\n' > \"$4\"\nexec sleep 30\n",
+            "#!/bin/sh\nif [ \"$1\" != \"--port-file\" ] || [ -e \"$2\" ]; then echo 'unexpected managed server arguments' >&2; exit 97; fi\nprintf 'managed server ready'\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
         );
 
         let server = PocketIcStartupConfig::spawn(script.path(), Duration::from_secs(2))
@@ -937,6 +951,22 @@ mod tests {
         drop(server);
         #[cfg(target_os = "linux")]
         assert!(!child_process.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_server_passes_an_explicit_hard_ttl() {
+        let script = TestServerScript::new(
+            "hard-ttl",
+            "#!/bin/sh\nif [ \"$1\" != \"--hard-ttl\" ] || [ \"$2\" != \"17\" ] || [ \"$3\" != \"--port-file\" ] || [ -e \"$4\" ]; then exit 97; fi\nprintf '34567\\n' > \"$4\"\nexec sleep 30\n",
+        );
+
+        let server = PocketIcStartupConfig::spawn(script.path(), Duration::from_secs(2))
+            .with_server_hard_ttl(Duration::from_secs(17))
+            .start_managed_server()
+            .expect("start managed server with an explicit hard TTL");
+
+        assert_eq!(server.url(), "http://127.0.0.1:34567/");
     }
 
     #[test]
