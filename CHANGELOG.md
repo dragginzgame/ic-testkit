@@ -8,8 +8,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-13 - TOML dependency update and CI artifact reuse
+
 ### Changed
 
+- Updates the workspace `toml` dependency from 0.9 to 1 and refreshes
+  the lockfile, resolving `toml` to 1.1.6.
 - Removes `cargo clean` from successful release CI cleanup. Cargo build
   artifacts now remain available for incremental reuse after both successful
   and failed CI gates; the release wrapper still removes only its own isolated

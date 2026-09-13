@@ -6,6 +6,11 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.9.1
+
+The workspace `toml` dependency moves from 0.9 to 1, with the refreshed
+lockfile resolving `toml` to 1.1.6.
+
 Release CI no longer runs `cargo clean` after a successful gate. Cargo build
 artifacts are preserved for incremental reuse after success as well as for
 diagnosis after failure; only the release wrapper's isolated temporary
