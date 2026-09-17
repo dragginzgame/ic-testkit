@@ -21,11 +21,11 @@ use crate::timing::saturating_add_optional_duration;
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
-        cache_entry_last_used, cache_maintenance_due, directory_logical_size,
+        RetainedCacheEntry, cache_entry_last_used, cache_maintenance_due, directory_logical_size,
         ensure_cache_directory_tag as ensure_cache_tag, is_sha256_directory, lock_cache_file,
         lock_cache_file_with_wait_observer, perform_scheduled_cache_maintenance,
         prune_direct_child_directories, record_cache_entry_use as record_entry_use,
-        record_cache_maintenance, remove_path_if_present,
+        record_cache_maintenance, remove_path_if_present, remove_unretained_entry,
     },
     digest::{
         InputDigest, InputHasher, LabeledPathDigestCache, copy_file_atomic, digest_bytes,
@@ -118,6 +118,7 @@ pub struct WasmBuildRecord {
     fingerprint: InputDigest,
     input_digest: InputDigest,
     exact_cache_path: PathBuf,
+    _retention: RetainedCacheEntry,
     artifacts: Vec<PathBuf>,
     timings: WasmBuildTimings,
     maintenance: Option<ArtifactCacheMaintenance>,
@@ -1128,14 +1129,18 @@ impl WasmBuildRecord {
     /// Immutable content-addressed cache directory for this exact build.
     ///
     /// The directory is selected by the build fingerprint and contains the
-    /// cached Wasm artifacts and their stamps. Callers can persist this path
-    /// in CI without depending on `ic-testkit`'s private target layout.
+    /// cached Wasm artifacts and their stamps. The record and its clones retain
+    /// this entry against pruning until their last drop. A copied path alone
+    /// does not retain ownership. Treat the contents as read-only.
     #[must_use]
     pub fn exact_cache_path(&self) -> &Path {
         &self.exact_cache_path
     }
 
-    /// Expected Wasm artifacts produced or reused by the build.
+    /// Exact, read-only Wasm paths retained until this record and its clones drop.
+    ///
+    /// Keep a record alive throughout post-link processing and reading. Configured
+    /// materialization destinations remain mutable and are not retained.
     #[must_use]
     pub fn artifacts(&self) -> &[PathBuf] {
         &self.artifacts
@@ -2874,7 +2879,6 @@ fn try_reuse_wasm_artifacts(
             BuildRecordInput {
                 fingerprint,
                 input_digest: resolved.input_digest,
-                artifacts,
                 lock_wait,
                 shared_incremental: shared_incremental.clone(),
                 input_resolution: resolved.timings,
@@ -2883,7 +2887,7 @@ fn try_reuse_wasm_artifacts(
             },
             total_started,
             progress,
-        ))));
+        )?)));
     }
 
     let cached_artifacts = expected_artifacts(spec, &cache_entry);
@@ -2903,7 +2907,6 @@ fn try_reuse_wasm_artifacts(
         BuildRecordInput {
             fingerprint,
             input_digest: resolved.input_digest,
-            artifacts,
             lock_wait,
             shared_incremental: shared_incremental.clone(),
             input_resolution: resolved.timings,
@@ -2912,7 +2915,7 @@ fn try_reuse_wasm_artifacts(
         },
         total_started,
         progress,
-    ))))
+    )?)))
 }
 
 fn ensure_exact_cache_entry(
@@ -2936,7 +2939,7 @@ fn ensure_exact_cache_entry(
         return Ok(());
     }
     progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-        remove_directory_if_present(cache_entry)?;
+        remove_unretained_entry(cache_entry).map_err(wasm_cache_fs_error)?;
         create_dir_all(
             cache_entry,
             "create content-addressed Cargo target directory",
@@ -2977,7 +2980,7 @@ fn build_wasm_cache_miss(
     let preparation_started = Instant::now();
     progress.begin_phase(WasmBuildFailurePhase::ArtifactPublication);
     let preparation_result = (|| {
-        remove_directory_if_present(&cache_entry)?;
+        remove_unretained_entry(&cache_entry).map_err(wasm_cache_fs_error)?;
         create_dir_all(
             &cache_entry,
             "create content-addressed Cargo target directory",
@@ -3051,7 +3054,6 @@ fn build_wasm_cache_miss(
             BuildRecordInput {
                 fingerprint,
                 input_digest: resolved.input_digest,
-                artifacts,
                 lock_wait,
                 shared_incremental,
                 input_resolution,
@@ -3060,7 +3062,7 @@ fn build_wasm_cache_miss(
             },
             total_started,
             progress,
-        )))
+        )?))
     })();
     finish_fingerprint_build(build_result, incomplete_directory, progress)
 }
@@ -3072,6 +3074,7 @@ fn build_wasm_cache_miss(
 /// removed until the configured logical byte limit is met. Only direct child
 /// directories with SHA-256 fingerprint names are eligible; caller-facing
 /// artifacts and unrelated target contents are never removed.
+/// Entries owned by live build records are skipped until their last owner drops.
 pub fn prune_wasm_build_cache(
     target_dir: &Path,
     policy: ArtifactCachePrunePolicy,
@@ -3085,7 +3088,6 @@ pub fn prune_wasm_build_cache(
 struct BuildRecordInput<'a> {
     fingerprint: InputDigest,
     input_digest: InputDigest,
-    artifacts: Vec<PathBuf>,
     lock_wait: Duration,
     shared_incremental: SharedIncrementalAcquisitionContext,
     input_resolution: WasmInputResolutionTimings,
@@ -3098,7 +3100,10 @@ fn complete_build_record(
     input: BuildRecordInput<'_>,
     total_started: Instant,
     progress: &mut ProgressReporter<'_>,
-) -> WasmBuildRecord {
+) -> Result<WasmBuildRecord, WasmBuildError> {
+    let retention = progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
+        RetainedCacheEntry::acquire(input.active_entry).map_err(wasm_cache_fs_error)
+    })?;
     let (maintenance, cache_maintenance) = spec.prune_policy.map_or((None, None), |policy| {
         progress.run_phase(WasmBuildProgressPhase::ExactCacheMaintenance, || {
             let cache_root = spec.target_dir.join(".ic-testkit/wasm-targets");
@@ -3109,11 +3114,12 @@ fn complete_build_record(
             })
         })
     });
-    WasmBuildRecord {
+    Ok(WasmBuildRecord {
         fingerprint: input.fingerprint,
         input_digest: input.input_digest,
         exact_cache_path: input.active_entry.to_owned(),
-        artifacts: input.artifacts,
+        artifacts: expected_artifacts(spec, input.active_entry),
+        _retention: retention,
         timings: WasmBuildTimings {
             lock_wait: input.lock_wait,
             shared_incremental_lock_wait: input.shared_incremental.lock_wait,
@@ -3124,7 +3130,7 @@ fn complete_build_record(
         },
         maintenance,
         shared_incremental_maintenance: input.shared_incremental.maintenance,
-    }
+    })
 }
 
 fn prune_wasm_build_cache_locked(
@@ -4829,14 +4835,6 @@ fn copy_wasm_artifacts(
         })?;
     }
     Ok(())
-}
-
-fn remove_directory_if_present(path: &Path) -> Result<(), WasmBuildError> {
-    remove_path_if_present(path).map_err(|source| WasmBuildError::Io {
-        operation: "remove incomplete content-addressed Cargo target directory",
-        path: path.to_owned(),
-        source,
-    })
 }
 
 fn create_dir_all(path: &Path, operation: &'static str) -> Result<(), WasmBuildError> {

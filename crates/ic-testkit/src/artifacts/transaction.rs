@@ -13,9 +13,10 @@ use crate::timing::saturating_add_optional_duration;
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
-        LAST_USED_FILE, directory_logical_size, ensure_cache_directory_tag, is_sha256_directory,
-        lock_cache_file, perform_scheduled_cache_maintenance, prune_direct_child_directories,
-        record_cache_entry_use, remove_path_if_present, try_lock_cache_file,
+        LAST_USED_FILE, RetainedCacheEntry, directory_logical_size, ensure_cache_directory_tag,
+        is_sha256_directory, lock_cache_file, perform_scheduled_cache_maintenance,
+        prune_direct_child_directories, record_cache_entry_use, remove_path_if_present,
+        remove_unretained_entry, try_lock_cache_file,
     },
     digest::{
         InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
@@ -88,11 +89,12 @@ pub struct ArtifactCacheRecord {
     key: InputDigest,
     input_digest: InputDigest,
     artifacts: Vec<ArtifactCacheArtifact>,
+    _retention: RetainedCacheEntry,
     timings: ArtifactCacheTimings,
     maintenance: Option<ArtifactCacheMaintenance>,
 }
 
-/// One logical artifact materialized at its caller-selected destination.
+/// One read-only exact artifact retained by its owning acquisition record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArtifactCacheArtifact {
     name: String,
@@ -489,7 +491,11 @@ impl ArtifactCacheRecord {
         self.input_digest
     }
 
-    /// Logical artifacts and their materialized caller destinations.
+    /// Exact, read-only artifacts retained until this record and its clones drop.
+    ///
+    /// Keep a record alive while consuming these paths. Copying a path or an
+    /// artifact descriptor does not retain ownership. Configured materialization
+    /// destinations remain mutable and are not retained.
     #[must_use]
     pub fn artifacts(&self) -> &[ArtifactCacheArtifact] {
         &self.artifacts
@@ -515,7 +521,7 @@ impl ArtifactCacheArtifact {
         &self.name
     }
 
-    /// Caller-selected materialized destination.
+    /// Exact cache path, valid while the acquisition record or a clone is alive.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
@@ -759,11 +765,7 @@ impl ArtifactBuildTransaction {
             .timings
             .namespace_lock_wait
             .saturating_add(namespace_wait);
-        remove_path_if_present(&self.entry_directory).map_err(|source| ArtifactCacheError::Io {
-            operation: "remove conflicting artifact cache entry",
-            path: self.entry_directory.clone(),
-            source,
-        })?;
+        remove_unretained_entry(&self.entry_directory).map_err(artifact_cache_fs_error)?;
         fs::rename(&self.staging_directory, &self.entry_directory).map_err(|source| {
             ArtifactCacheError::Io {
                 operation: "publish artifact cache entry",
@@ -791,7 +793,7 @@ impl ArtifactBuildTransaction {
             self.resolved,
             self.timings,
             maintenance,
-        )))
+        )?))
     }
 }
 
@@ -886,14 +888,10 @@ pub fn prepare_artifact_cache(
                 resolved,
                 timings,
                 maintenance,
-            )));
+            )?));
         }
 
-        remove_path_if_present(&entry_directory).map_err(|source| ArtifactCacheError::Io {
-            operation: "remove invalid artifact cache entry",
-            path: entry_directory.clone(),
-            source,
-        })?;
+        remove_unretained_entry(&entry_directory).map_err(artifact_cache_fs_error)?;
         let staging_directory = create_staging_directory(&namespace_directory, resolved.key)?;
         drop(namespace_lock);
         return Ok(ArtifactCachePreparation::Build(ArtifactBuildTransaction {
@@ -954,6 +952,7 @@ fn revalidate_cargo_build_input_fingerprints(
 /// the same implementation but attach maintenance as a nonfatal record.
 /// Abandoned staging is removed only when its content-key lock is currently
 /// unowned and is reported separately from committed-entry retention.
+/// Entries owned by live acquisition records are skipped until their last owner drops.
 pub fn prune_artifact_cache(
     cache_root: &Path,
     namespace: &str,
@@ -1547,6 +1546,7 @@ fn cache_entry_root_is_valid(root: &Path) -> Result<bool, ArtifactCacheError> {
         OsString::from("outputs"),
         OsString::from(MANIFEST_FILE),
         OsString::from(LAST_USED_FILE),
+        OsString::from(super::cache_fs::RETENTION_LOCK_FILE),
     ]);
     if !undeclared_child_paths(root, &expected, "read artifact cache entry")?.is_empty() {
         return Ok(false);
@@ -1740,21 +1740,25 @@ fn cache_record(
     resolved: ResolvedKey,
     timings: ArtifactCacheTimings,
     maintenance: Option<ArtifactCacheMaintenance>,
-) -> ArtifactCacheRecord {
-    ArtifactCacheRecord {
+) -> Result<ArtifactCacheRecord, ArtifactCacheError> {
+    let entry = entry_directory(&namespace_directory(spec), resolved.key);
+    let retention = RetainedCacheEntry::acquire(&entry).map_err(artifact_cache_fs_error)?;
+    Ok(ArtifactCacheRecord {
         key: resolved.key,
         input_digest: resolved.input_digest,
         artifacts: spec
             .outputs
             .iter()
-            .map(|output| ArtifactCacheArtifact {
+            .enumerate()
+            .map(|(index, output)| ArtifactCacheArtifact {
                 name: output.name.clone(),
-                path: output.destination.clone(),
+                path: staged_output_path(&entry, index),
             })
             .collect(),
         timings,
         maintenance,
-    }
+        _retention: retention,
+    })
 }
 
 fn create_staging_directory(

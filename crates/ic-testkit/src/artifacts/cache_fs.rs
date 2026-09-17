@@ -3,6 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io,
     path::{Path, PathBuf},
+    sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -16,12 +17,82 @@ pub(super) const CACHE_DIRECTORY_TAG_SIGNATURE: &str =
     "Signature: 8a477f597d28d172789f06886806bc55\n";
 pub(super) const LAST_USED_FILE: &str = ".ic-testkit-last-used";
 const LAST_MAINTENANCE_FILE: &str = ".ic-testkit-last-maintenance";
+pub(super) const RETENTION_LOCK_FILE: &str = ".ic-testkit-retention-v1";
+
+/// Acquired under the producer/namespace lock before handing an entry to a
+/// consumer. Clones share ownership; the OS releases locks on process exit.
+#[derive(Clone, Debug)]
+pub(super) struct RetainedCacheEntry {
+    path: PathBuf,
+    _lock: Arc<File>,
+}
+
+impl PartialEq for RetainedCacheEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+    }
+}
+
+impl Eq for RetainedCacheEntry {}
+
+impl RetainedCacheEntry {
+    pub(super) fn acquire(path: &Path) -> Result<Self, CacheFsError> {
+        let file = open_cache_lock_file(&path.join(RETENTION_LOCK_FILE))?;
+        fs2::FileExt::lock_shared(&file).map_err(|source| CacheFsError {
+            operation: "retain cache entry",
+            path: path.to_owned(),
+            source,
+        })?;
+        Ok(Self {
+            path: path.to_owned(),
+            _lock: Arc::new(file),
+        })
+    }
+}
+
+/// The caller must hold the producer/namespace lock throughout this operation.
+pub(super) fn remove_unretained_entry(path: &Path) -> Result<(), CacheFsError> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            return Err(CacheFsError {
+                operation: "inspect cache entry",
+                path: path.to_owned(),
+                source,
+            });
+        }
+    };
+    if !metadata.is_dir() {
+        return remove_path_if_present(path).map_err(|source| CacheFsError {
+            operation: "remove invalid cache entry",
+            path: path.to_owned(),
+            source,
+        });
+    }
+    let _lock =
+        try_lock_cache_file(&path.join(RETENTION_LOCK_FILE))?.ok_or_else(|| CacheFsError {
+            operation: "replace retained cache entry",
+            path: path.to_owned(),
+            source: io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "cache entry is retained by a consumer",
+            ),
+        })?;
+    remove_path_if_present(path).map_err(|source| CacheFsError {
+        operation: "remove cache entry",
+        path: path.to_owned(),
+        source,
+    })
+}
 
 /// Caller-selected retention limits for content-addressed artifact entries.
 ///
 /// Age pruning runs before size pruning. A policy without either limit scans
 /// the selected cache namespace and updates its cache metadata without
-/// removing entries.
+/// removing entries. Entries retained by live acquisition records are skipped,
+/// even when this temporarily exceeds the limits. They become eligible for the
+/// next maintenance pass after their final owner drops or its process exits.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ArtifactCachePrunePolicy {
     max_age: Option<Duration>,
@@ -570,6 +641,9 @@ fn remove_cache_entry(
     if entry.removed {
         return Ok(());
     }
+    let Some(_retention_lock) = try_lock_cache_file(&entry.path.join(RETENTION_LOCK_FILE))? else {
+        return Ok(());
+    };
     remove_path_if_present(&entry.path).map_err(|source| CacheFsError {
         operation: "prune cache entry",
         path: entry.path.clone(),

@@ -288,7 +288,9 @@ fn hash_path(
     declared_root: bool,
     mut trace: Option<&mut HashPathTrace>,
 ) -> io::Result<()> {
-    let canonical = path.canonicalize()?;
+    let context =
+        |error: io::Error| io::Error::new(error.kind(), format!("{}: {error}", path.display()));
+    let canonical = path.canonicalize().map_err(context)?;
     if let Some(trace) = &mut trace
         && !canonical.starts_with(&trace.canonical_root)
     {
@@ -310,11 +312,11 @@ fn hash_path(
         return Ok(());
     }
 
-    let metadata = fs::metadata(path)?;
+    let metadata = fs::metadata(path).map_err(context)?;
     let label_bytes = os_bytes(label.as_os_str());
     if metadata.is_file() {
         hasher.field("file-path", &label_bytes);
-        hasher.file_field("file-content", path)?;
+        hasher.file_field("file-content", path).map_err(context)?;
         return Ok(());
     }
     if !metadata.is_dir() {
@@ -333,7 +335,10 @@ fn hash_path(
         return Ok(());
     }
 
-    let mut entries = fs::read_dir(path)?.collect::<Result<Vec<_>, _>>()?;
+    let mut entries = fs::read_dir(path)
+        .map_err(context)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(context)?;
     entries.sort_by_key(|entry| os_bytes(&entry.file_name()));
     for entry in entries {
         hash_path(

@@ -697,6 +697,21 @@ retained under fingerprint-specific Cargo target directories, so a prior spec
 can be materialized again after another spec used the caller-facing output.
 `WasmBuildRecord::exact_cache_path` exposes the selected immutable directory;
 CI cache collection does not need to reconstruct its private on-disk layout.
+Both `WasmBuildRecord::artifacts()` and `ArtifactCacheRecord::artifacts()` return
+read-only exact-cache paths retained by the record. Keep the outcome, batch
+report, or a cloned record alive through post-link commit and final reading or
+staging. A copied path or artifact descriptor alone does not retain ownership.
+Configured compiler and post-link destinations remain mutable. Never transform
+an exact artifact in place; write into the next transaction's staging outputs.
+See the `artifacts` module documentation for a complete handoff example.
+
+Pruning skips all retained entries, including those owned by another process.
+The last record clone dropping or its process exiting releases retention; the
+next maintenance pass can reclaim the entry. Cache bounds can be temporarily
+exceeded while consumers hold records. Batch successes remain independently
+retained when later entries fail, so keep their records instead of reducing a
+report to indexes. Manual deletion or mutation of exact-cache files is outside
+this contract.
 
 Failed builds remove their incomplete fingerprint directory before returning;
 if cleanup also fails, `WasmBuildError::FailedBuildCleanup` preserves both

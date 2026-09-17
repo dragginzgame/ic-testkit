@@ -6,6 +6,42 @@
 //! explicit cross-call resolution reuse, while [`WasmBuildInputSnapshot`]
 //! prepares a fixed specification set for concurrent readers. Both require a
 //! caller-held source lease.
+//!
+//! Successful Wasm and generic artifact records retain their read-only exact
+//! paths against cache replacement and pruning. Retain the record (or a clone)
+//! through consumption; paths and artifact descriptors alone carry no ownership.
+//! Batch reports own their successful records even when later entries fail.
+//!
+//! ```no_run
+//! use ic_testkit::artifacts::{
+//!     ArtifactCacheOutcome, ArtifactCachePreparation, ArtifactCacheSpec,
+//!     WasmBuildSpec, build_wasm_canisters_cached, prepare_artifact_cache,
+//! };
+//! use std::path::Path;
+//!
+//! fn build_deployable(spec: &WasmBuildSpec, post_cache: &Path, destination: &Path)
+//!     -> Result<Vec<u8>, Box<dyn std::error::Error>>
+//! {
+//!     let wasm = build_wasm_canisters_cached(spec)?;
+//!     let input = &wasm.record().artifacts()[0];
+//!     let post_spec = ArtifactCacheSpec::new(post_cache, "deploy", "copy/v1")
+//!         .with_input("wasm", input)
+//!         .with_output("deploy", destination);
+//!     let deploy = match prepare_artifact_cache(&post_spec)? {
+//!         ArtifactCachePreparation::Reused(record) => ArtifactCacheOutcome::Reused(record),
+//!         ArtifactCachePreparation::Build(transaction) => {
+//!             // A real post-link recipe can write transformed bytes to
+//!             // transaction.output_path("deploy") instead of copying.
+//!             transaction.import_output("deploy", input)?;
+//!             transaction.commit()?
+//!         }
+//!     };
+//!     drop(wasm); // The post-link transaction has finished consuming the input.
+//!     let bytes = std::fs::read(deploy.record().artifacts()[0].path())?;
+//!     drop(deploy); // Reading is complete; maintenance may now reclaim it.
+//!     Ok(bytes)
+//! }
+//! ```
 
 mod cache_fs;
 mod digest;

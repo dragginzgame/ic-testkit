@@ -8,6 +8,55 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-17 - Retained artifact handoff
+
+### Changed
+
+- Hard-cuts `WasmBuildRecord::artifacts()` and
+  `ArtifactCacheRecord::artifacts()` to return read-only exact-cache paths
+  instead of mutable materialization destinations. Successful cold builds and
+  warm hits retain their entries before producer protection ends; keeping a
+  record or its clone alive protects the bytes through post-link processing,
+  reading, and staging. `WasmBuildRecord::exact_cache_path()` has the same
+  lifetime guarantee.
+- Adds shared OS file-lock ownership to the existing cache lifecycle. Age and
+  size pruning skip retained entries, then reclaim them normally after the
+  final owner drops or its process exits. Retained entries may temporarily
+  exceed configured limits. Invalid retained entries fail closed rather than
+  being replaced; no new cache authority or permanent pin registry is added.
+- Batch reports retain each successful entry independently through later
+  builds and failures. Consumers must keep the report, extracted outcome, or
+  cloned record until reading/staging finishes; copied paths alone do not
+  retain ownership. Cache and digest formats remain `v1`.
+
+### Fixed
+
+- Closes the producer-to-consumer lifetime gaps reported by IcyDB in
+  [#2](https://github.com/dragginzgame/ic-testkit/issues/2), for both Wasm inputs
+  and generic post-link outputs. The specific operation behind the original
+  intermittent missing-input failure remains unproven.
+- Includes the failing filesystem path in declared-input/tool hashing errors,
+  including failures while traversing a declared directory.
+
+### Testing
+
+- Adds pipe-coordinated process tests for cold and warm Wasm/post-link handoff,
+  shared-output replacement, shared-target cleanup, age/size pruning, cloned
+  ownership, and reclamation after normal release or process termination.
+- Covers distinct successful batch outputs surviving a later failure,
+  warm post-link reuse, fail-closed retained corruption, and missing-input/tool
+  diagnostics with transaction cleanup.
+
+### Migration
+
+- Consume `record.artifacts()` while holding the record; stop reconstructing
+  compiler or deployable paths from configuration. Keep successful batch
+  results instead of reducing them to indexes. Treat retained paths as
+  read-only and write transformations into transaction staging.
+- This is a pre-1.0 minor hard cut. No compatibility path accessor or older
+  cache-format reader is provided. IcyDB's released-dependency adoption and
+  concurrent lifecycle target must be validated downstream after release.
+
 ## [0.9.1] - 2026-09-13 - TOML dependency update and CI artifact reuse
 
 ### Changed

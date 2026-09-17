@@ -383,6 +383,7 @@ fn tampered_cache_entry_is_rebuilt_instead_of_reused() {
     fs::write(transaction.output_path("output").unwrap(), b"valid").expect("write staged output");
     let outcome = transaction.commit().expect("commit valid entry");
     let entry = entry_directory(&namespace_directory(&spec), outcome.record().key());
+    drop(outcome);
     fs::write(entry.join("outputs/0000.artifact"), b"tampered").expect("tamper cached output");
 
     let rebuilt = prepare_artifact_cache(&spec).expect("prepare after corruption");
@@ -401,6 +402,7 @@ fn malformed_manifests_and_nondirectory_entries_are_rebuilt() {
         .with_output("output", &root.join("output"));
     let outcome = build_output(&spec, b"valid");
     let entry = entry_directory(&namespace_directory(&spec), outcome.record().key());
+    drop(outcome);
     fs::write(entry.join(super::MANIFEST_FILE), [0xff, 0xfe])
         .expect("write invalid UTF-8 manifest");
 
@@ -449,6 +451,7 @@ fn undeclared_entry_root_files_are_never_published_or_reused() {
 
     let outcome = build_output(&spec, b"valid");
     let entry = entry_directory(&namespace_directory(&spec), outcome.record().key());
+    drop(outcome);
     fs::write(entry.join("unexpected"), b"extra").expect("write corrupt root file");
     let transaction =
         expect_build(prepare_artifact_cache(&spec).expect("prepare after root-schema corruption"));
@@ -489,6 +492,7 @@ fn pruning_protects_active_entry_and_removes_older_key() {
         prepare_artifact_cache(&active).unwrap(),
         ArtifactCachePreparation::Reused(_)
     ));
+    drop(outcome);
     let strict = prune_artifact_cache(
         active.cache_root(),
         active.namespace(),
@@ -916,4 +920,54 @@ fn build_output(spec: &ArtifactCacheSpec, contents: &[u8]) -> ArtifactCacheOutco
     let transaction = expect_build(prepare_artifact_cache(spec).expect("prepare build"));
     fs::write(transaction.output_path("output").unwrap(), contents).expect("write staged output");
     transaction.commit().expect("commit output")
+}
+
+#[test]
+fn retained_corrupt_entry_fails_closed_until_consumer_releases_it() {
+    let root = unique_temp_directory("retained-corrupt-entry");
+    let spec = ArtifactCacheSpec::new(&root.join("cache"), "retained", "recipe/v1")
+        .with_output("output", &root.join("output"));
+    let outcome = build_output(&spec, b"valid");
+    let retained = outcome.record().clone();
+    let path = retained.artifacts()[0].path().to_owned();
+    drop(outcome);
+    // Simulate external corruption: recovery must not replace a live entry.
+    fs::write(&path, b"corrupt").unwrap();
+    assert!(matches!(prepare_artifact_cache(&spec),
+        Err(ArtifactCacheError::Io { source, .. }) if source.kind() == std::io::ErrorKind::WouldBlock));
+    assert_eq!(fs::read(&path).unwrap(), b"corrupt");
+    drop(retained);
+    expect_build(prepare_artifact_cache(&spec).unwrap())
+        .abort()
+        .unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn missing_declared_input_and_tool_errors_include_the_failed_path() {
+    for tool in [false, true] {
+        let root = unique_temp_directory("missing-declared-path");
+        let missing = root.join(if tool { "optimizer" } else { "input.wasm" });
+        fs::write(&missing, b"input").unwrap();
+        let spec = ArtifactCacheSpec::new(&root.join("cache"), "missing", "recipe/v1")
+            .with_output("output", &root.join("output"));
+        let spec = if tool {
+            spec.with_tool("tool", &missing)
+        } else {
+            spec.with_input("input", &missing)
+        };
+        let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());
+        fs::write(transaction.output_path("output").unwrap(), b"output").unwrap();
+        let staging = transaction.staging_directory().to_owned();
+        fs::remove_file(&missing).unwrap();
+        let error = transaction.commit().unwrap_err();
+        assert!(
+            error.to_string().contains(&missing.display().to_string()),
+            "{error}"
+        );
+        assert!(matches!(error, ArtifactCacheError::Io { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound));
+        assert!(!staging.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

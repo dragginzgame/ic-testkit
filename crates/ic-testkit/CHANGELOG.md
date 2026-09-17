@@ -6,6 +6,47 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.10.0
+
+This minor release hard-cuts artifact consumption to retained exact outputs,
+fixing the lifetime gaps reported by IcyDB in issue #2. The original missing
+input's precise racing operation has not been established.
+
+`WasmBuildRecord::artifacts()` and `ArtifactCacheRecord::artifacts()` now return
+read-only exact-cache paths instead of caller-selected materialization paths.
+A successful cold build or warm hit acquires retention before releasing its
+producer locks. Keep its record, outcome, or batch report alive while consuming
+those paths. Cloning a record shares retention; cloning a path or an
+`ArtifactCacheArtifact` descriptor does not. `exact_cache_path()` is also
+protected for the Wasm record's lifetime.
+
+Age/size pruning skips live entries across threads and processes. Configured
+bounds may be exceeded while consumers retain entries; after the last owner
+drops, the next maintenance pass can reclaim them normally. OS locks release
+on process exit, including a crash, without stale pins. A corrupt retained
+entry fails closed instead of being replaced. Treat exact paths as read-only;
+manual cache deletion and external mutation are outside the ownership contract.
+All cache and digest formats remain `v1`.
+
+### Hard-cut migration
+
+| Previous consumption | 0.10 consumption |
+| --- | --- |
+| Read the configured compiler output after a build | Read `outcome.record().artifacts()` and keep the outcome or a cloned record alive through post-link commit |
+| Read the configured post-link destination later | Keep the returned `ArtifactCacheRecord` and read its artifacts until staging/reading finishes |
+| Reduce successful batch results to indexes or paths | Keep the report, move out successful outcomes, or clone their records; later failed entries do not invalidate successful records |
+| Transform an artifact in place | Write into the post-link transaction's output staging paths |
+
+Materialization still populates configured destinations, but those remain
+mutable and may be replaced by another acquisition. No compatibility accessor
+or alternate cache protocol is added. Declared-input/tool hashing errors now
+include the failing path. Source-mutation and input-identity checks remain in
+force.
+
+The `artifacts` module documentation demonstrates retained Wasm-to-post-link
+handoff. IcyDB must adopt the release in both single and batch flows and rerun
+its concurrent lifecycle tests; that downstream validation is not claimed here.
+
 ## 0.9.1
 
 The workspace `toml` dependency moves from 0.9 to 1, with the refreshed
