@@ -12,10 +12,11 @@ provides:
 - explicit bounded PocketIC startup, caller-owned managed-server handles, and
   structured child/readiness failures
 - cached single- and multi-canister PocketIC baseline pools
-- deterministic fake principals and account-like values
+- deterministic fake principals
 - transactional external artifact sets and content-addressed Wasm builds with
-  caller-labeled sequential batches, explicit immutable-source sessions, and
-  bounded cache retention
+  retained read-only outputs, caller-labeled sequential batches, explicit
+  immutable-source sessions and concurrent-reader snapshots, and bounded cache
+  retention
 - controller-aware, caller-labeled collect-all diagnostics
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
@@ -32,7 +33,8 @@ Most users should read the
 setup, examples, local checks, and release notes.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
-the `0.9` managed-server lifetime migration and earlier hard-cut tables.
+the `0.10` retained-artifact migration, the `0.9` managed-server lifetime
+migration, and earlier hard-cut tables.
 
 The repository also includes a complete
 [multi-canister baseline recipe](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/multi_canister_baseline_pool.rs)

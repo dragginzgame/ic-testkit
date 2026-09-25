@@ -42,7 +42,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.9"
+ic-testkit = "0.10"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -50,10 +50,12 @@ Canister crates that emit benchmark markers can add the same version under
 
 The crate supports Rust 1.88 and uses PocketIC 16.
 
-Upgrading from `0.8` changes the managed-server hard lifetime to explicit
-opt-in. See the packaged
-[`0.9` migration guide](crates/ic-testkit/CHANGELOG.md) for the complete API
-mapping and earlier pre-1.0 hard cuts.
+Upgrading to `0.10` changes artifact consumption to retained, read-only
+exact-cache paths. Keep the build outcome or record alive while reading or
+staging those artifacts. See the packaged
+[`0.10` migration guide](crates/ic-testkit/CHANGELOG.md#0100) for the complete
+API mapping and earlier pre-1.0 hard cuts, including `0.9`'s opt-in managed-server
+hard lifetime.
 
 ## Features for application-scale test suites
 
@@ -127,7 +129,7 @@ restored or validated.
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
 
-`ic_testkit::pic::prelude::*` imports the seven extension traits only. Data types
+`ic_testkit::pic::prelude::*` imports the six extension traits only. Data types
 and PocketIC types remain explicit imports.
 
 ## PocketIC ownership and concurrency
@@ -615,7 +617,7 @@ and exact generated-artifact freshness checks:
 ```rust,no_run
 use ic_testkit::artifacts::{
     ArtifactCachePrunePolicy, WasmBuildOutcome, WasmBuildSpec,
-    build_wasm_canisters_cached, read_wasm, test_target_dir, workspace_root_for,
+    build_wasm_canisters_cached, test_target_dir, workspace_root_for,
 };
 use std::time::Duration;
 
@@ -647,7 +649,8 @@ match &outcome {
     }
 }
 
-let wasm = read_wasm(&target, "counter_canister", "release");
+// Keep the outcome alive while reading its retained, read-only artifact.
+let wasm = std::fs::read(&outcome.record().artifacts()[0])?;
 
 if let Some(pruned) = outcome
     .record()
@@ -1034,8 +1037,8 @@ Each batch remains sequential. Separate snapshot readers may overlap, but
 shared incremental Cargo targets still participate in their existing locks;
 use isolated targets to retain useful Cargo parallelism. There is no built-in
 parallel scheduler, ambient cache, or mutation-owning workspace abstraction.
-Callers without a genuine source write-exclusion guard—including IcyDB today—
-must keep ordinary per-call resolution.
+Callers without a genuine source write-exclusion guard must keep ordinary
+per-call resolution.
 
 When independent specs share incremental targets, batch-owned maintenance
 removes the caller convention of modifying the first spec:
@@ -1291,7 +1294,7 @@ rustdoc.
 
 - Published MSRV: Rust 1.88
 - Repository toolchain: Rust 1.96
-- PocketIC client/server line: 15
+- PocketIC client/server line: 16
 
 Run the ordinary checks with:
 
@@ -1334,8 +1337,9 @@ make release-patch
 # or: make release-minor
 ```
 
-The guarded flow runs CI, bumps and stages the version files, creates the
-release commit and tag, reruns CI, and pushes the commit and tag. After tag CI
+The guarded flow runs the local `make ci` gate before bumping the version,
+then bumps and stages the version files, creates the release commit and tag,
+and pushes both. GitHub Actions runs CI for the pushed tag. After tag CI
 succeeds:
 
 ```bash
