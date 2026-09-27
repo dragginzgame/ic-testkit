@@ -245,6 +245,21 @@ impl PocketIcStartupConfig {
 }
 
 impl PocketIcManagedServer {
+    /// OS process ID of the owned server child, for caller-managed monitoring.
+    ///
+    /// This identifies the server process, not its descendants, and does not
+    /// establish that it is still running. The OS may reuse the ID after the
+    /// child exits and is reaped. Dropping this handle terminates and waits for
+    /// the child; retaining the ID does not retain server ownership.
+    #[must_use]
+    pub fn process_id(&self) -> u32 {
+        self.server
+            .child
+            .as_ref()
+            .expect("managed server handle must own its child")
+            .id()
+    }
+
     /// Loopback URL published by the managed server.
     #[must_use]
     pub fn url(&self) -> &str {
@@ -923,10 +938,10 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn managed_server_handle_exposes_url_output_and_raii_ownership() {
+    fn managed_server_handle_exposes_process_id_url_output_and_raii_ownership() {
         let script = TestServerScript::new(
             "handle",
-            "#!/bin/sh\nif [ \"$1\" != \"--port-file\" ] || [ -e \"$2\" ]; then echo 'unexpected managed server arguments' >&2; exit 97; fi\nprintf 'managed server ready'\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
+            "#!/bin/sh\nif [ \"$1\" != \"--port-file\" ] || [ -e \"$2\" ]; then echo 'unexpected managed server arguments' >&2; exit 97; fi\nprintf 'managed server ready: %s' \"$$\"\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
         );
 
         let server = PocketIcStartupConfig::spawn(script.path(), Duration::from_secs(2))
@@ -934,18 +949,13 @@ mod tests {
             .expect("start caller-owned managed server");
 
         assert_eq!(server.url(), "http://127.0.0.1:34567/");
-        assert_eq!(server.output().stdout(), "managed server ready");
+        assert_eq!(
+            server.output().stdout(),
+            format!("managed server ready: {}", server.process_id())
+        );
         assert_eq!(server.output().stderr(), "");
         #[cfg(target_os = "linux")]
-        let child_process = PathBuf::from(format!(
-            "/proc/{}",
-            server
-                .server
-                .child
-                .as_ref()
-                .expect("managed handle must own its child")
-                .id()
-        ));
+        let child_process = PathBuf::from(format!("/proc/{}", server.process_id()));
         #[cfg(target_os = "linux")]
         assert!(child_process.exists());
         drop(server);

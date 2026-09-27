@@ -6,6 +6,13 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.10.1
+
+`PocketIcManagedServer::process_id()` exposes the owned server child's OS PID
+for caller-managed resource monitoring alongside its URL and captured output.
+It identifies only the child, does not establish liveness, and retains no
+ownership when copied. The OS may reuse it after the child exits and is reaped.
+
 ## 0.10.0
 
 This minor release hard-cuts artifact consumption to retained exact outputs,

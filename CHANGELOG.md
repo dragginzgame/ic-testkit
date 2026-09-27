@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-27 - Managed server process identity
+
+### Added
+
+- Adds `PocketIcManagedServer::process_id()` so callers can identify their
+  owned server for resource monitoring. The PID identifies only the server
+  child and does not establish liveness or retain ownership.
+
+### Documentation
+
+- Documents PID lifetime and reuse semantics and demonstrates the accessor in
+  the managed-server example.
+
+### Testing
+
+- Extends managed-server coverage to check the PID against child-reported
+  identity and verify cleanup on drop. The targeted test, library Clippy,
+  formatting, and whitespace checks pass.
+
 ## [0.10.0] - 2026-09-17 - Retained artifact handoff
 
 ### Changed

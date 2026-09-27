@@ -246,6 +246,7 @@ use std::{path::Path, time::Duration};
 fn run_serial_suite(server_binary: &Path) -> Result<(), ic_testkit::pic::PocketIcStartupError> {
     let server = PocketIcStartupConfig::spawn(server_binary, Duration::from_secs(30))
         .start_managed_server()?;
+    eprintln!("managed server PID: {}", server.process_id());
     let first = PocketIcBuilder::new().with_application_subnet().try_build(
         PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30)),
     )?;
@@ -259,6 +260,10 @@ fn run_serial_suite(server_binary: &Path) -> Result<(), ic_testkit::pic::PocketI
 ```
 
 `PocketIcManagedServer` owns the child and terminates and waits for it on drop.
+Its `process_id()` accessor identifies that child for caller-managed resource
+monitoring. It does not include descendants or establish liveness; the OS may
+reuse the PID after the child exits and is reaped. A copied PID retains no
+ownership.
 Managed startup creates a unique private temporary directory but leaves the
 actual `--port-file` path absent for PocketIC to create. Output is retained as
 bounded lossy UTF-8 for the handle lifetime. Keep the handle alive until every
