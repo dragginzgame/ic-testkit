@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Adds seven process/socket regressions to the release guard checks, covering
   shutdown ordering, external-server isolation, forced termination, escaping
   paths and retained diagnostics on cleanup failure.
+- Binds fixture Unix sockets using short relative paths inside their scratch
+  directories so nested release `TMPDIR` paths do not exceed the socket limit.
 
 ## [0.10.3] - 2026-10-02 - PocketIC teardown experiment
 

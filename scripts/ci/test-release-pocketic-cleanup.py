@@ -24,7 +24,10 @@ import os, pathlib, signal, socket, sys, time
 port = pathlib.Path(sys.argv[-1])
 peer = socket.socket(socket.AF_UNIX)
 sock = port.with_suffix('.sock')
-peer.bind(str(sock))
+# Bind relative to the socket's directory: release CI can nest TMPDIR beyond
+# AF_UNIX's pathname limit, while the socket must stay in the owned scratch.
+os.chdir(sock.parent)
+peer.bind(sock.name)
 def terminate(signum, frame):
     pathlib.Path(os.environ['STOP_MARKER']).write_text(str(sock.exists()))
     peer.close()
@@ -45,7 +48,9 @@ class ReleaseCleanupTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="ic-testkit-release-ci.")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Exercise long scratch paths even when the caller uses plain /tmp.
+        self.root = Path(self.temp.name) / ("ic-testkit-release-ci." + "nested-" * 20)
+        self.root.mkdir()
 
     def spawn(self, scratch, name="pocket_ic_123.port", label="pocket-ic", ignore_term=False):
         port = scratch / name

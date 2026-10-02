@@ -17,6 +17,8 @@ The isolated PocketIC teardown patch and development probe are removed.
 Instance teardown improvements will wait for a future upstream release; the
 repository does not maintain a patched PocketIC client. Seven targeted
 process/socket regressions cover the repository's release cleanup behavior.
+Fixture sockets use short relative bind paths to support nested release
+temporary directories without exceeding the Unix socket pathname limit.
 
 ## 0.10.3
 
