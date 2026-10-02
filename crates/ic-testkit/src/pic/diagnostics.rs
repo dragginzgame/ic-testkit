@@ -860,7 +860,7 @@ mod tests {
             CanisterLogRenderLimits::new(0, 0),
         );
 
-        assert!(logs.records().is_empty());
+        assert_eq!(logs.records(), []);
         assert_eq!(logs.omitted_records(), 1);
         assert_eq!(logs.omitted_content_bytes(), 5);
         assert!(logs.was_truncated());

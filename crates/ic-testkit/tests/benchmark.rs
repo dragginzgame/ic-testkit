@@ -23,7 +23,10 @@ ICTK|app/myfunc/something:end|150|260|390|430
     let report = parse_benchmark_events(input, &BenchmarkParserConfig::default());
 
     assert_eq!(report.ignored_line_count, 1);
-    assert!(report.malformed_markers.is_empty());
+    assert_eq!(
+        report.malformed_markers,
+        [] as [ic_testkit::benchmark::MalformedBenchmarkMarker; 0]
+    );
     assert_eq!(report.events.len(), 2);
     assert_eq!(report.events[0].suite, "app");
     assert_eq!(report.events[0].span_label, "app/myfunc/something");
@@ -88,7 +91,10 @@ ICTK||1|2|3|4
 
     let report = parse_benchmark_events(input, &BenchmarkParserConfig::default());
 
-    assert!(report.events.is_empty());
+    assert_eq!(
+        report.events,
+        [] as [ic_testkit::benchmark::RawBenchmarkEvent; 0]
+    );
     assert_eq!(report.malformed_markers.len(), 3);
     assert!(
         report
@@ -148,7 +154,10 @@ ICTK|app/a:end|50|50|50|50
     let spans = pair_benchmark_spans(&report.events);
 
     assert_eq!(spans.spans.len(), 2);
-    assert!(spans.unpaired_markers.is_empty());
+    assert_eq!(
+        spans.unpaired_markers,
+        [] as [ic_testkit::benchmark::UnpairedBenchmarkMarker; 0]
+    );
     assert_eq!(spans.spans[0].start_line, 2);
     assert_eq!(spans.spans[0].end_line, 3);
     assert_eq!(spans.spans[0].delta.instructions, 10);
@@ -171,7 +180,7 @@ ICTK|app/c:end|40|60|60|60
 
     let spans = pair_benchmark_spans(&report.events);
 
-    assert!(spans.spans.is_empty());
+    assert_eq!(spans.spans, [] as [ic_testkit::benchmark::BenchmarkSpan; 0]);
     assert_eq!(spans.unpaired_markers.len(), 2);
     assert_eq!(spans.invalid_spans.len(), 1);
     assert_eq!(

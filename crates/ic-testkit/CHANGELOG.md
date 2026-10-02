@@ -19,6 +19,9 @@ classifier only for PocketIC-originating errors; it remains a heuristic rather
 than proof of a dead instance. Unrelated call panics retain their original
 payload.
 
+Empty/nonempty collection assertions comply with Rust 1.99's `assert_is_empty`
+lint and show collection values on failure.
+
 Heartbeat tests now use event coordination. A synthetic HTTP/subprocess test
 demonstrates that PocketIC 16's instance destructor waits for DELETE, independently
 of the construction deadline and operation budget. This records an upstream

@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Testing
 
+- Updates empty/nonempty collection assertions for Rust 1.99's
+  `assert_is_empty` lint, preserving their checks and showing collection values
+  on failure. Warnings-denied Clippy is checked across all crate targets.
 - Coordinates heartbeat and observer-unwind tests through channels instead of
   worker sleeps. Workers remain blocked until the relevant heartbeat or
   observer unwinding; timeouts are deadlock escapes rather than timing assertions.

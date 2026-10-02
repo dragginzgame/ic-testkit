@@ -503,7 +503,7 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
         .with_shared_incremental_target(&shared_target);
 
     let resolved = resolve_cargo_build_inputs(&spec).expect("resolve exact Cargo inputs");
-    assert!(!resolved.inputs().is_empty());
+    assert_ne!(resolved.inputs(), []);
     assert!(resolved.is_current(&spec).expect("revalidate Cargo inputs"));
 
     let first = build_wasm_canisters_cached(&spec).expect("build through shared Cargo target");

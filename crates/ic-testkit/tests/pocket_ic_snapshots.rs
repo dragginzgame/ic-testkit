@@ -72,7 +72,10 @@ fn failed_snapshot_set_capture_cleans_up_earlier_snapshots() {
             cleanup_failures,
         } => {
             assert_eq!(canister_id, missing_canister, "attempts: {attempts:?}");
-            assert!(cleanup_failures.is_empty());
+            assert_eq!(
+                cleanup_failures,
+                [] as [ic_testkit::pic::SnapshotCleanupFailure; 0]
+            );
         }
         other => panic!("unexpected snapshot error: {other}"),
     }
@@ -80,7 +83,7 @@ fn failed_snapshot_set_capture_cleans_up_earlier_snapshots() {
     let remaining = pocket_ic
         .list_canister_snapshots(captured_first, None)
         .expect("list snapshots after rollback");
-    assert!(remaining.is_empty());
+    assert_eq!(remaining, [] as [pocket_ic::Snapshot; 0]);
 }
 
 #[test]
