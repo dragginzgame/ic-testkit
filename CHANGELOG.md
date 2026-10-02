@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.3] - 2026-10-02 - PocketIC teardown experiment
+
+### Development
+
+- Adds an isolated PocketIC 16.0.0 upstream teardown proposal and repeatable
+  synthetic HTTP probe. The proposal provides fallible shutdown deadlines,
+  acknowledgement checks, retryable ownership and bounded best-effort drop.
+  Seven targeted parent tests cover sync/async deletion, timeouts, retries,
+  failure responses, shared-peer availability and borrowed gateway cleanup.
+  The production registry dependency is unchanged; the original Busy/tick
+  cause remains unproven.
+
+### Documentation
+
+- Records the proposal's deadline and acknowledgement semantics, probe usage,
+  and the remaining persistent-state handoff review before upstream adoption.
+  This release adds no production shutdown API or teardown fix.
+
 ## [0.10.2] - 2026-10-02 - Transport classification and deterministic progress tests
 
 ### Changed

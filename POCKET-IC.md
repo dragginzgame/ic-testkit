@@ -150,6 +150,42 @@ shared or externally owned server. This crate continues to return the upstream
 instance directly; it does not add a parallel simulator wrapper or treat a
 detached drop thread as successful cleanup.
 
+An isolated [candidate upstream patch](docs/upstream/pocket-ic-bounded-teardown.patch)
+for the published PocketIC 16.0.0 client adds synchronous and asynchronous
+`shutdown(&mut self, Duration)` methods returning typed failures. A successful
+DELETE acknowledgement clears ownership; a deadline, transport failure or
+unexpected status leaves cleanup unconfirmed and retains ownership for retry.
+The candidate accepts DELETE status 200 or 204; 202 does not confirm deletion.
+Borrowed handles only stop their own gateway. The deadline includes reading that
+gateway's acknowledgement body. Default drop logs failures and bounds the HTTP
+cleanup attempt to five seconds, independently of the operation polling budget.
+An explicit failed shutdown can therefore be followed by another five-second
+best-effort attempt on drop. Five seconds is a proposed policy, not a measured
+bound on real server deletion work. Cancelling the client request does not prove
+the server cancelled its work or deleted the instance.
+
+The [probe script](scripts/dev/probe-pocketic-teardown.sh) copies the supplied
+registry source to a temporary workspace, applies the patch there, and runs
+seven targeted parent tests with isolated, kill/reap-guarded children. It covers
+sync/async success and idempotence, deadlines and retry, rejected acknowledgements,
+refused connections, an unanswered DELETE on synchronous drop, borrowed ownership,
+and a stalled gateway response body. During a timed-out deletion, the synthetic
+shared peer also serves and deletes another instance. Run it with the unpacked
+published crate source from your Cargo registry:
+
+```bash
+bash scripts/dev/probe-pocketic-teardown.sh /path/to/pocket-ic-16.0.0
+```
+
+The probe uses cached dependencies offline and requires loopback socket access.
+The patch is a review artifact; ic-testkit still selects the registry dependency.
+This experiment qualifies the HTTP teardown behavior against a synthetic peer,
+not the original Busy/tick incident or real-server lifecycle behavior. Before
+adoption, upstream also needs to review persistent-state ownership after a
+timeout: the existing `drop_and_take_state` methods cannot promise a safe state
+handoff while server deletion is unconfirmed. That path is not qualified by this
+probe.
+
 ### Install-Code Rate Limiting
 
 PocketIC exposes `RejectResponse::error_code` and the structured

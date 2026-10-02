@@ -6,6 +6,19 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.10.3
+
+The repository includes an isolated PocketIC 16.0.0 upstream teardown proposal
+and repeatable synthetic HTTP probe. Seven targeted parent tests qualify
+fallible shutdown deadlines, acknowledgement checks, ownership retained for
+retry, bounded best-effort drop and borrowed gateway cleanup.
+
+This is a development experiment. The published crate still uses the registry
+PocketIC dependency and adds no production shutdown API or teardown fix.
+Persistent-state handoff requires upstream review before adoption; the original
+Busy/tick cause remains unproven. See the repository's `POCKET-IC.md` for the
+proposal and probe instructions.
+
 ## 0.10.2
 
 The repository and CI now use Rust 1.99.0. The published MSRV remains Rust
