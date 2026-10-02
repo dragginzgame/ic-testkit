@@ -802,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "ic-testkit"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "candid",
  "fs2",
@@ -854,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "ic_testkit_perf_probe"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "candid",
  "ic-cdk",
