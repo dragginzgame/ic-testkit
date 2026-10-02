@@ -164,7 +164,19 @@ server first completed without it; no canister Wasm build was required.
 
 The release CI runner stops servers with port files inside its private scratch
 directory before removing that directory. Cleanup uses Linux `/proc` to check
-the complete argument list and pidfds to signal and await the exact processes;
+the complete argument list and match the running executable's device/inode to
+the selected server binary. It accepts `POCKET_IC_BIN` and
+`IC_TESTKIT_POCKET_IC_SERVER`, including renamed binaries, relative paths and
+bare names resolved through `PATH`. Without `POCKET_IC_BIN`, it recognises
+PocketIC 16's exact default download path under scratch,
+`pocket-ic-server-16.0.0/pocket-ic`; keep that path aligned with upstream's
+`LATEST_SERVER_VERSION` when updating the dependency. A caller-selected binary
+outside these paths is unknown to the runner and retains scratch if still alive.
+Missing, replaced or inaccessible selected binaries also retain scratch when a
+live process uses a private port file; an executable name alone cannot establish
+ownership.
+
+Cleanup uses pidfds to signal and await the exact processes;
 servers with external port files are left alone. It requests termination, waits
 up to five seconds, then uses forced termination with another five-second bound.
 If cleanup fails or safe process ownership is unavailable, it retains scratch

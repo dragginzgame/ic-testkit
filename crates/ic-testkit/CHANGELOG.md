@@ -6,6 +6,13 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+Release CI cleanup now matches the selected server binary's device/inode,
+including renamed binaries, alongside its private port-file path. Unknown or
+unavailable executable identities retain scratch without signalling unrelated
+processes. Focused process/socket regressions cover configured and default
+binary selection, identity failures and ownership races. This changes repository
+release tooling; the published crate's runtime API and dependencies are unchanged.
+
 ## 0.10.4
 
 The repository's release CI runner now stops invocation-owned PocketIC servers

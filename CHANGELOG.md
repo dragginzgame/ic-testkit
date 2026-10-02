@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Release CI cleanup recognises renamed selected PocketIC binaries by matching
+  the running executable's device/inode and the invocation's private port-file
+  path. The runner passes configured binary paths and PocketIC 16's exact default
+  download path. Unknown executable identities retain scratch without signalling
+  unrelated processes; pidfd protection, bounded termination and the original
+  CI failure status are preserved.
+
+### Testing
+
+- Expands the focused cleanup regressions to cover renamed binaries, default
+  downloads, relative and PATH selection, forged executable names, unavailable
+  identities, ownership rechecks and servers appearing during cleanup.
+
 ## [0.10.4] - 2026-10-02 - Release cleanup and upstream PocketIC policy
 
 ### Fixed
