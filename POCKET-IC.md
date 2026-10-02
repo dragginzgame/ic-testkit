@@ -143,48 +143,34 @@ cargo test -p ic-testkit --locked --test pocket_ic_teardown \
   instance_drop_waits_for_the_deletion_response -- --exact --nocapture
 ```
 
-Upstream should provide explicit fallible instance shutdown with a deletion
-deadline and acknowledgement, and a bounded destructor policy. The caller's
-server ownership must remain explicit: timing out one instance must not kill a
-shared or externally owned server. This crate continues to return the upstream
-instance directly; it does not add a parallel simulator wrapper or treat a
-detached drop thread as successful cleanup.
+Instance teardown improvements are deferred until an upstream PocketIC release
+provides them. ic-testkit uses the unmodified registry dependency and returns
+the upstream instance directly. The isolated patch experiment introduced in
+0.10.3 was removed in 0.10.4. The reproduction above remains evidence of the
+current limitation.
 
-An isolated [candidate upstream patch](docs/upstream/pocket-ic-bounded-teardown.patch)
-for the published PocketIC 16.0.0 client adds synchronous and asynchronous
-`shutdown(&mut self, Duration)` methods returning typed failures. A successful
-DELETE acknowledgement clears ownership; a deadline, transport failure or
-unexpected status leaves cleanup unconfirmed and retains ownership for retry.
-The candidate accepts DELETE status 200 or 204; 202 does not confirm deletion.
-Borrowed handles only stop their own gateway. The deadline includes reading that
-gateway's acknowledgement body. Default drop logs failures and bounds the HTTP
-cleanup attempt to five seconds, independently of the operation polling budget.
-An explicit failed shutdown can therefore be followed by another five-second
-best-effort attempt on drop. Five seconds is a proposed policy, not a measured
-bound on real server deletion work. Cancelling the client request does not prove
-the server cancelled its work or deleted the instance.
+### Release Temporary-Directory Cleanup
 
-The [probe script](scripts/dev/probe-pocketic-teardown.sh) copies the supplied
-registry source to a temporary workspace, applies the patch there, and runs
-seven targeted parent tests with isolated, kill/reap-guarded children. It covers
-sync/async success and idempotence, deadlines and retry, rejected acknowledgements,
-refused connections, an unanswered DELETE on synchronous drop, borrowed ownership,
-and a stalled gateway response body. During a timed-out deletion, the synthetic
-shared peer also serves and deletes another instance. Run it with the unpacked
-published crate source from your Cargo registry:
+PocketIC 16's server HTTP adapter destructor calls
+`remove_file(self.uds_path.clone()).unwrap()` at
+[server source line 457](https://github.com/dfinity/ic/blob/fc21803c3c3a8dd452b3b58b959751c41fecb89c/rs/pocket_ic_server/src/pocket_ic.rs#L454-L458).
+Removing the server's temporary directory while it is alive deletes that Unix
+socket first, so later adapter teardown panics with `NotFound`. This is separate
+from the client HTTP DELETE wait above.
 
-```bash
-bash scripts/dev/probe-pocketic-teardown.sh /path/to/pocket-ic-16.0.0
-```
+A focused before/after probe against the released PocketIC 16.0.0 binary
+reproduced that exact panic with directory deletion first. Stopping the owned
+server first completed without it; no canister Wasm build was required.
 
-The probe uses cached dependencies offline and requires loopback socket access.
-The patch is a review artifact; ic-testkit still selects the registry dependency.
-This experiment qualifies the HTTP teardown behavior against a synthetic peer,
-not the original Busy/tick incident or real-server lifecycle behavior. Before
-adoption, upstream also needs to review persistent-state ownership after a
-timeout: the existing `drop_and_take_state` methods cannot promise a safe state
-handoff while server deletion is unconfirmed. That path is not qualified by this
-probe.
+The release CI runner stops servers with port files inside its private scratch
+directory before removing that directory. Cleanup uses Linux `/proc` to check
+the complete argument list and pidfds to signal and await the exact processes;
+servers with external port files are left alone. It requests termination, waits
+up to five seconds, then uses forced termination with another five-second bound.
+If cleanup fails or safe process ownership is unavailable, it retains scratch
+instead of removing files under a potentially live server. The targeted
+`scripts/ci/test-release-pocketic-cleanup.py` regressions run as part of the
+release guard checks.
 
 ### Install-Code Rate Limiting
 

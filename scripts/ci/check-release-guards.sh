@@ -344,3 +344,5 @@ ci_block="$(awk '
 expected_ci_block="$(printf '\t+@set -e; for target in $(CI_TARGETS); do \\\n\t\t$(MAKE) --no-print-directory "$$target"; \\\n\tdone')"
 [[ "${ci_block}" == "${expected_ci_block}" ]] \
   || fail "ci is not the guarded CI_TARGETS-only recipe"
+
+PYTHONDONTWRITEBYTECODE=1 python3 "${repo_root}/scripts/ci/test-release-pocketic-cleanup.py"

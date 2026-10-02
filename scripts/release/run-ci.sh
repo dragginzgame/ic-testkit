@@ -20,7 +20,10 @@ cleanup() {
   if [[ "${ci_status}" -ne 0 ]]; then
     echo "Release CI failed; preserving Cargo artifacts for diagnosis." >&2
   fi
-  if ! rm -rf -- "${ci_tmp_dir}"; then
+  if ! python3 "${repo_root}/scripts/release/stop-owned-pocketic-servers.py" "${ci_tmp_dir}"; then
+    echo "error: preserving release CI temporary directory ${ci_tmp_dir} after server cleanup failure" >&2
+    cleanup_status=1
+  elif ! rm -rf -- "${ci_tmp_dir}"; then
     echo "error: failed to remove release CI temporary directory ${ci_tmp_dir}" >&2
     cleanup_status=1
   fi

@@ -1355,6 +1355,11 @@ succeeds:
 make publish
 ```
 
+Release CI cleanup uses Linux `/proc` and Python 3 with pidfd support to stop
+PocketIC servers whose port files belong to its private temporary directory
+before deleting that directory. If server cleanup fails, it retains the directory
+for diagnosis and reports failure while preserving any earlier CI failure.
+
 Publication requires a clean worktree and a matching `v<version>` tag at
 `HEAD`. Re-running `make publish` is safe when that version already exists on
 crates.io.

@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.4] - 2026-10-02 - Release cleanup and upstream PocketIC policy
+
+### Fixed
+
+- Stops release-owned PocketIC servers before deleting the release CI temporary
+  directory, preventing missing-socket panics during HTTP adapter teardown.
+  Ownership requires a port file inside that invocation's private directory;
+  Linux pidfds prevent signalling a reused PID. Failed cleanup retains the
+  directory, and an existing CI failure remains the returned status.
+
+### Changed
+
+- Removes the isolated PocketIC teardown patch and its development probe.
+  Instance teardown improvements are deferred to a future upstream release;
+  ic-testkit continues to use the unmodified registry dependency.
+
+### Testing
+
+- Adds seven process/socket regressions to the release guard checks, covering
+  shutdown ordering, external-server isolation, forced termination, escaping
+  paths and retained diagnostics on cleanup failure.
+
 ## [0.10.3] - 2026-10-02 - PocketIC teardown experiment
 
 ### Development

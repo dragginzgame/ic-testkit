@@ -6,6 +6,18 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.10.4
+
+The repository's release CI runner now stops invocation-owned PocketIC servers
+before removing its temporary directory. This prevents server HTTP adapter
+teardown from panicking on sockets already deleted by release cleanup. The
+published crate's runtime API and dependency selection are unchanged.
+
+The isolated PocketIC teardown patch and development probe are removed.
+Instance teardown improvements will wait for a future upstream release; the
+repository does not maintain a patched PocketIC client. Seven targeted
+process/socket regressions cover the repository's release cleanup behavior.
+
 ## 0.10.3
 
 The repository includes an isolated PocketIC 16.0.0 upstream teardown proposal
@@ -15,9 +27,8 @@ retry, bounded best-effort drop and borrowed gateway cleanup.
 
 This is a development experiment. The published crate still uses the registry
 PocketIC dependency and adds no production shutdown API or teardown fix.
-Persistent-state handoff requires upstream review before adoption; the original
-Busy/tick cause remains unproven. See the repository's `POCKET-IC.md` for the
-proposal and probe instructions.
+The original Busy/tick cause remains unproven. The experiment was subsequently
+removed in 0.10.4 in favor of waiting for an upstream release.
 
 ## 0.10.2
 
