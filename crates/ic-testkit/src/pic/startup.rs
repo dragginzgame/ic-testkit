@@ -127,6 +127,10 @@ pub trait PocketIcBuilderExt {
     /// Managed server startup detects child exit while awaiting the port file,
     /// terminates the child on timeout, and captures bounded stdout/stderr.
     /// Instance creation is also bounded. Upstream panics remain structured.
+    ///
+    /// This deadline covers construction only. Dropping the returned instance
+    /// uses PocketIC's synchronous HTTP deletion, which has no request deadline
+    /// in PocketIC 16. An operation's maximum request time does not bound drop.
     fn try_build(self, config: PocketIcStartupConfig) -> Result<PocketIc, PocketIcStartupError>;
 }
 

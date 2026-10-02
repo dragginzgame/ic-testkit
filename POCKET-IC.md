@@ -104,15 +104,51 @@ ic-testkit should delegate or remove its process-owning extension.
 Some PocketIC lifecycle and observation operations still panic on failure.
 ic-testkit consequently catches panics around canister installation, calls,
 snapshots, cached-baseline restoration, and best-effort diagnostics. It also
-recognizes a small set of dead-instance transport message fragments so a stale
-cached baseline can be rebuilt and contextual call errors can preserve their
-transport classification.
+recognizes maintained reqwest request-error shapes with an instance URL and
+specific transport sources so a stale cached baseline can be rebuilt and
+contextual call errors can preserve their transport classification. The public
+classifier recognizes testkit call transport kinds directly. Bare I/O errors
+and generic application or quoted transport text do not qualify. Message
+matching remains a heuristic for PocketIC-originating errors, not a liveness
+proof.
 
 This is a temporary upstream limitation, not an error model ic-testkit wants to
 own. Result-returning upstream lifecycle, call, snapshot, status, and log APIs
 should expose structured transport and dead-instance variants. Once those
 variants cover the operations ic-testkit uses, remove `pic/transport.rs`, the
 corresponding `catch_unwind` adapters, and all transport-message matching.
+
+### Bounded Instance Teardown
+
+PocketIC 16's synchronous `PocketIc::drop` waits for its asynchronous
+`do_drop`, which sends HTTP DELETE to the instance URL with a reqwest client
+that has no request timeout. It does not check the response status. The
+operation-level `max_request_time_ms` retry budget is not applied to this
+deletion, and the ic-testkit construction deadline ends when startup returns.
+Catching a panic around drop does not bound a blocked HTTP request.
+
+`tests/pocket_ic_teardown.rs` provides a controlled reproduction against a
+synthetic loopback HTTP peer. An isolated child constructs an instance through
+bounded startup with a one-millisecond operation budget, then drops it. The
+parent receives DELETE, observes that the child is still pending, acknowledges
+the request, and verifies completion. A parent-owned kill/reap guard and bounded
+socket/process waits contain fixture failures. The ordering assertion has no
+elapsed-time threshold. It illustrates the deletion wait; it does not reproduce
+the cause of a real server's earlier Busy/tick timeout.
+
+Run it without a PocketIC binary or download:
+
+```bash
+cargo test -p ic-testkit --locked --test pocket_ic_teardown \
+  instance_drop_waits_for_the_deletion_response -- --exact --nocapture
+```
+
+Upstream should provide explicit fallible instance shutdown with a deletion
+deadline and acknowledgement, and a bounded destructor policy. The caller's
+server ownership must remain explicit: timing out one instance must not kill a
+shared or externally owned server. This crate continues to return the upstream
+instance directly; it does not add a parallel simulator wrapper or treat a
+detached drop thread as successful cleanup.
 
 ### Install-Code Rate Limiting
 

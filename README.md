@@ -6,7 +6,7 @@
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/d/ic-testkit.svg" alt="Downloads"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
-  <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.96.0-orange.svg" alt="Internal Rust"></a>
+  <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.99.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-16.0-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
@@ -527,8 +527,12 @@ Recipes that wrap PocketIC's currently unstructured transport failures can use
 `is_dead_pocket_ic_transport_error` in `classify_failure`, returning
 `RebuildReason::DeadPocketIcTransport` when it matches and
 `stage.default_rebuild_reason()` otherwise. The classifier searches the error
-source chain; it remains a conservative message boundary until PocketIC
-provides a structured transport error.
+source chain and recognizes testkit transport error kinds directly. For
+unstructured errors it requires a maintained reqwest error shape, an instance
+URL and a recognized transport source. Generic `channel closed` or
+`ConnectionRefused` text and bare I/O errors do not qualify. Use it only for
+errors originating in PocketIC operations; it is a heuristic, not proof that
+an instance or server has died.
 
 This is still baseline reuse, not complete simulator rollback. Recipes must
 honestly account for time, extra canisters, pending messages, subnet state,
@@ -1298,7 +1302,7 @@ rustdoc.
 ## Toolchains and checks
 
 - Published MSRV: Rust 1.88
-- Repository toolchain: Rust 1.96
+- Repository toolchain: Rust 1.99
 - PocketIC client/server line: 16
 
 Run the ordinary checks with:

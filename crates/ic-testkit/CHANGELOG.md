@@ -6,6 +6,24 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.10.2
+
+The repository and CI now use Rust 1.99.0. The published MSRV remains Rust
+1.88.0.
+
+Transport classification now requires a maintained reqwest error shape with a
+PocketIC instance URL and recognized transport source, or a structured testkit
+call transport kind. Generic `channel closed` / `ConnectionRefused` application
+text, quoted error variants and bare I/O errors do not qualify. Use the public
+classifier only for PocketIC-originating errors; it remains a heuristic rather
+than proof of a dead instance. Unrelated call panics retain their original
+payload.
+
+Heartbeat tests now use event coordination. A synthetic HTTP/subprocess test
+demonstrates that PocketIC 16's instance destructor waits for DELETE, independently
+of the construction deadline and operation budget. This records an upstream
+limitation; no bounded teardown API or simulator wrapper is added.
+
 ## 0.10.1
 
 `PocketIcManagedServer::process_id()` exposes the owned server child's OS PID

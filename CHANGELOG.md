@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-10-02 - Transport classification and deterministic progress tests
+
+### Changed
+
+- Updates the pinned internal Rust toolchain and CI from 1.96.0 to 1.99.0.
+  The published MSRV remains Rust 1.88.0.
+- Keeps the prepared-input reuse counter compatible with the MSRV while
+  avoiding Rust 1.99's deprecated atomic `fetch_update` method.
+
+### Fixed
+
+- Narrows unstructured PocketIC transport classification to maintained reqwest
+  error shapes with an instance URL and recognized transport source. Generic
+  application messages, quoted variant names and bare I/O errors no longer
+  justify dead-transport recovery. Contextual testkit call errors are recognized
+  through their structured transport kind. Unrelated call panics resume with
+  their original payload.
+
+### Testing
+
+- Coordinates heartbeat and observer-unwind tests through channels instead of
+  worker sleeps. Workers remain blocked until the relevant heartbeat or
+  observer unwinding; timeouts are deadlock escapes rather than timing assertions.
+- Adds positive transport controls, negative application/quoted-text controls,
+  original-payload call-boundary coverage and a real refused HTTP request against
+  a synthetic peer.
+- Adds an isolated-process reproduction of PocketIC 16's synchronous deletion
+  wait with parent-owned kill/reap cleanup, explicit HTTP barriers and bounded
+  fixture waits. This does not reproduce the original Busy/tick cause or fix
+  upstream teardown.
+
+### Documentation
+
+- Clarifies the classifier's heuristic limits and the distinction between
+  bounded construction, operation budgets and upstream instance teardown.
+
 ## [0.10.1] - 2026-09-27 - Managed server process identity
 
 ### Added

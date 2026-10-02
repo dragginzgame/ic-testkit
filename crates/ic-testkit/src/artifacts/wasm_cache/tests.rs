@@ -684,15 +684,29 @@ fn strict_integrated_maintenance_propagates_failure() {
 
 #[test]
 fn observed_phase_emits_phase_aware_heartbeats() {
+    let (release, released) = mpsc::channel();
     let mut events = Vec::new();
     let value = {
-        let mut observer = |event| events.push(event);
+        let mut observer = |event| {
+            if matches!(
+                event,
+                WasmBuildProgressEvent::Heartbeat {
+                    phase: WasmBuildProgressPhase::ContentHashing,
+                    ..
+                }
+            ) {
+                let _ = release.send(());
+            }
+            events.push(event);
+        };
         let mut progress = ProgressReporter::observed(
             WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(5)),
             &mut observer,
         );
-        progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
-            thread::sleep(Duration::from_millis(25));
+        progress.run_phase(WasmBuildProgressPhase::ContentHashing, move || {
+            released
+                .recv_timeout(Duration::from_secs(10))
+                .expect("observer must release the operation on its heartbeat");
             42
         })
     };
@@ -702,28 +716,51 @@ fn observed_phase_emits_phase_aware_heartbeats() {
         event,
         WasmBuildProgressEvent::Heartbeat {
             phase: WasmBuildProgressPhase::ContentHashing,
-            elapsed,
-        } if *elapsed >= Duration::from_millis(5)
+            ..
+        }
     )));
 }
 
 #[test]
 fn observer_panic_joins_active_phase_worker() {
+    let (release, released) = mpsc::channel::<()>();
+    let mut release = Some(release);
     let completed = Arc::new(AtomicBool::new(false));
     let worker_completed = Arc::clone(&completed);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut observer = |_| panic!("synthetic observer panic");
+        let mut observer = |event| {
+            if matches!(
+                event,
+                WasmBuildProgressEvent::Heartbeat {
+                    phase: WasmBuildProgressPhase::InputDiscovery,
+                    ..
+                }
+            ) {
+                // Unwinding this callback releases the worker before scope cleanup
+                // joins it; it never needs a callback after the observer panics.
+                let _release_on_unwind = release.take().expect("one observer panic");
+                panic!("synthetic observer panic");
+            }
+        };
         let mut progress = ProgressReporter::observed(
             WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(5)),
             &mut observer,
         );
         progress.run_phase(WasmBuildProgressPhase::InputDiscovery, move || {
-            thread::sleep(Duration::from_millis(25));
+            assert_eq!(
+                released.recv_timeout(Duration::from_secs(10)),
+                Err(mpsc::RecvTimeoutError::Disconnected),
+                "observer unwinding must release the active worker"
+            );
             worker_completed.store(true, Ordering::SeqCst);
         });
     }));
 
-    assert!(result.is_err());
+    let panic = result.expect_err("observer must panic");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"synthetic observer panic")
+    );
     assert!(completed.load(Ordering::SeqCst));
 }
 

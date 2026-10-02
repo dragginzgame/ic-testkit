@@ -2,7 +2,7 @@ name: CI
 
 env:
   IC_TESTKIT_MSRV: 1.88.0
-  IC_TESTKIT_INTERNAL_TOOLCHAIN: 1.96.0
+  IC_TESTKIT_INTERNAL_TOOLCHAIN: 1.99.0
 
 permissions:
   contents: read

@@ -1507,11 +1507,18 @@ impl WasmBuildInputSnapshotState {
             .snapshots
             .iter()
             .find(|(candidate, _)| candidate == spec)?;
-        let _ = self
-            .reader_reuses
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
-                Some(current.saturating_add(1))
-            });
+        let mut current = self.reader_reuses.load(Ordering::Relaxed);
+        loop {
+            match self.reader_reuses.compare_exchange_weak(
+                current,
+                current.saturating_add(1),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(observed) => current = observed,
+            }
+        }
         Some(snapshot.clone())
     }
 

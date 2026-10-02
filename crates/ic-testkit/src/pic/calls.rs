@@ -331,11 +331,39 @@ mod tests {
             method: "get",
         };
         let error = run_raw_call(context, || -> Result<Vec<u8>, pocket_ic::RejectResponse> {
-            panic!("transport failed: ConnectionRefused");
+            panic!("HTTP failure: reqwest::Error {{ kind: Request, url: \"http://127.0.0.1:1234/instances/0/update/execute_ingress_message\", source: ConnectError(\"tcp connect error\", Os {{ code: 111, kind: ConnectionRefused, message: \"Connection refused\" }}) }}");
         })
         .unwrap_err();
 
         assert_eq!(error.kind(), crate::pic::CandidCallErrorKind::Transport);
         assert!(error.reject_response().is_none());
+    }
+
+    #[test]
+    fn unrelated_panics_resume_with_the_original_payload() {
+        for message in [
+            "application worker channel closed",
+            "fixture expected ConnectionRefused but observed another result",
+        ] {
+            let context = CallContext {
+                operation: "query_call",
+                canister_id: Principal::anonymous(),
+                caller: Principal::management_canister(),
+                method: "get",
+            };
+            let payload = message.to_owned();
+            let original_allocation = payload.as_ptr() as usize;
+            let result = std::panic::catch_unwind(|| {
+                run_raw_call(context, || -> Result<Vec<u8>, pocket_ic::RejectResponse> {
+                    std::panic::panic_any(payload);
+                })
+            });
+            let resumed = result
+                .expect_err("application panic must resume")
+                .downcast::<String>()
+                .expect("original panic type must be preserved");
+            assert_eq!(resumed.as_str(), message);
+            assert_eq!(resumed.as_ptr() as usize, original_allocation);
+        }
     }
 }
