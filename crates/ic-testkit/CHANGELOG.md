@@ -45,6 +45,11 @@ retains both failures.
 
 ### Simplification and verification
 
+The observed Cargo output/heartbeat test keeps its fixture running until the
+observer receives a heartbeat, with a bounded timeout. This removes a scheduling
+race caused by a fixed sleep under parallel test load; runtime heartbeat behavior
+is unchanged.
+
 Benchmark labels and comparison keys derive from one scope. Report writers and
 comparisons calculate averages from totals and runs, preserving CSV columns and
 named-`ALL` identity. Arithmetic overflow checks remain in place.

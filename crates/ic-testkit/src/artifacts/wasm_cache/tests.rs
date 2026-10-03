@@ -1004,15 +1004,43 @@ fn exact_cache_lock_wait_emits_phase_aware_heartbeats() {
 fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
     let root = unique_temp_directory("observed-cargo-progress");
     let cargo = root.join("observed-cargo.sh");
+    let release = root.join("release-cargo");
+    // Keep the producer alive until the observer actually sees a quiet interval.
+    // A fixed sleep can finish before output readers are scheduled under load.
     write_executable_script(
         &cargo,
-        "#!/bin/sh\nprintf 'observed-stdout'\nprintf 'observed-stderr' >&2\nsleep 0.05\n",
+        r#"#!/bin/sh
+set -eu
+printf 'observed-stdout'
+printf 'observed-stderr' >&2
+attempts=0
+while [ ! -f "$IC_TESTKIT_OBSERVED_CARGO_RELEASE" ]; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 1000 ]; then
+        printf 'heartbeat observer did not release Cargo fixture\n' >&2
+        exit 1
+    fi
+    sleep 0.01
+done
+"#,
     );
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
-        .with_cargo_program(&cargo);
+        .with_cargo_program(&cargo)
+        .with_extra_env([("IC_TESTKIT_OBSERVED_CARGO_RELEASE", release.as_os_str())]);
     let mut events = Vec::new();
     {
-        let mut observer = |event| events.push(event);
+        let mut observer = |event| {
+            if matches!(
+                &event,
+                WasmBuildProgressEvent::Heartbeat {
+                    phase: WasmBuildProgressPhase::CargoBuild,
+                    ..
+                }
+            ) {
+                fs::write(&release, b"released").expect("release Cargo on its observed heartbeat");
+            }
+            events.push(event);
+        };
         let mut progress = ProgressReporter::observed(
             WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_millis(10)),
             &mut observer,

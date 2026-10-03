@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Testing
 
+- Observed Cargo output/heartbeat coverage releases its fixture only after an
+  actual heartbeat, with a bounded timeout. This removes the fixed-sleep race
+  under parallel test load while preserving raw-output and exit-event assertions.
 - Verifies updated aggregate totals and run counts drive averages and comparisons,
   retaining named-`ALL` scope, arithmetic-overflow, and report-schema coverage.
 - Covers canister-set and cycle-policy restore mismatches with safe slot rebuilds
