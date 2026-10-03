@@ -2,6 +2,16 @@
 
 PocketIC-oriented test utilities for Internet Computer canister tests.
 
+```toml
+[dev-dependencies]
+ic-testkit = "0.10"
+```
+
+The published MSRV is Rust 1.88, and the selected PocketIC line is 16.
+Canisters using benchmark markers can add the crate under `[dependencies]`.
+`pocket_ic`, `pic`, and `artifacts` are host-only; `benchmark`, `performance`,
+and `Fake` are available on `wasm32` as well.
+
 This crate is the published Rust package in the `ic-testkit` workspace. It
 provides:
 
@@ -31,10 +41,12 @@ re-export instead of an expanding mirrored list.
 Most users should read the
 [repository README](https://github.com/dragginzgame/ic-testkit#readme) for
 setup, examples, local checks, and release notes.
+The [documentation index](https://github.com/dragginzgame/ic-testkit/blob/main/docs/README.md)
+links current usage guidance and historical design records.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
-the `0.10` retained-artifact migration, the `0.9` managed-server lifetime
-migration, and earlier hard-cut tables.
+the `0.11.0` API and report-schema cuts, the `0.10` retained-artifact migration,
+the `0.9` managed-server lifetime migration, and earlier hard-cut tables.
 
 The repository also includes a complete
 [multi-canister baseline recipe](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/multi_canister_baseline_pool.rs)

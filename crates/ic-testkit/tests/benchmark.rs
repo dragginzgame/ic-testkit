@@ -255,6 +255,60 @@ ICTK|benchmark:end|100|20|30|40
 }
 
 #[test]
+fn comparison_csv_distinguishes_named_all_suite_from_all_suites() {
+    let parse = parse_benchmark_events(
+        "ICTK|work:start|0|0|0|0\nICTK|work:end|100|20|30|40\n",
+        &BenchmarkParserConfig {
+            suite_derivation: SuiteDerivation::Fixed("ALL".into()),
+            ..BenchmarkParserConfig::default()
+        },
+    );
+    let spans = pair_benchmark_spans(&parse.events);
+    let aggregates = aggregate_benchmark_spans(&spans.spans);
+    let comparison = compare_benchmark_aggregates(&aggregates.rows, &aggregates.rows);
+    let root = unique_temp_dir("comparison-all-scope");
+    write_metadata(
+        &root,
+        "2026-05-24T162600Z",
+        "2026-05-24T162600Z-a1b2c3d-0001",
+        None,
+    );
+    let report = BenchmarkRunReport {
+        parse,
+        spans,
+        aggregates,
+        comparison: Some(comparison),
+        metadata: read_benchmark_run_metadata(root.join("metadata.json")).unwrap(),
+    };
+    write_benchmark_report_dir(&report, &root).expect("write comparison");
+    let csv = fs::read_to_string(root.join("comparison.csv")).unwrap();
+    assert!(csv.starts_with("scope,suite,span_label,"));
+    assert!(csv.lines().any(|row| row.starts_with("suite,ALL,work,")));
+    assert!(csv.lines().any(|row| row.starts_with("all,ALL,work,")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn previous_run_discovery_orders_five_digit_indices_numerically() {
+    let root = unique_temp_dir("previous-run-large-indices");
+    for index in [9999, 10000, 10002] {
+        let name = benchmark_run_directory_name("2026-05-24T162600Z", Some("a1b2c3d"), index);
+        let path = root.join(&name);
+        fs::create_dir_all(&path).unwrap();
+        write_metadata(&path, "2026-05-24T162600Z", &name, Some("suite"));
+    }
+    let previous =
+        find_latest_previous_run(&root, "2026-05-24T162600Z-a1b2c3d-10001", Some("suite"))
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        previous.file_name().unwrap(),
+        "2026-05-24T162600Z-a1b2c3d-10000"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn compares_current_average_against_previous_average() {
     let previous = aggregate_benchmark_spans(
         &pair_benchmark_spans(
@@ -385,6 +439,33 @@ fn run_directory_helpers_choose_next_index_for_commit_and_timestamp() {
     assert_eq!(next.run_index, 3);
     assert_eq!(next.git_commit_short_hash.as_deref(), Some("a1b2c3d"));
 
+    for index in [9999, 10000] {
+        fs::create_dir_all(root.join(benchmark_run_directory_name(
+            "2026-05-24T162600Z",
+            Some("a1b2c3d"),
+            index,
+        )))
+        .expect("create large-index directory");
+        assert_eq!(
+            next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d"))
+                .expect("next large index")
+                .run_index,
+            index + 1
+        );
+    }
+    fs::create_dir_all(root.join(benchmark_run_directory_name(
+        "2026-05-24T162600Z",
+        Some("a1b2c3d"),
+        u32::MAX,
+    )))
+    .expect("create final-index directory");
+    assert_eq!(
+        next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d"))
+            .expect_err("exhausted indices must not reuse a directory")
+            .kind(),
+        std::io::ErrorKind::InvalidData
+    );
+
     fs::remove_dir_all(root).expect("clean temp dir");
 }
 
@@ -397,6 +478,16 @@ fn run_directory_helper_uses_unknown_commit_segment_without_git_metadata() {
     assert_eq!(next.directory_name, "2026-05-24T162600Z-unknown-0001");
     assert_eq!(next.git_commit_hash, None);
     assert_eq!(next.git_commit_short_hash, None);
+
+    fs::create_dir_all(&next.path).expect("create first unknown-commit run");
+    let empty_commit = next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some(""))
+        .expect("empty commit uses the same unknown prefix");
+    assert_eq!(
+        empty_commit.directory_name,
+        "2026-05-24T162600Z-unknown-0002"
+    );
+    assert_eq!(empty_commit.git_commit_hash, None);
+    assert_eq!(empty_commit.git_commit_short_hash, None);
 
     fs::remove_dir_all(root).expect("clean temp dir");
 }

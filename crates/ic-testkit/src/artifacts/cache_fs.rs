@@ -2,13 +2,53 @@ use fs2::FileExt as _;
 use std::{
     fs::{self, File, OpenOptions},
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use super::digest::write_atomic;
+
+/// Resolve existing components through symlinks and normalize a missing suffix.
+/// Parent traversal can return from a missing suffix to existing components.
+pub(super) fn canonicalize_allow_missing(path: &Path) -> io::Result<PathBuf> {
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut resolved = PathBuf::new();
+    let mut missing_depth = 0_usize;
+    for component in absolute.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                let candidate = resolved.join(component.as_os_str());
+                if missing_depth == 0 && matches!(component, Component::Normal(_)) {
+                    match candidate.canonicalize() {
+                        Ok(canonical) => resolved = canonical,
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                            resolved = candidate;
+                            missing_depth = 1;
+                        }
+                        Err(error) => return Err(error),
+                    }
+                } else {
+                    resolved = candidate;
+                    if matches!(component, Component::Normal(_)) && missing_depth > 0 {
+                        missing_depth += 1;
+                    }
+                }
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+                missing_depth = missing_depth.saturating_sub(1);
+            }
+        }
+    }
+    Ok(resolved)
+}
 
 const CACHE_DIRECTORY_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
 # This file is a cache directory tag created by ic-testkit.\n\
@@ -653,4 +693,29 @@ fn remove_cache_entry(
     report.entries_removed += 1;
     report.bytes_removed = report.bytes_removed.saturating_add(entry.bytes);
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::canonicalize_allow_missing;
+    use crate::artifacts::test_support::unique_temp_directory;
+    use std::fs;
+
+    #[test]
+    fn missing_parent_traversal_resumes_existing_symlink_resolution() {
+        let root = unique_temp_directory("canonical-missing-parent");
+        let target = root.join("real");
+        fs::create_dir_all(&target).unwrap();
+        std::os::unix::fs::symlink(&target, root.join("alias")).unwrap();
+        let path = root.join("missing/../alias/generated/nested/../output");
+        assert_eq!(
+            canonicalize_allow_missing(&path).unwrap(),
+            target.canonicalize().unwrap().join("generated/output")
+        );
+        assert_eq!(
+            canonicalize_allow_missing(&root.join("alias/../other/output")).unwrap(),
+            root.canonicalize().unwrap().join("other/output")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }

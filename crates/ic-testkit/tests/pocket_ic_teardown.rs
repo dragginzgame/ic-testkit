@@ -3,8 +3,9 @@
 
 use candid::Principal;
 use ic_testkit::pic::{
-    CandidCallErrorKind, CandidCallExt, PocketIc, PocketIcBuilder, PocketIcBuilderExt,
-    PocketIcStartupConfig, is_dead_pocket_ic_transport_error,
+    CandidCallErrorKind, CandidCallExt, CanisterInstallPhase, InstallSpec, PocketIc,
+    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig, StandaloneCanisterFixture,
+    is_dead_pocket_ic_transport_error,
 };
 use ic_testkit::pocket_ic::common::rest::{CreateInstanceResponse, RawCanisterId, Topology};
 use std::{
@@ -47,9 +48,18 @@ fn instance_drop_probe() {
 
 #[test]
 fn refused_instance_request_is_classified_at_the_call_boundary() {
+    run_refused_operation_probe("refused_instance_request_probe");
+}
+
+#[test]
+fn refused_creation_returns_the_standalone_instance() {
+    run_refused_operation_probe("refused_creation_probe");
+}
+
+fn run_refused_operation_probe(name: &str) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind synthetic PocketIC peer");
     listener.set_nonblocking(true).expect("bound accept wait");
-    let mut probe = spawn_probe(&listener, "refused_instance_request_probe");
+    let mut probe = spawn_probe(&listener, name);
     create_instance(&listener);
     // The probe waits on stdin so its first call starts after the peer is gone.
     drop(listener);
@@ -75,6 +85,33 @@ fn refused_instance_request_probe() {
         .expect_err("peer is gone");
     assert_eq!(error.kind(), CandidCallErrorKind::Transport);
     assert!(is_dead_pocket_ic_transport_error(&error));
+    drop(pic);
+}
+
+#[test]
+#[ignore = "subprocess probe selected explicitly by the parent install test"]
+fn refused_creation_probe() {
+    let pic = synthetic_instance();
+    let instance_id = pic.instance_id();
+    std::io::stdin()
+        .read_exact(&mut [0])
+        .expect("parent releases refused creation");
+    let error = StandaloneCanisterFixture::try_install(
+        pic,
+        InstallSpec::new(vec![], vec![], 1).label("unreachable-fixture"),
+    )
+    .err()
+    .expect("creation should return an error");
+    assert_eq!(
+        error.install_error().phase(),
+        CanisterInstallPhase::CreateCanister
+    );
+    assert_eq!(error.install_error().canister_id(), None);
+    assert_eq!(error.install_error().label(), Some("unreachable-fixture"));
+    assert!(is_dead_pocket_ic_transport_error(&error));
+    let (pic, install_error) = error.into_parts();
+    assert_eq!(pic.instance_id(), instance_id);
+    assert!(install_error.operation_error().is_transport());
     drop(pic);
 }
 

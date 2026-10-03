@@ -3,7 +3,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, File},
     io,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{Duration, Instant},
 };
@@ -13,10 +13,11 @@ use crate::timing::saturating_add_optional_duration;
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
-        LAST_USED_FILE, RetainedCacheEntry, directory_logical_size, ensure_cache_directory_tag,
-        is_sha256_directory, lock_cache_file, perform_scheduled_cache_maintenance,
-        prune_direct_child_directories, record_cache_entry_use, remove_path_if_present,
-        remove_unretained_entry, try_lock_cache_file,
+        LAST_USED_FILE, RetainedCacheEntry, canonicalize_allow_missing, directory_logical_size,
+        ensure_cache_directory_tag, is_sha256_directory, lock_cache_file,
+        perform_scheduled_cache_maintenance, prune_direct_child_directories,
+        record_cache_entry_use, remove_path_if_present, remove_unretained_entry,
+        try_lock_cache_file,
     },
     digest::{
         InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
@@ -150,7 +151,7 @@ pub enum ArtifactCacheError {
         after: InputDigest,
     },
     /// Inputs changed while the caller owned a build transaction.
-    InputsChangedDuringBuild {
+    InputsChangedDuringAcquisition {
         before: InputDigest,
         after: InputDigest,
     },
@@ -286,6 +287,9 @@ impl ArtifactCacheSpec {
     }
 
     /// Set OS-native environment values that contribute to the content key.
+    ///
+    /// This records identity only. The caller must apply these values to the
+    /// external command executed on a cache miss.
     #[must_use]
     pub fn with_environment<I, K, V>(mut self, environment: I) -> Self
     where
@@ -302,6 +306,9 @@ impl ArtifactCacheSpec {
     }
 
     /// Record OS-native environment names whose unset state contributes to the content key.
+    ///
+    /// The caller must also remove these names from the external command's
+    /// environment on a cache miss.
     #[must_use]
     pub fn with_unset_environment<I, S>(mut self, names: I) -> Self
     where
@@ -741,7 +748,7 @@ impl ArtifactBuildTransaction {
             .input_capture
             .saturating_add(capture_started.elapsed());
         if verified.input_digest != self.resolved.input_digest {
-            return Err(ArtifactCacheError::InputsChangedDuringBuild {
+            return Err(ArtifactCacheError::InputsChangedDuringAcquisition {
                 before: self.resolved.input_digest,
                 after: verified.input_digest,
             });
@@ -1185,44 +1192,6 @@ fn canonicalize_path(path: &Path, operation: &'static str) -> Result<PathBuf, Ar
             path: path.to_owned(),
             source,
         })
-}
-
-fn canonicalize_allow_missing(path: &Path) -> io::Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut resolved = PathBuf::new();
-    let mut missing_depth = 0_usize;
-    for component in absolute.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                let candidate = resolved.join(component.as_os_str());
-                if missing_depth == 0 && matches!(component, Component::Normal(_)) {
-                    match candidate.canonicalize() {
-                        Ok(canonical) => resolved = canonical,
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                            resolved = candidate;
-                            missing_depth = 1;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                } else {
-                    resolved = candidate;
-                    if matches!(component, Component::Normal(_)) && missing_depth > 0 {
-                        missing_depth += 1;
-                    }
-                }
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                resolved.pop();
-                missing_depth = missing_depth.saturating_sub(1);
-            }
-        }
-    }
-    Ok(resolved)
 }
 
 fn validate_identifier(kind: &str, value: &str) -> Result<(), ArtifactCacheError> {
@@ -1904,7 +1873,7 @@ impl std::fmt::Display for ArtifactCacheError {
                 formatter,
                 "artifact inputs repeatedly changed during cache preparation: {before} -> {after}",
             ),
-            Self::InputsChangedDuringBuild { before, after } => write!(
+            Self::InputsChangedDuringAcquisition { before, after } => write!(
                 formatter,
                 "artifact inputs changed while the caller was building: {before} -> {after}",
             ),

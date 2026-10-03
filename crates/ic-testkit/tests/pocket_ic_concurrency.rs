@@ -1,7 +1,7 @@
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicUsize, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError, Sender},
     },
@@ -11,18 +11,16 @@ use std::{
 
 use candid::Principal;
 use ic_testkit::pic::{
-    CachedPocketIcBaseline, CachedStandaloneCanisterFixturePool, InstallSpec, PocketIc,
-    PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupError, StandaloneCanisterFixture,
+    CachedStandaloneCanisterFixturePool, InstallSpec, PocketIc, PocketIcBuilder,
+    PocketIcStartupConfig, PocketIcStartupError, StandaloneCanisterFixture,
     StandaloneFixturePoolError, StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason,
-    StandaloneFixturePoolStage, prelude::*, restore_or_rebuild_cached_pocket_ic_baseline,
+    StandaloneFixturePoolStage, prelude::*,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
 
-static BASELINE_A: Mutex<Option<CachedPocketIcBaseline<()>>> = Mutex::new(None);
-static BASELINE_B: Mutex<Option<CachedPocketIcBaseline<()>>> = Mutex::new(None);
 static STANDALONE_RESTORE_POOL: CachedStandaloneCanisterFixturePool<1> =
     CachedStandaloneCanisterFixturePool::new();
 static STANDALONE_OVERLAP_POOL: CachedStandaloneCanisterFixturePool<2> =
@@ -107,61 +105,6 @@ fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
     pocket_ic
         .canister_status(canister_id, None)
         .expect("PocketIC returned by into_parts should remain usable");
-}
-
-#[test]
-fn cached_baseline_guards_are_scoped_to_their_own_slots() {
-    let (baseline_a, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
-        &BASELINE_A,
-        build_empty_cached_baseline,
-        |_| {},
-    );
-    assert!(!cache_hit, "baseline A should be built for this test");
-
-    let (ready_tx, ready_rx) = mpsc::channel();
-    let (release_tx, release_rx) = mpsc::channel::<()>();
-    let worker = thread::spawn(move || {
-        let fresh = PocketIc::new();
-        let canister_id = fresh.create_canister();
-        fresh
-            .canister_status(canister_id, None)
-            .expect("fresh instance should remain usable beside baseline A");
-
-        let (_baseline_b, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
-            &BASELINE_B,
-            build_empty_cached_baseline,
-            |_| {},
-        );
-        assert!(!cache_hit, "baseline B should have an independent slot");
-
-        if ready_tx.send(()).is_ok() {
-            let _ = release_rx.recv();
-        }
-    });
-
-    let result = ready_rx
-        .recv_timeout(READY_TIMEOUT)
-        .map_err(|err| format!("fresh instance or independent baseline was blocked: {err}"));
-
-    // Release the retained baseline and cancellation channel before joining so
-    // an accidentally introduced shared lock can unwind instead of hanging.
-    drop(baseline_a);
-    drop(release_tx);
-    let join_result = worker.join();
-
-    BASELINE_A
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-    BASELINE_B
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .take();
-
-    if let Err(message) = result {
-        panic!("{message}");
-    }
-    join_result.expect("cached-baseline concurrency worker should exit cleanly");
 }
 
 #[test]
@@ -408,16 +351,6 @@ fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
     assert!(timings.stale_teardown().is_some());
     assert!(timings.build().is_some());
     drop(fixture);
-}
-
-fn build_empty_cached_baseline() -> CachedPocketIcBaseline<()> {
-    CachedPocketIcBaseline::capture(
-        PocketIc::new(),
-        Principal::anonymous(),
-        std::iter::empty::<Principal>(),
-        (),
-    )
-    .expect("empty cached baseline should capture")
 }
 
 fn build_empty_standalone_fixture() -> StandaloneCanisterFixture {

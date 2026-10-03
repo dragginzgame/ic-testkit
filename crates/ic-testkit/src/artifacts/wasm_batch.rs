@@ -1,5 +1,7 @@
+use crate::batch::{BatchLabelError, validate_labels};
+
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     marker::PhantomData,
     path::PathBuf,
     time::{Duration, Instant},
@@ -874,26 +876,7 @@ fn build_wasm_canisters_cached_batch_internal(
     config: WasmBuildBatchConfig,
     reuse: Option<WasmBuildInputReuse<'_>>,
 ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-    validate_batch_labels(specs)?;
-    validate_input_reuse(specs, reuse.as_ref())?;
-    let build_specs = specs
-        .iter()
-        .map(|labeled| labeled.spec.clone())
-        .collect::<Vec<_>>();
-    let mut resolver = match reuse {
-        None => WasmBuildBatchInputResolver::new(&build_specs),
-        Some(WasmBuildInputReuse::Session(session)) => {
-            WasmBuildBatchInputResolver::with_session(&build_specs, session)
-        }
-        Some(WasmBuildInputReuse::Snapshot(snapshot)) => {
-            WasmBuildBatchInputResolver::with_snapshot(&build_specs, snapshot)
-        }
-    };
-    let mut report = build_wasm_batch(specs, config, |spec, index| {
-        build_wasm_canisters_cached_in_batch(spec, index, &mut resolver)
-    });
-    report.input_resolution = resolver.metrics();
-    Ok(report)
+    run_wasm_batch(specs, config, reuse, None)
 }
 
 /// Build an independent Wasm batch while forwarding structured progress.
@@ -984,6 +967,23 @@ fn build_wasm_canisters_cached_batch_with_progress_internal<F>(
 where
     F: FnMut(WasmBuildBatchProgressEvent),
 {
+    run_wasm_batch(
+        specs,
+        batch_config,
+        reuse,
+        Some((progress_config, &mut observer)),
+    )
+}
+
+fn run_wasm_batch(
+    specs: &[LabeledWasmBuildSpec],
+    batch_config: WasmBuildBatchConfig,
+    reuse: Option<WasmBuildInputReuse<'_>>,
+    mut observation: Option<(
+        WasmBuildProgressConfig,
+        &mut dyn FnMut(WasmBuildBatchProgressEvent),
+    )>,
+) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
     validate_batch_labels(specs)?;
     validate_input_reuse(specs, reuse.as_ref())?;
     let count = specs.len();
@@ -1001,6 +1001,9 @@ where
         }
     };
     let mut report = build_wasm_batch(specs, batch_config, |spec, index| {
+        let Some((progress_config, observer)) = observation.as_mut() else {
+            return build_wasm_canisters_cached_in_batch(spec, index, &mut resolver);
+        };
         let label = specs[index].label.clone();
         observer(WasmBuildBatchProgressEvent::BuildStarted {
             index,
@@ -1011,7 +1014,7 @@ where
             spec,
             index,
             &mut resolver,
-            progress_config,
+            *progress_config,
             |event| {
                 observer(WasmBuildBatchProgressEvent::BuildProgress {
                     index,
@@ -1090,21 +1093,19 @@ where
 fn validate_batch_labels(
     specs: &[LabeledWasmBuildSpec],
 ) -> Result<(), WasmBuildBatchContractError> {
-    let mut labels = HashMap::with_capacity(specs.len());
-    for (index, labeled) in specs.iter().enumerate() {
-        if labeled.label.is_empty() {
-            return Err(WasmBuildBatchContractError::EmptyLabel { index });
-        }
-        if let Some(first_index) = labels.get(labeled.label.as_str()) {
-            return Err(WasmBuildBatchContractError::DuplicateLabel {
-                label: labeled.label.clone(),
-                first_index: *first_index,
-                duplicate_index: index,
-            });
-        }
-        labels.insert(labeled.label.as_str(), index);
-    }
-    Ok(())
+    validate_labels(specs.iter().map(|labeled| labeled.label.as_str())).map_err(|error| match error
+    {
+        BatchLabelError::Empty { index } => WasmBuildBatchContractError::EmptyLabel { index },
+        BatchLabelError::Duplicate {
+            label,
+            first_index,
+            duplicate_index,
+        } => WasmBuildBatchContractError::DuplicateLabel {
+            label,
+            first_index,
+            duplicate_index,
+        },
+    })
 }
 
 fn validate_input_reuse(

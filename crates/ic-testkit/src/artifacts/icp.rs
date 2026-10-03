@@ -5,6 +5,10 @@ use super::digest::{InputDigest, digest_labeled_paths, write_atomic};
 const WATCHED_INPUT_STAMP_VERSION: &str = "ic-testkit-watched-input-v1";
 
 /// Exact content digest captured across a set of watched input trees.
+///
+/// This lightweight freshness helper records input identity only. It does not
+/// lock producers, validate output content, or retain artifact paths. Use
+/// [`super::ArtifactCacheSpec`] for transactional publication and retained outputs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WatchedInputSnapshot {
     digest: InputDigest,
@@ -36,6 +40,8 @@ impl WatchedInputSnapshot {
     /// An existing artifact without a stamp is not considered fresh. Call
     /// [`mark_artifact_fresh`](Self::mark_artifact_fresh) only after the
     /// artifact has been produced successfully from this snapshot.
+    /// Output bytes are not hashed; a replaced nonempty artifact can still
+    /// carry the same matching input stamp.
     pub fn artifact_is_fresh(self, artifact_path: &Path) -> io::Result<bool> {
         let metadata = fs::metadata(artifact_path)?;
         if !metadata.is_file() || metadata.len() == 0 {
@@ -50,6 +56,10 @@ impl WatchedInputSnapshot {
     }
 
     /// Atomically record that an existing artifact was built from this input snapshot.
+    ///
+    /// The caller must coordinate producers and verify that inputs have not
+    /// changed during the build before stamping. This checks only that the
+    /// artifact is a nonempty regular file, not that its bytes match the build.
     pub fn mark_artifact_fresh(self, artifact_path: &Path) -> io::Result<()> {
         let metadata = fs::metadata(artifact_path)?;
         if !metadata.is_file() || metadata.len() == 0 {

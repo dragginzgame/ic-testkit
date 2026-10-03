@@ -289,7 +289,7 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
                     },
                 ))
             }
-            Err(error) if snapshot_error_is_dead_instance_transport(&error) => {
+            Err(error) if transport::is_dead_pocket_ic_transport_error(&error) => {
                 Self::discard_stale_slot(&mut slot, &mut timings);
                 let baseline = match Self::build_slot(build, &mut timings) {
                     Ok(baseline) => baseline,
@@ -529,14 +529,6 @@ impl std::error::Error for StandaloneFixturePoolError {
             Self::RecoveryFailed { original, .. } => Some(original.as_ref()),
         }
     }
-}
-
-fn snapshot_error_is_dead_instance_transport(error: &ControllerSnapshotError) -> bool {
-    matches!(
-        error,
-        ControllerSnapshotError::RestorePanicked { message, .. }
-            if transport::is_dead_instance_transport_error(message)
-    )
 }
 
 #[cfg(test)]

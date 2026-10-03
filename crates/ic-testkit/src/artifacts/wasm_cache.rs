@@ -21,7 +21,8 @@ use crate::timing::saturating_add_optional_duration;
 use super::{
     cache_fs::{
         ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport, CacheFsError,
-        RetainedCacheEntry, cache_entry_last_used, cache_maintenance_due, directory_logical_size,
+        RetainedCacheEntry, cache_entry_last_used, cache_maintenance_due,
+        canonicalize_allow_missing, directory_logical_size,
         ensure_cache_directory_tag as ensure_cache_tag, is_sha256_directory, lock_cache_file,
         lock_cache_file_with_wait_observer, perform_scheduled_cache_maintenance,
         prune_direct_child_directories, record_cache_entry_use as record_entry_use,
@@ -215,7 +216,8 @@ pub(super) struct WasmBuildBatchInputResolver<'a, 'session> {
     specs: &'a [WasmBuildSpec],
     groups: Vec<BatchResolutionGroup>,
     group_by_index: Vec<usize>,
-    resolved: Vec<Option<Result<ResolvedCargoBuildInputs, WasmBuildError>>>,
+    resolved:
+        Vec<Option<Result<ResolvedCargoBuildInputs, (WasmBuildFailurePhase, WasmBuildError)>>>,
     session: Option<&'session mut WasmBuildSessionState>,
     snapshot: Option<&'session WasmBuildInputSnapshotState>,
     metrics: WasmBuildBatchInputMetrics,
@@ -792,7 +794,9 @@ const fn classify_unobserved_failure(error: &WasmBuildError) -> WasmBuildFailure
         WasmBuildError::InvalidMetadata { .. } => WasmBuildFailurePhase::CargoMetadata,
         WasmBuildError::InvalidCargoConfiguration { .. } => WasmBuildFailurePhase::InputDiscovery,
         WasmBuildError::MissingArtifacts { .. } => WasmBuildFailurePhase::ArtifactPublication,
-        WasmBuildError::InputsChangedDuringBuild { .. } => WasmBuildFailurePhase::ContentHashing,
+        WasmBuildError::InputsChangedDuringAcquisition { .. } => {
+            WasmBuildFailurePhase::ContentHashing
+        }
         WasmBuildError::PreparedInputSnapshotInvalidated => {
             WasmBuildFailurePhase::ArtifactPublication
         }
@@ -846,8 +850,8 @@ pub enum WasmBuildError {
     InvalidCargoConfiguration { path: PathBuf, message: String },
     /// Cargo succeeded without producing every declared Wasm artifact.
     MissingArtifacts { paths: Vec<PathBuf> },
-    /// Declared inputs changed while Cargo was building.
-    InputsChangedDuringBuild {
+    /// Declared inputs changed while acquiring or building Wasm artifacts.
+    InputsChangedDuringAcquisition {
         before: InputDigest,
         after: InputDigest,
     },
@@ -1670,6 +1674,10 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         self.resolved[index]
             .take()
             .expect("resolved batch input must be populated")
+            .map_err(|(phase, error)| {
+                progress.begin_phase(phase);
+                error
+            })
     }
 
     fn resolve_group(
@@ -1706,24 +1714,26 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             discovered
                 .into_iter()
                 .map(|(index, inputs, exclusions)| {
-                    let (input_digest, validation_digest) = digest_resolved_local_inputs(
+                    let result = digest_resolved_local_inputs(
                         &inputs,
                         &exclusions,
                         digest_cache,
                         &workspace_root,
                         "hash batched Wasm build inputs",
                         "hash batched semantic Wasm build inputs",
-                    )?;
-                    Ok::<_, WasmBuildError>((
-                        index,
-                        inputs.validation_inputs,
-                        exclusions,
-                        input_digest,
-                        validation_digest,
-                    ))
+                    )
+                    .map(|(input_digest, validation_digest)| {
+                        (
+                            inputs.validation_inputs,
+                            exclusions,
+                            input_digest,
+                            validation_digest,
+                        )
+                    });
+                    (index, result)
                 })
-                .collect::<Result<Vec<_>, _>>()
-        })?;
+                .collect::<Vec<_>>()
+        });
         let content_hashing = hashing_started.elapsed();
         let timings = WasmInputResolutionTimings {
             tool_identity,
@@ -1732,17 +1742,26 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             content_hashing,
             total: total_started.elapsed(),
         };
-        let resolved_count = resolved_inputs.len();
-        if resolved_count > 0 {
-            self.metrics.runs += 1;
-            self.metrics.reuses += resolved_count.saturating_sub(1);
-        }
+        let resolved_count = resolved_inputs
+            .iter()
+            .filter(|(_, result)| result.is_ok())
+            .count();
+        self.metrics.runs += usize::from(resolved_count > 0);
+        self.metrics.reuses += resolved_count.saturating_sub(1);
         let timing_index = resolved_inputs
             .iter()
-            .any(|(index, ..)| *index == active_index)
-            .then_some(active_index)
-            .or_else(|| resolved_inputs.first().map(|(index, ..)| *index));
-        for (index, inputs, exclusions, input_digest, validation_digest) in resolved_inputs {
+            .find(|(index, result)| *index == active_index && result.is_ok())
+            .or_else(|| resolved_inputs.iter().find(|(_, result)| result.is_ok()))
+            .map(|(index, _)| *index);
+        for (index, result) in resolved_inputs {
+            let (inputs, exclusions, input_digest, validation_digest) = match result {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    self.resolved[index] =
+                        Some(Err((WasmBuildFailurePhase::ContentHashing, error)));
+                    continue;
+                }
+            };
             let spec = &self.specs[index];
             let resolved = ResolvedCargoBuildInputs {
                 fingerprint: finish_build_fingerprint(
@@ -1807,7 +1826,10 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         for (index, result) in results {
             match result {
                 Ok((inputs, exclusions)) => discovered.push((index, inputs, exclusions)),
-                Err(error) => self.resolved[index] = Some(Err(error)),
+                Err(error) => {
+                    self.resolved[index] =
+                        Some(Err((WasmBuildFailurePhase::InputDiscovery, error)));
+                }
             }
         }
         (discovered, started.elapsed())
@@ -2416,7 +2438,10 @@ fn clear_shared_incremental_target_contents(target_dir: &Path) -> Result<(), Was
 ///
 /// The operation takes an exclusive process lock scoped to `target_dir`, then
 /// fingerprints all declared inputs. A cache hit requires both a matching
-/// atomic stamp and every expected nonempty Wasm output. Failed or interrupted
+/// atomic stamp and every expected nonempty Wasm output. Ordinary warm hits
+/// revalidate inputs before returning and reject mutations during acquisition.
+/// Explicit immutable-source sessions and prepared readers skip that warm
+/// revalidation under their source-lease contract. Failed or interrupted
 /// builds never publish a successful stamp.
 pub fn build_wasm_canisters_cached(
     spec: &WasmBuildSpec,
@@ -2553,7 +2578,7 @@ fn build_wasm_canisters_cached_internal(
 
     let resolved = resolve_initial_inputs(spec, batch_resolution.take(), progress)?;
     let isolated_acquisition =
-        SharedIncrementalAcquisitionContext::isolated(prepared_invalidation.clone());
+        WasmAcquisitionContext::isolated(prepared_invalidation.clone(), assumes_sources_immutable);
     if let Some(outcome) = try_reuse_wasm_artifacts(
         spec,
         &resolved,
@@ -2631,8 +2656,12 @@ fn build_wasm_with_shared_incremental(
         current
     };
     let lock_wait = first_lock_wait.saturating_add(second_lock_wait);
-    let shared_incremental =
-        SharedIncrementalAcquisitionContext::shared(shared_lock_wait, None, prepared_invalidation);
+    let shared_incremental = WasmAcquisitionContext::shared(
+        shared_lock_wait,
+        None,
+        prepared_invalidation,
+        assumes_sources_immutable,
+    );
     if let Some(outcome) = try_reuse_wasm_artifacts(
         spec,
         &current,
@@ -2663,7 +2692,8 @@ fn build_wasm_canisters_cached_with_scheduled_shared_maintenance(
     progress: &mut ProgressReporter<'_>,
     batch_resolution: Option<(&mut WasmBuildBatchInputResolver<'_, '_>, usize)>,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
-    let (_, prepared_invalidation) = batch_source_assumptions(batch_resolution.as_ref());
+    let (assumes_sources_immutable, prepared_invalidation) =
+        batch_source_assumptions(batch_resolution.as_ref());
     let configured_target = shared_incremental_target(spec)
         .expect("validated scheduled maintenance must have a shared Cargo target");
     progress.emit(WasmBuildProgressEvent::SharedTargetLockStarted {
@@ -2687,10 +2717,11 @@ fn build_wasm_canisters_cached_with_scheduled_shared_maintenance(
         shared_lock_wait,
         progress,
     )?;
-    let shared_incremental = SharedIncrementalAcquisitionContext::shared(
+    let shared_incremental = WasmAcquisitionContext::shared(
         shared_lock_wait,
         Some(shared_maintenance),
         prepared_invalidation,
+        assumes_sources_immutable,
     );
     if let Some(outcome) = try_reuse_wasm_artifacts(
         spec,
@@ -2823,15 +2854,20 @@ fn emit_finished_progress(outcome: &WasmBuildOutcome, progress: &mut ProgressRep
 }
 
 #[derive(Clone, Debug, Default)]
-struct SharedIncrementalAcquisitionContext {
+struct WasmAcquisitionContext {
+    assumes_sources_immutable: bool,
     lock_wait: Option<Duration>,
     maintenance: Option<SharedIncrementalTargetMaintenanceOutcome>,
     prepared_invalidation: Option<Arc<RwLock<bool>>>,
 }
 
-impl SharedIncrementalAcquisitionContext {
-    fn isolated(prepared_invalidation: Option<Arc<RwLock<bool>>>) -> Self {
+impl WasmAcquisitionContext {
+    fn isolated(
+        prepared_invalidation: Option<Arc<RwLock<bool>>>,
+        assumes_sources_immutable: bool,
+    ) -> Self {
         Self {
+            assumes_sources_immutable,
             prepared_invalidation,
             ..Self::default()
         }
@@ -2841,8 +2877,10 @@ impl SharedIncrementalAcquisitionContext {
         lock_wait: Duration,
         maintenance: Option<SharedIncrementalTargetMaintenanceOutcome>,
         prepared_invalidation: Option<Arc<RwLock<bool>>>,
+        assumes_sources_immutable: bool,
     ) -> Self {
         Self {
+            assumes_sources_immutable,
             lock_wait: Some(lock_wait),
             maintenance,
             prepared_invalidation,
@@ -2868,7 +2906,7 @@ fn try_reuse_wasm_artifacts(
     spec: &WasmBuildSpec,
     resolved: &ResolvedCargoBuildInputs,
     lock_wait: Duration,
-    shared_incremental: &SharedIncrementalAcquisitionContext,
+    shared_incremental: &WasmAcquisitionContext,
     total_started: Instant,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<Option<WasmBuildOutcome>, WasmBuildError> {
@@ -2881,6 +2919,8 @@ fn try_reuse_wasm_artifacts(
     });
     if artifacts_match {
         ensure_exact_cache_entry(spec, &artifacts, &cache_entry, fingerprint, progress)?;
+        let input_resolution =
+            validate_reused_inputs(spec, resolved, shared_incremental, progress)?;
         return Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
             spec,
             BuildRecordInput {
@@ -2888,7 +2928,7 @@ fn try_reuse_wasm_artifacts(
                 input_digest: resolved.input_digest,
                 lock_wait,
                 shared_incremental: shared_incremental.clone(),
-                input_resolution: resolved.timings,
+                input_resolution,
                 cargo_build: None,
                 active_entry: &cache_entry,
             },
@@ -2909,6 +2949,7 @@ fn try_reuse_wasm_artifacts(
         materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
         record_cache_entry_use(&cache_entry)
     })?;
+    let input_resolution = validate_reused_inputs(spec, resolved, shared_incremental, progress)?;
     Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
         spec,
         BuildRecordInput {
@@ -2916,13 +2957,44 @@ fn try_reuse_wasm_artifacts(
             input_digest: resolved.input_digest,
             lock_wait,
             shared_incremental: shared_incremental.clone(),
-            input_resolution: resolved.timings,
+            input_resolution,
             cargo_build: None,
             active_entry: &cache_entry,
         },
         total_started,
         progress,
     )?)))
+}
+
+fn validate_reused_inputs(
+    spec: &WasmBuildSpec,
+    resolved: &ResolvedCargoBuildInputs,
+    context: &WasmAcquisitionContext,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<WasmInputResolutionTimings, WasmBuildError> {
+    let mut timings = resolved.timings;
+    if !context.assumes_sources_immutable {
+        let verified = verify_resolved_inputs(spec, resolved, progress)?;
+        timings.include(verified.timings);
+    }
+    Ok(timings)
+}
+
+fn verify_resolved_inputs(
+    spec: &WasmBuildSpec,
+    resolved: &ResolvedCargoBuildInputs,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
+    let verified = resolve_inputs_with_progress(spec, progress)?;
+    for (before, after) in [
+        (resolved.validation_digest, verified.validation_digest),
+        (resolved.fingerprint, verified.fingerprint),
+    ] {
+        if before != after {
+            return Err(WasmBuildError::InputsChangedDuringAcquisition { before, after });
+        }
+    }
+    Ok(verified)
 }
 
 fn ensure_exact_cache_entry(
@@ -2975,7 +3047,7 @@ fn build_wasm_cache_miss(
     spec: &WasmBuildSpec,
     resolved: ResolvedCargoBuildInputs,
     lock_wait: Duration,
-    shared_incremental: SharedIncrementalAcquisitionContext,
+    shared_incremental: WasmAcquisitionContext,
     cargo_target_dir: PathBuf,
     total_started: Instant,
     progress: &mut ProgressReporter<'_>,
@@ -3024,20 +3096,8 @@ fn build_wasm_cache_miss(
             return Err(WasmBuildError::MissingArtifacts { paths: missing });
         }
 
-        let verified = resolve_inputs_with_progress(spec, progress)?;
+        let verified = verify_resolved_inputs(spec, &resolved, progress)?;
         input_resolution.include(verified.timings);
-        if resolved.validation_digest != verified.validation_digest {
-            return Err(WasmBuildError::InputsChangedDuringBuild {
-                before: resolved.validation_digest,
-                after: verified.validation_digest,
-            });
-        }
-        if fingerprint != verified.fingerprint {
-            return Err(WasmBuildError::InputsChangedDuringBuild {
-                before: fingerprint,
-                after: verified.fingerprint,
-            });
-        }
 
         // Publication is the prepared snapshot's linearization boundary. A
         // reader that reaches it first may finish publishing; invalidation
@@ -3096,7 +3156,7 @@ struct BuildRecordInput<'a> {
     fingerprint: InputDigest,
     input_digest: InputDigest,
     lock_wait: Duration,
-    shared_incremental: SharedIncrementalAcquisitionContext,
+    shared_incremental: WasmAcquisitionContext,
     input_resolution: WasmInputResolutionTimings,
     cargo_build: Option<Duration>,
     active_entry: &'a Path,
@@ -4410,34 +4470,6 @@ fn validate_shared_incremental_target_boundary(
     Ok(())
 }
 
-fn canonicalize_allow_missing(path: &Path) -> io::Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
-    } else {
-        std::env::current_dir()?.join(path)
-    };
-    let mut unresolved = Vec::<OsString>::new();
-    let mut existing = absolute.as_path();
-    loop {
-        match existing.canonicalize() {
-            Ok(mut canonical) => {
-                for component in unresolved.into_iter().rev() {
-                    canonical.push(component);
-                }
-                return Ok(canonical);
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                let Some(name) = existing.file_name() else {
-                    return Err(error);
-                };
-                unresolved.push(name.to_owned());
-                existing = existing.parent().ok_or(error)?;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
 fn shared_incremental_target(spec: &WasmBuildSpec) -> Option<PathBuf> {
     let WasmBuildCacheMode::SharedIncremental { target_dir } = &spec.cache_mode else {
         return None;
@@ -4885,7 +4917,7 @@ fn invalid_metadata(message: &str) -> WasmBuildError {
 impl WasmBuildError {
     fn indicates_input_change(&self) -> bool {
         match self {
-            Self::InputsChangedDuringBuild { .. } => true,
+            Self::InputsChangedDuringAcquisition { .. } => true,
             Self::FailedBuildCleanup { build_error, .. } => build_error.indicates_input_change(),
             _ => false,
         }
@@ -4971,9 +5003,9 @@ impl std::fmt::Display for WasmBuildError {
                     .collect::<Vec<_>>()
                     .join(", "),
             ),
-            Self::InputsChangedDuringBuild { before, after } => write!(
+            Self::InputsChangedDuringAcquisition { before, after } => write!(
                 formatter,
-                "Wasm build inputs changed while Cargo was running: {before} -> {after}",
+                "Wasm inputs changed during artifact acquisition: {before} -> {after}",
             ),
             Self::PreparedInputSnapshotInvalidated => formatter.write_str(
                 "the prepared Wasm input snapshot was invalidated before artifact publication",

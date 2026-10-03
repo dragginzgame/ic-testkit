@@ -333,6 +333,7 @@ pub fn next_benchmark_run_directory(
     git_commit_hash: Option<&str>,
 ) -> io::Result<BenchmarkRunDirectory> {
     let runs_root = runs_root.as_ref();
+    let git_commit_hash = git_commit_hash.filter(|hash| !hash.is_empty());
     let git_commit_short_hash = git_commit_hash.map(short_commit_hash);
     let prefix = format!(
         "{}-{}-",
@@ -352,12 +353,24 @@ pub fn next_benchmark_run_directory(
     })
 }
 
+/// Find the latest earlier run with readable metadata and a matching command.
+///
+/// Names must follow [`benchmark_run_directory_name`]; indices are ordered
+/// numerically even when they exceed four digits. An invalid current name
+/// returns [`io::ErrorKind::InvalidInput`]. Unreadable or malformed candidates
+/// are skipped.
 pub fn find_latest_previous_run(
     runs_root: impl AsRef<Path>,
     current_run_directory_name: &str,
     benchmark_command: Option<&str>,
 ) -> io::Result<Option<PathBuf>> {
     let runs_root = runs_root.as_ref();
+    let current_key = run_directory_sort_key(current_run_directory_name).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid benchmark run directory name",
+        )
+    })?;
     let mut candidates = Vec::new();
 
     if !runs_root.exists() {
@@ -371,9 +384,10 @@ pub fn find_latest_previous_run(
         }
 
         let directory_name = entry.file_name().to_string_lossy().into_owned();
-        if directory_name == current_run_directory_name
-            || directory_name.as_str() > current_run_directory_name
-        {
+        let Some((prefix, index)) = run_directory_sort_key(&directory_name) else {
+            continue;
+        };
+        if (prefix, index) >= current_key {
             continue;
         }
 
@@ -388,11 +402,11 @@ pub fn find_latest_previous_run(
             continue;
         }
 
-        candidates.push((metadata.timestamp, directory_name, entry.path()));
+        candidates.push((metadata.timestamp, prefix.to_owned(), index, entry.path()));
     }
 
-    candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    Ok(candidates.pop().map(|(_, _, path)| path))
+    candidates.sort_by(|a, b| (&a.0, &a.1, a.2).cmp(&(&b.0, &b.1, b.2)));
+    Ok(candidates.pop().map(|(_, _, _, path)| path))
 }
 
 pub fn read_benchmark_run_metadata(path: impl AsRef<Path>) -> io::Result<BenchmarkRunMetadata> {
@@ -1008,7 +1022,7 @@ fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> 
 
 fn comparison_csv(comparison: Option<&BenchmarkComparisonReport>) -> String {
     let mut out = String::from(
-        "suite,span_label,current_runs,previous_runs,instructions_avg_change_percent,heap_bytes_avg_change_percent,memory_bytes_avg_change_percent,total_allocation_avg_change_percent\n",
+        "scope,suite,span_label,current_runs,previous_runs,instructions_avg_change_percent,heap_bytes_avg_change_percent,memory_bytes_avg_change_percent,total_allocation_avg_change_percent\n",
     );
 
     let Some(comparison) = comparison else {
@@ -1018,7 +1032,8 @@ fn comparison_csv(comparison: Option<&BenchmarkComparisonReport>) -> String {
     for row in &comparison.rows {
         let _ = writeln!(
             out,
-            "{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
+            if row.is_all_suites() { "all" } else { "suite" },
             csv_cell(&row.suite),
             csv_cell(&row.span_label),
             optional_u64_cell(row.current_runs),
@@ -1118,18 +1133,26 @@ fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> 
         }
     }
 
-    Ok(max_index.saturating_add(1))
+    max_index
+        .checked_add(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "benchmark run index exhausted"))
 }
 
 fn run_index_from_directory_name(name: &OsStr, prefix: &str) -> Option<u32> {
     let name = name.to_str()?;
     let index = name.strip_prefix(prefix)?;
 
-    if index.len() == 4 && index.chars().all(|char| char.is_ascii_digit()) {
+    if index.len() >= 4 && index.chars().all(|char| char.is_ascii_digit()) {
         index.parse().ok()
     } else {
         None
     }
+}
+
+fn run_directory_sort_key(name: &str) -> Option<(&str, u32)> {
+    let (prefix, _) = name.rsplit_once('-')?;
+    let index = run_index_from_directory_name(OsStr::new(name), &format!("{prefix}-"))?;
+    Some((prefix, index))
 }
 
 fn short_commit_hash(hash: &str) -> String {

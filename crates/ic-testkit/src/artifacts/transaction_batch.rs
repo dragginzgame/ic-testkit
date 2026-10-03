@@ -1,7 +1,6 @@
-use std::{
-    collections::HashMap,
-    time::{Duration, Instant},
-};
+use crate::batch::{BatchLabelError, validate_labels};
+
+use std::time::{Duration, Instant};
 
 use super::transaction::{
     ArtifactBuildTransaction, ArtifactCacheError, ArtifactCacheOutcome, ArtifactCachePreparation,
@@ -586,21 +585,19 @@ where
 fn validate_batch_labels(
     specs: &[LabeledArtifactCacheSpec],
 ) -> Result<(), ArtifactCacheBatchContractError> {
-    let mut labels = HashMap::with_capacity(specs.len());
-    for (index, labeled) in specs.iter().enumerate() {
-        if labeled.label.is_empty() {
-            return Err(ArtifactCacheBatchContractError::EmptyLabel { index });
-        }
-        if let Some(first_index) = labels.get(labeled.label.as_str()) {
-            return Err(ArtifactCacheBatchContractError::DuplicateLabel {
-                label: labeled.label.clone(),
-                first_index: *first_index,
-                duplicate_index: index,
-            });
-        }
-        labels.insert(labeled.label.as_str(), index);
-    }
-    Ok(())
+    validate_labels(specs.iter().map(|labeled| labeled.label.as_str())).map_err(|error| match error
+    {
+        BatchLabelError::Empty { index } => ArtifactCacheBatchContractError::EmptyLabel { index },
+        BatchLabelError::Duplicate {
+            label,
+            first_index,
+            duplicate_index,
+        } => ArtifactCacheBatchContractError::DuplicateLabel {
+            label,
+            first_index,
+            duplicate_index,
+        },
+    })
 }
 
 impl std::fmt::Display for ArtifactCacheBatchContractError {

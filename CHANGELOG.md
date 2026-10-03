@@ -8,8 +8,47 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-03 - Cache correctness and harness API consolidation
+
+### Changed
+
+- Consolidates baseline reuse on `CachedPocketIcBaselinePool` with a recipe and
+  runtime capacity. Removes `restore_or_rebuild_cached_pocket_ic_baseline` and
+  `CachedPocketIcBaselineGuard`, eliminating the mutex-slot recovery race that
+  could return another caller's mutated baseline without restoring it.
+- Consolidates installation on `InstallSpec`, removing
+  `create_and_install_with_args` and `try_create_and_install_with_args`.
+- `CanisterInstallError` identifies the creation, funding, or installation phase,
+  returns an optional created canister id, and retains a `PocketIcOperationError`
+  cause. Snapshot panic variants expose the same cause through `Error::source()`.
+- Renames Wasm and generic artifact input-race errors to
+  `InputsChangedDuringAcquisition`.
+- Adds a leading `scope` column to `comparison.csv`, distinguishing named
+  suites (`suite`) from cross-suite aggregates (`all`), including when a named
+  suite is literally `ALL`.
+- Shares batch label validation, component-aware path canonicalization, and
+  silent/observed Wasm batch orchestration. All repository-owned format
+  identifiers remain `v1`; API and schema changes are hard cuts.
+
 ### Fixed
 
+- Ordinary warm Wasm hits revalidate inputs before returning artifacts and
+  reject changes during acquisition, across isolated, shared incremental,
+  and scheduled-maintenance modes. Explicit immutable-source sessions and
+  prepared readers retain their warm reuse contract.
+- One entry's Wasm input hashing failure no longer fails valid compatible
+  batch entries. Deferred hashing and discovery failures retain their original
+  resolution phase.
+- Fallible installation captures creation and cycle-funding failures as well as
+  installation failures. Standalone errors retain the caller's PocketIC
+  instance at every failed stage.
+- Snapshot and installation failures preserve transport classification through
+  contextual wrappers and use the shared classifier for recovery.
+- Server diagnostic reads allocate only the bounded log prefix instead of
+  reading the complete file before truncating it.
+- Benchmark run allocation continues beyond `9999`, orders previous-run
+  indices numerically, and reports exhaustion rather than reusing a directory.
+  Empty commit hashes use the same `unknown` prefix as directory formatting.
 - Release CI cleanup recognises renamed selected PocketIC binaries by matching
   the running executable's device/inode and the invocation's private port-file
   path. The runner passes configured binary paths and PocketIC 16's exact default
@@ -17,9 +56,25 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   unrelated processes; pidfd protection, bounded termination and the original
   CI failure status are preserved.
 
+### Documentation
+
+- Updates README examples and API guidance against the current implementation,
+  adds a documentation index, and distinguishes current usage from historical
+  design records.
+- Documents the 0.11.0 API and CSV migration in the packaged changelog, including
+  recipe-pool acquisition, installation failure stages, optional canister ids,
+  operation error causes, and input-race error names.
+
 ### Testing
 
-- Expands the focused cleanup regressions to cover renamed binaries, default
+- Adds regressions for independent batch hashing, warm-hit input races across
+  cache modes and materialization paths, contextual transport causes, refused
+  creation with retained instance ownership, sparse multi-gigabyte log reads,
+  CSV scope identity, and benchmark index boundaries.
+- Validates existing recipe-pool recovery and concurrency, retained artifact
+  behavior, immutable-source readers, and all 27 README Rust examples with
+  targeted checks.
+- Expands focused cleanup regressions to cover renamed binaries, default
   downloads, relative and PATH selection, forged executable names, unavailable
   identities, ownership rechecks and servers appearing during cleanup.
 

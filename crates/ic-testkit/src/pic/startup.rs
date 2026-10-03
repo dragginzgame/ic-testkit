@@ -1,7 +1,7 @@
 use std::{
     fmt::Write as _,
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, Read as _},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{
@@ -125,7 +125,7 @@ pub trait PocketIcBuilderExt {
     /// Build one PocketIC instance within the configured deadline.
     ///
     /// Managed server startup detects child exit while awaiting the port file,
-    /// terminates the child on timeout, and captures bounded stdout/stderr.
+    /// terminates the child on timeout, and reads bounded stdout/stderr prefixes.
     /// Instance creation is also bounded. Upstream panics remain structured.
     ///
     /// This deadline covers construction only. Dropping the returned instance
@@ -272,8 +272,9 @@ impl PocketIcManagedServer {
 
     /// Current bounded stdout and stderr captured from the managed server.
     ///
-    /// This reads a snapshot of each retained output file. Each stream is
-    /// limited to 16 KiB and carries an omitted-byte suffix when truncated.
+    /// This reads at most the first 16 KiB from each retained output file,
+    /// renders it as lossy UTF-8, and adds an omitted-byte suffix when truncated.
+    /// The diagnostic read is bounded; files can grow while the server runs.
     #[must_use]
     pub fn output(&self) -> PocketIcManagedServerOutput {
         self.server.capture().into()
@@ -713,12 +714,20 @@ fn startup_file_error(
 }
 
 fn read_bounded_lossy(path: &Path) -> String {
-    let Ok(bytes) = fs::read(path) else {
+    let Ok(file) = File::open(path) else {
         return String::new();
     };
-    let retained = bytes.len().min(SERVER_OUTPUT_LIMIT);
-    let mut output = String::from_utf8_lossy(&bytes[..retained]).into_owned();
-    let omitted = bytes.len().saturating_sub(retained);
+    let length = file.metadata().map_or(0, |metadata| metadata.len());
+    let mut bytes = Vec::with_capacity(SERVER_OUTPUT_LIMIT);
+    if file
+        .take(SERVER_OUTPUT_LIMIT as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return String::new();
+    }
+    let mut output = String::from_utf8_lossy(&bytes).into_owned();
+    let omitted = length.saturating_sub(bytes.len() as u64);
     if omitted > 0 {
         let _ = write!(output, "\n<truncated {omitted} bytes>");
     }
@@ -827,6 +836,24 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt as _;
+
+    #[cfg(unix)]
+    #[test]
+    fn reading_large_sparse_server_output_is_bounded() {
+        use std::io::Write as _;
+        let (files, _, _) = StartupFiles::create().expect("allocate startup files");
+        let mut file = fs::File::create(&files.stdout).expect("create sparse log");
+        file.write_all(b"server started\n").expect("write prefix");
+        let size = 8_u64 * 1024 * 1024 * 1024;
+        file.set_len(size).expect("extend sparse log");
+        let output = super::read_bounded_lossy(&files.stdout);
+        assert!(output.starts_with("server started\n"));
+        assert!(output.ends_with(&format!(
+            "<truncated {} bytes>",
+            size - super::SERVER_OUTPUT_LIMIT as u64
+        )));
+        assert!(output.len() < super::SERVER_OUTPUT_LIMIT + 100);
+    }
 
     #[test]
     fn startup_config_requires_positive_bounds() {

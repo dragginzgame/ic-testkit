@@ -6,7 +6,7 @@
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/d/ic-testkit.svg" alt="Downloads"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
-  <a href="README.md#toolchains"><img src="https://img.shields.io/badge/internal%20rust-1.99.0-orange.svg" alt="Internal Rust"></a>
+  <a href="README.md#toolchains-and-checks"><img src="https://img.shields.io/badge/internal%20rust-1.99.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-16.0-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
@@ -48,7 +48,13 @@ ic-testkit = "0.10"
 Canister crates that emit benchmark markers can add the same version under
 `[dependencies]` and use `ic_testkit::performance`.
 
-The crate supports Rust 1.88 and uses PocketIC 16.
+The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic`, `pic`, and
+`artifacts` modules are host-only. `benchmark`, `performance`, and `Fake` are
+also available when compiling for `wasm32`.
+
+The `0.11.0` release consolidates baseline reuse on recipe pools and
+installation on `InstallSpec`. Its API and report-schema changes are covered
+in the packaged [0.11.0 migration guide](crates/ic-testkit/CHANGELOG.md#0110).
 
 Upgrading to `0.10` changes artifact consumption to retained, read-only
 exact-cache paths. Keep the build outcome or record alive while reading or
@@ -137,13 +143,14 @@ and PocketIC types remain explicit imports.
 Each test normally constructs and directly owns one fresh `PocketIc`:
 
 ```rust,no_run
+use candid::Principal;
 use ic_testkit::pic::{PocketIc, prelude::*};
 
-let pocket_ic = PocketIc::new();
-let canister_id = install_counter(&pocket_ic);
-
-let value: u64 = pocket_ic.query_candid(canister_id, "get", ())?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn read_counter(pocket_ic: &PocketIc, canister_id: Principal)
+    -> Result<u64, ic_testkit::pic::CandidCallError>
+{
+    pocket_ic.query_candid(canister_id, "get", ())
+}
 ```
 
 Use PocketIC's inherent methods for topology, controllers, raw ingress, time,
@@ -169,18 +176,19 @@ tuning, not an ic-testkit correctness requirement.
 use candid::Principal;
 use ic_testkit::pic::{CandidCallExt, PocketIc};
 
-let pocket_ic = PocketIc::new();
-let canister_id = install_counter(&pocket_ic);
-
-let _: () = pocket_ic.update_candid(canister_id, "increment", ())?;
-let value: u64 = pocket_ic.query_candid_as(
-    canister_id,
-    Principal::anonymous(),
-    "get",
-    (),
-)?;
-assert_eq!(value, 1);
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn increment_counter(pocket_ic: &PocketIc, canister_id: Principal)
+    -> Result<(), ic_testkit::pic::CandidCallError>
+{
+    let _: () = pocket_ic.update_candid(canister_id, "increment", ())?;
+    let value: u64 = pocket_ic.query_candid_as(
+        canister_id,
+        Principal::anonymous(),
+        "get",
+        (),
+    )?;
+    assert_eq!(value, 1); // This example assumes a counter initially at zero.
+    Ok(())
+}
 ```
 
 The corresponding `_or_panic` methods unwrap only `CandidCallError`.
@@ -233,6 +241,12 @@ Use `PocketIcStartupConfig::connect(url, timeout)` for a caller-owned existing
 server. Both modes set the server URL on the builder, preventing its implicit,
 unbounded child-startup path. There is no zero-argument `try_build`, implicit
 binary fallback, or hidden retry.
+
+The deadline covers construction. After it returns, operations and instance
+teardown follow upstream PocketIC behavior. In PocketIC 16, dropping an
+instance waits for HTTP DELETE without a request deadline; the startup timeout
+and operation request budget do not bound that wait. See the
+[teardown reproduction](POCKET-IC.md#bounded-instance-teardown).
 
 A serial suite can retain one testkit-owned server explicitly and construct
 several bounded instances against it:
@@ -288,25 +302,33 @@ use ic_testkit::pic::{
     InstallSpec, PocketIcBuilder, StandaloneCanisterFixture,
 };
 
-let pocket_ic = PocketIcBuilder::new()
-    .with_application_subnet()
-    .build();
-let fixture = StandaloneCanisterFixture::try_install(
-    pocket_ic,
-    InstallSpec::new(wasm, init_bytes, 1_000_000_000_000)
-        .install_sender(Principal::anonymous())
-        .label("counter"),
-)?;
+fn install_counter(wasm: Vec<u8>, init_bytes: Vec<u8>)
+    -> Result<StandaloneCanisterFixture, Box<dyn std::error::Error>>
+{
+    let pocket_ic = PocketIcBuilder::new()
+        .with_application_subnet()
+        .build();
+    let fixture = StandaloneCanisterFixture::try_install(
+        pocket_ic,
+        InstallSpec::new(wasm, init_bytes, 1_000_000_000_000)
+            .install_sender(Principal::anonymous())
+            .label("counter"),
+    )?;
 
-let value: u64 = fixture.query_candid("get", ())?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+    let _value: u64 = fixture.query_candid("get", ())?;
+    Ok(fixture)
+}
 ```
 
 The fixture owns exactly one `PocketIc`. `pocket_ic()` borrows it,
 `canister_id()` identifies the installed canister, and `into_parts()` returns
 both without changing instance ownership. Failed `try_install` returns a
 `StandaloneCanisterInstallError` containing both the caller's instance and the
-`CanisterInstallError`.
+`CanisterInstallError`. Creation, cycle funding, and installation panics are
+captured as structured failures. `phase()` identifies the failed operation;
+`canister_id()` returns `None` if creation failed and `Some(id)` afterward.
+The original operation error remains available through the error source chain,
+including its transport classification.
 
 For installation into an existing instance, import `CanisterInstallExt` and
 use `try_create_and_install` or `try_create_and_install_many`. Batch installs
@@ -320,12 +342,15 @@ canister may already exist, and later installs are not attempted.
 
 ```rust,no_run
 use std::time::Duration;
-use ic_testkit::pic::{CanisterInstallExt, RejectResponse, RetryPolicy};
+use ic_testkit::pic::{CanisterInstallExt, PocketIc, RejectResponse, RetryPolicy};
 
-let policy = RetryPolicy::try_new(3, Duration::from_secs(60))?;
-let result: Result<(), RejectResponse> =
-    pocket_ic.retry_install_code(policy, || install_again());
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn retry_install(pocket_ic: &PocketIc, install_again: impl FnMut() -> Result<(), RejectResponse>)
+    -> Result<(), RejectResponse>
+{
+    let policy = RetryPolicy::try_new(3, Duration::from_secs(60))
+        .expect("nonzero attempts and cooldown");
+    pocket_ic.retry_install_code(policy, install_again)
+}
 ```
 
 `max_attempts` includes the first call. Between retryable attempts, the helper
@@ -339,45 +364,53 @@ deterministic principal order, and cleans up earlier snapshots if a later
 capture fails:
 
 ```rust,no_run
-use ic_testkit::pic::{PocketIcSnapshotExt, SnapshotRestoreFunding};
+use candid::Principal;
+use ic_testkit::pic::{PocketIc, PocketIcSnapshotExt, SnapshotRestoreFunding};
 
-let snapshots = pocket_ic.capture_controller_snapshots(
-    controller_id,
-    [first_canister, second_canister],
-)?;
+fn restore_pair(pocket_ic: &PocketIc, controller_id: Principal, canisters: [Principal; 2])
+    -> Result<(), ic_testkit::pic::ControllerSnapshotError>
+{
+    let snapshots = pocket_ic.capture_controller_snapshots(controller_id, canisters)?;
 
-// Default: do not add cycles.
-pocket_ic.restore_controller_snapshots(controller_id, &snapshots)?;
+    // Default: do not add cycles.
+    pocket_ic.restore_controller_snapshots(controller_id, &snapshots)?;
 
-// Optional explicit fixture policy.
-pocket_ic.restore_controller_snapshots_with_funding(
-    controller_id,
-    &snapshots,
-    SnapshotRestoreFunding::TopUpTo {
-        minimum_cycles: 200_000_000_000_000,
-    },
-)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+    // Optional explicit fixture policy.
+    pocket_ic.restore_controller_snapshots_with_funding(
+        controller_id,
+        &snapshots,
+        SnapshotRestoreFunding::TopUpTo {
+            minimum_cycles: 200_000_000_000_000,
+        },
+    )?;
+    Ok(())
+}
 ```
 
 `ControllerSnapshotError` preserves rejected sender attempts, panic context,
 and any cleanup failures. Restore never adds cycles unless `TopUpTo` is
-explicitly selected.
+explicitly selected. Callers must satisfy upstream snapshot preconditions;
+these helpers do not stop or restart canisters.
 
 Mixed-controller topologies can avoid expected rejected fallback calls by
 selecting the exact sender for each canister:
 
 ```rust,no_run
+use candid::Principal;
 use ic_testkit::pic::{
-    CanisterSnapshotTarget, PocketIcSnapshotExt,
+    CanisterSnapshotTarget, PocketIc, PocketIcSnapshotExt,
 };
 
-let snapshots = pocket_ic.capture_snapshots_with_senders([
-    CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
-    CanisterSnapshotTarget::new(child_canister, None),
-])?;
-pocket_ic.restore_snapshots_with_captured_senders(&snapshots)?;
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn restore_with_exact_senders(
+    pocket_ic: &PocketIc, root_canister: Principal, root_controller: Principal,
+    child_canister: Principal,
+) -> Result<(), ic_testkit::pic::ControllerSnapshotError> {
+    let snapshots = pocket_ic.capture_snapshots_with_senders([
+        CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
+        CanisterSnapshotTarget::new(child_canister, None),
+    ])?;
+    pocket_ic.restore_snapshots_with_captured_senders(&snapshots)
+}
 ```
 
 The existing controller-based method remains useful when its ordered sender
@@ -387,32 +420,11 @@ same exact-sender policy for pooled baselines, and
 fallback controller.
 
 `CachedPocketIcBaseline<T>` stores one owned instance, its snapshots, and
-caller metadata. `restore_or_rebuild_cached_pocket_ic_baseline` synchronizes
-only the supplied `Mutex` slot. On a cache hit it invokes the caller's restore
-closure; it rebuilds only when the owned PocketIC transport is dead and resumes
-unrelated panics.
-
-```rust,no_run
-use std::sync::Mutex;
-use ic_testkit::pic::{
-    CachedPocketIcBaseline, restore_or_rebuild_cached_pocket_ic_baseline,
-};
-
-static BASELINE: Mutex<Option<CachedPocketIcBaseline<Metadata>>> = Mutex::new(None);
-
-let (baseline, cache_hit) = restore_or_rebuild_cached_pocket_ic_baseline(
-    &BASELINE,
-    build_baseline,
-    |baseline| baseline.restore(baseline.metadata().controller_id).unwrap(),
-);
-
-if cache_hit {
-    baseline.pocket_ic().tick();
-}
-```
-
-The returned guard retains exclusive access to that slot until dropped. It
-does not block fresh PocketIC instances or baselines stored in other slots.
+caller metadata. Use it as the fixture owned by a `PocketIcBaselineRecipe` in
+`CachedPocketIcBaselinePool<Recipe>` with capacity one for exclusive sequential reuse, or
+choose a larger capacity for independent parallel leases. The recipe declares
+its reset requirements and recovery policy, and acquisition returns a typed
+outcome rather than a cache-hit boolean. See the [complete recipe example](crates/ic-testkit/examples/multi_canister_baseline_pool.rs).
 
 Heavy suites that need bounded parallelism can own a fixed-capacity pool of
 independent standalone fixtures. Every populated slot has its own PocketIC
@@ -421,22 +433,26 @@ to the ordinary `StandaloneCanisterFixture` API:
 
 ```rust,no_run
 use ic_testkit::pic::{
-    CachedStandaloneCanisterFixturePool, StandaloneFixturePoolOutcome,
+    CachedStandaloneCanisterFixturePool, StandaloneCanisterFixture,
+    StandaloneFixturePoolOutcome,
 };
 
 static POOL: CachedStandaloneCanisterFixturePool<8> =
     CachedStandaloneCanisterFixturePool::new();
 
-let (fixture, outcome) = POOL.acquire(build_fixture)?;
-let value: u64 = fixture.query_candid("get", ())?;
-assert!(matches!(
-    outcome,
-    StandaloneFixturePoolOutcome::Built { .. }
-        | StandaloneFixturePoolOutcome::Restored { .. }
-        | StandaloneFixturePoolOutcome::Rebuilt { .. }
-));
-# let _ = value;
-# Ok::<(), Box<dyn std::error::Error>>(())
+fn read_pooled_counter(build_fixture: impl Fn() -> StandaloneCanisterFixture)
+    -> Result<u64, Box<dyn std::error::Error>>
+{
+    let (fixture, outcome) = POOL.acquire(build_fixture)?;
+    let value: u64 = fixture.query_candid("get", ())?;
+    assert!(matches!(
+        outcome,
+        StandaloneFixturePoolOutcome::Built { .. }
+            | StandaloneFixturePoolOutcome::Restored { .. }
+            | StandaloneFixturePoolOutcome::Rebuilt { .. }
+    ));
+    Ok(value)
+}
 ```
 
 `acquire` reports queue wait, fixture build and snapshot capture, restore,
@@ -474,25 +490,32 @@ For a topology with multiple captured canisters, use
 one pool structurally owns one `PocketIcBaselineRecipe` for its entire
 lifetime:
 
-```rust,ignore
+```rust,no_run
 use std::num::NonZeroUsize;
-use ic_testkit::pic::{BaselinePoolOutcome, CachedPocketIcBaselinePool};
+use ic_testkit::pic::{
+    BaselinePoolOutcome, CachedPocketIcBaselinePool, PocketIcBaselineRecipe,
+};
 
-let pool = CachedPocketIcBaselinePool::new(
-    NonZeroUsize::new(1).unwrap(),
-    root_topology_recipe(),
-);
+fn use_recipe<R: PocketIcBaselineRecipe>(recipe: R)
+    -> Result<(), ic_testkit::pic::BaselinePoolError<R::Error>>
+{
+    let pool = CachedPocketIcBaselinePool::new(
+        NonZeroUsize::new(1).unwrap(),
+        recipe,
+    );
 
-let (baseline, outcome) = pool.acquire()?;
-assert!(matches!(
-    outcome,
-    BaselinePoolOutcome::Built { .. }
-        | BaselinePoolOutcome::Restored { .. }
-        | BaselinePoolOutcome::Rebuilt { .. }
-));
+    let (baseline, outcome) = pool.acquire()?;
+    assert!(matches!(
+        outcome,
+        BaselinePoolOutcome::Built { .. }
+            | BaselinePoolOutcome::Restored { .. }
+            | BaselinePoolOutcome::Rebuilt { .. }
+    ));
 
-run_test(baseline.pocket_ic(), baseline.metadata());
-# Ok::<(), Box<dyn std::error::Error>>(())
+    // Drive this recipe's topology through baseline.pocket_ic() and metadata().
+    drop(baseline);
+    Ok(())
+}
 ```
 
 A complete, compile-checked
@@ -553,15 +576,13 @@ independent principals for canister status and log access. It attempts both
 operations even if one fails and returns their results independently:
 
 ```rust,no_run
-use ic_testkit::pic::{
-    CanisterDiagnosticsRequest, PocketIcDiagnosticsExt,
-};
+use ic_testkit::pic::{CanisterDiagnosticsRequest, PocketIc, PocketIcDiagnosticsExt};
 
-let report = pocket_ic.collect_canister_diagnostics(
-    CanisterDiagnosticsRequest::new(canister_id, status_sender, log_sender),
-);
-if report.status().is_err() || report.logs().is_err() {
-    eprintln!("{}", report.render_compact());
+fn diagnose(pocket_ic: &PocketIc, request: CanisterDiagnosticsRequest) {
+    let report = pocket_ic.collect_canister_diagnostics(request);
+    if report.status().is_err() || report.logs().is_err() {
+        eprintln!("{}", report.render_compact());
+    }
 }
 ```
 
@@ -570,25 +591,23 @@ collect them sequentially without fail-fast behavior:
 
 ```rust,no_run
 use ic_testkit::pic::{
-    CanisterDiagnosticsRequest, LabeledCanisterDiagnosticsRequest,
+    CanisterDiagnosticsRequest, LabeledCanisterDiagnosticsRequest, PocketIc,
     PocketIcDiagnosticsExt,
 };
 
-let requests = [
-    LabeledCanisterDiagnosticsRequest::new(
-        "root",
-        CanisterDiagnosticsRequest::new(root_id, root, root),
-    ),
-    LabeledCanisterDiagnosticsRequest::new(
-        "worker",
-        CanisterDiagnosticsRequest::new(worker_id, worker_status_sender, worker_log_sender),
-    ),
-];
-let batch = pocket_ic.collect_canister_diagnostics_batch(&requests)?;
-if !batch.is_success() {
-    eprintln!("{}", batch.render_compact());
+fn diagnose_pair(
+    pocket_ic: &PocketIc, root: CanisterDiagnosticsRequest, worker: CanisterDiagnosticsRequest,
+) -> Result<(), ic_testkit::pic::CanisterDiagnosticsBatchContractError> {
+    let requests = [
+        LabeledCanisterDiagnosticsRequest::new("root", root),
+        LabeledCanisterDiagnosticsRequest::new("worker", worker),
+    ];
+    let batch = pocket_ic.collect_canister_diagnostics_batch(&requests)?;
+    if !batch.is_success() {
+        eprintln!("{}", batch.render_compact());
+    }
+    Ok(())
 }
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 The ordered batch retains every label and structured single-canister report.
@@ -1140,6 +1159,7 @@ let outcome = match prepare_artifact_cache(&spec)? {
             .args(["--optimize-for-size", "-o"])
             .arg(staged)
             .arg(&input)
+            .env("OPTIMIZER_MODE", "deterministic")
             .status()?;
         if !status.success() {
             return Err(io::Error::other(format!("optimizer failed with {status}")).into());
@@ -1148,6 +1168,9 @@ let outcome = match prepare_artifact_cache(&spec)? {
     }
 };
 eprintln!("artifact key: {}", outcome.record().key());
+// Retain the outcome until reading or staging the exact output is complete.
+let optimized_wasm = std::fs::read(outcome.record().artifacts()[0].path())?;
+# let _ = optimized_wasm;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -1156,6 +1179,10 @@ Multiple independent external recipes can use
 `LabeledArtifactCacheSpec`; labels must be nonempty and unique and are retained
 in callbacks and ordered report entries. Labels are composition metadata, not
 cache identity. A structural label error rejects the batch before work starts.
+
+The spec describes command identity; it does not execute a tool or apply its
+declared arguments and environment to `Command`. The caller's build callback
+must run the declared recipe, as in the example above.
 
 The callback receives only cache misses and only one live transaction at a
 time, avoiding self-deadlock when specs share a coordination scope. Callback
@@ -1213,7 +1240,12 @@ count rather than inheriting a machine-wide default.
 `WatchedInputSnapshot` likewise hashes file paths and contents instead of
 modification times. Generated artifacts become reusable only after
 `mark_artifact_fresh` atomically records the snapshot beside the successfully
-built artifact; an unstamped artifact is conservatively stale.
+built artifact; an unstamped artifact is conservatively stale. This lightweight
+stamp records input identity only: it does not hash the output bytes, acquire
+producer locks, or retain artifact paths against replacement. The caller must
+coordinate the build and verify inputs stayed unchanged before stamping. Use
+`ArtifactCacheSpec` when a pipeline needs transactional publication, output
+content validation, and retained consumption.
 
 The cache intentionally contains no Binaryen, `icp build`, package-name, or
 PocketIC policy. Its complete contract is recorded in the
@@ -1261,6 +1293,12 @@ let aggregates = aggregate_benchmark_spans(&spans.spans);
 assert_eq!(aggregates.rows[0].span_label, "storage/write");
 ```
 
+`comparison.csv` includes a `scope` column: `suite` identifies a named suite,
+and `all` identifies the cross-suite aggregate. A suite named `ALL` remains
+distinct from the global aggregate. Run indices have a minimum width of four
+digits, continue beyond `9999`, and fail explicitly if the numeric range is
+exhausted; previous-run discovery orders the indices numerically.
+
 The report writer emits raw events, spans, aggregates, comparisons, malformed
 and unpaired markers, `bench-summary.md`, and `metadata.json`. Run-directory
 helpers discover compatible previous runs but do not reserve paths. Concurrent
@@ -1295,7 +1333,7 @@ environment variables as caller-owned, read-only configuration.
 
 See the maintained [PocketIC upstream boundary](https://github.com/dragginzgame/ic-testkit/blob/main/POCKET-IC.md)
 for limitations that should ultimately be solved in PocketIC. The documents
-under [`docs/design`](https://github.com/dragginzgame/ic-testkit/tree/main/docs/design)
+under [`docs/design`](docs/README.md#historical-design-records)
 are historical decision records; current behavior is documented here and in
 rustdoc.
 
@@ -1305,16 +1343,34 @@ rustdoc.
 - Repository toolchain: Rust 1.99
 - PocketIC client/server line: 16
 
-Run the ordinary checks with:
+For a documentation change, build rustdoc and run its examples:
 
 ```bash
-make test
-make test-canisters
+make docs-check
+cargo test -p ic-testkit --locked --doc
 ```
 
-Before release-oriented changes, run the complete gate:
+For code changes, run tests for the affected module or integration target, for
+example:
 
 ```bash
+cargo test -p ic-testkit --locked --lib artifacts::icp::tests
+cargo test -p ic-testkit --locked --test benchmark
+```
+
+Live PocketIC tests need a compatible server. Upstream `PocketIc::new()` and
+`PocketIcBuilder::build()` may download it when `POCKET_IC_BIN` is unset;
+set `POCKET_IC_BIN=/path/to/pocket-ic` to use a local binary. Wasm build tests
+also require the `wasm32-unknown-unknown` target:
+
+```bash
+rustup target add wasm32-unknown-unknown
+```
+
+The maintainer runs the complete pre-push and release gates:
+
+```bash
+make ci
 make release-check
 ```
 
@@ -1357,7 +1413,12 @@ make publish
 
 Release CI cleanup uses Linux `/proc` and Python 3 with pidfd support to stop
 PocketIC servers whose port files belong to its private temporary directory
-before deleting that directory. If server cleanup fails, it retains the directory
+and whose executable identity matches the selected binary before deleting that
+directory. The runner recognizes `POCKET_IC_BIN`,
+`IC_TESTKIT_POCKET_IC_SERVER`, and PocketIC 16's default scratch download path.
+It leaves servers with external port files alone. See
+[release cleanup ownership](POCKET-IC.md#release-temporary-directory-cleanup)
+for the matching rules. If server cleanup fails, it retains the directory
 for diagnosis and reports failure while preserving any earlier CI failure.
 
 Publication requires a clean worktree and a matching `v<version>` tag at

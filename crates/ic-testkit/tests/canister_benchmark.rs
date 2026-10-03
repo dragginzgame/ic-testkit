@@ -901,7 +901,7 @@ fn source_changes_during_shared_incremental_build_reject_exact_publication() {
 
     assert!(matches!(
         error,
-        WasmBuildError::InputsChangedDuringBuild { .. }
+        WasmBuildError::InputsChangedDuringAcquisition { .. }
     ));
     assert_eq!(failure.phase(), WasmBuildFailurePhase::ContentHashing);
     assert!(failure.timings().input_resolution().content_hashing() > Duration::ZERO);
@@ -1006,7 +1006,7 @@ fn source_race_invalidates_every_prepared_snapshot_reader() {
         .expect("changed source must fail the prepared reader");
     assert!(matches!(
         failure.error(),
-        WasmBuildError::InputsChangedDuringBuild { .. }
+        WasmBuildError::InputsChangedDuringAcquisition { .. }
     ));
     assert_eq!(failure.phase(), WasmBuildFailurePhase::ContentHashing);
     assert!(snapshot.metrics().is_invalidated());

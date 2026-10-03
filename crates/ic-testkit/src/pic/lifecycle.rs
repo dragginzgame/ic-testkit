@@ -4,7 +4,10 @@ use std::time::Duration;
 use candid::Principal;
 use pocket_ic::{ErrorCode, PocketIc, RejectResponse};
 
-use super::{CanisterDiagnosticsRequest, CanisterInstallError, PocketIcDiagnosticsExt, transport};
+use super::{
+    CanisterDiagnosticsRequest, CanisterInstallError, CanisterInstallPhase, PocketIcDiagnosticsExt,
+    PocketIcOperationError,
+};
 
 /// Inputs and diagnostic context for one generic canister installation.
 #[non_exhaustive]
@@ -110,28 +113,14 @@ impl RetryPolicy {
 /// The extension creates canisters using PocketIC defaults. `InstallSpec::cycles`
 /// is an additional top-up, not the complete initial balance.
 pub trait CanisterInstallExt {
-    /// Create and install one canister from raw wasm and init bytes.
-    #[must_use]
-    fn create_and_install_with_args(
-        &self,
-        wasm: Vec<u8>,
-        init_bytes: Vec<u8>,
-        install_cycles: u128,
-    ) -> Principal;
-
-    /// Fallible counterpart to [`create_and_install_with_args`](Self::create_and_install_with_args).
-    fn try_create_and_install_with_args(
-        &self,
-        wasm: Vec<u8>,
-        init_bytes: Vec<u8>,
-        install_cycles: u128,
-    ) -> Result<Principal, CanisterInstallError>;
-
     /// Create and install one canister from a reusable specification.
     #[must_use]
     fn create_and_install(&self, spec: InstallSpec) -> Principal;
 
     /// Fallible counterpart to [`create_and_install`](Self::create_and_install).
+    ///
+    /// Captures PocketIC panics during creation, cycle funding, and installation.
+    /// The error identifies the stage and retains an id when creation succeeded.
     fn try_create_and_install(&self, spec: InstallSpec) -> Result<Principal, CanisterInstallError>;
 
     /// Sequentially create and install multiple canisters.
@@ -162,30 +151,6 @@ pub trait CanisterInstallExt {
 }
 
 impl CanisterInstallExt for PocketIc {
-    /// Install one arbitrary wasm module with caller-provided init bytes.
-    ///
-    /// This is the generic install path for downstreams that use `ic-testkit`
-    /// without depending on application-specific init payload conventions.
-    fn create_and_install_with_args(
-        &self,
-        wasm: Vec<u8>,
-        init_bytes: Vec<u8>,
-        install_cycles: u128,
-    ) -> Principal {
-        self.try_create_and_install_with_args(wasm, init_bytes, install_cycles)
-            .unwrap_or_else(|err| panic!("{err}"))
-    }
-
-    /// Install one arbitrary wasm module with caller-provided init bytes.
-    fn try_create_and_install_with_args(
-        &self,
-        wasm: Vec<u8>,
-        init_bytes: Vec<u8>,
-        install_cycles: u128,
-    ) -> Result<Principal, CanisterInstallError> {
-        self.try_create_and_install(InstallSpec::new(wasm, init_bytes, install_cycles))
-    }
-
     /// Install one arbitrary wasm module from a generic install specification.
     fn create_and_install(&self, spec: InstallSpec) -> Principal {
         self.try_create_and_install(spec)
@@ -252,17 +217,26 @@ fn try_create_funded_and_install(
     pocket_ic: &PocketIc,
     spec: InstallSpec,
 ) -> Result<Principal, CanisterInstallError> {
-    let canister_id = pocket_ic.create_canister();
+    let canister_id = try_install_step(CanisterInstallPhase::CreateCanister, None, &spec, || {
+        pocket_ic.create_canister()
+    })?;
     let diagnostic_sender = spec.install_sender.unwrap_or_else(Principal::anonymous);
     if spec.cycles > 0 {
-        let _ = pocket_ic.add_cycles(canister_id, spec.cycles);
+        try_install_step(
+            CanisterInstallPhase::AddCycles,
+            Some(canister_id),
+            &spec,
+            || pocket_ic.add_cycles(canister_id, spec.cycles),
+        )?;
     }
 
+    // Move the Wasm and init payload only after retaining failure context.
+    let label = spec.label.clone();
     let install = catch_unwind(AssertUnwindSafe(|| {
         pocket_ic.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
     }));
     if let Err(payload) = install {
-        let message = transport::panic_payload_to_string(payload.as_ref());
+        let source = PocketIcOperationError::from_panic(payload.as_ref());
         let context = if let Some(label) = &spec.label {
             format!("install_canister trapped ({label})")
         } else {
@@ -279,11 +253,12 @@ fn try_create_funded_and_install(
             eprintln!("{context}: {report}");
         }));
 
-        return if let Some(label) = spec.label {
-            Err(CanisterInstallError::labeled(canister_id, label, message))
-        } else {
-            Err(CanisterInstallError::new(canister_id, message))
-        };
+        return Err(CanisterInstallError::new(
+            CanisterInstallPhase::InstallCode,
+            Some(canister_id),
+            label,
+            source,
+        ));
     }
 
     Ok(canister_id)
@@ -291,6 +266,22 @@ fn try_create_funded_and_install(
 
 fn is_install_code_rate_limited(response: &RejectResponse) -> bool {
     response.error_code == ErrorCode::CanisterInstallCodeRateLimited
+}
+
+fn try_install_step<T>(
+    phase: CanisterInstallPhase,
+    canister_id: Option<Principal>,
+    spec: &InstallSpec,
+    operation: impl FnOnce() -> T,
+) -> Result<T, CanisterInstallError> {
+    catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
+        CanisterInstallError::new(
+            phase,
+            canister_id,
+            spec.label.clone(),
+            PocketIcOperationError::from_panic(payload.as_ref()),
+        )
+    })
 }
 
 fn retry_install_code_with<T, F, W>(

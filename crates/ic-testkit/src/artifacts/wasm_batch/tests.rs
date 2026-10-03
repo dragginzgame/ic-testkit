@@ -198,3 +198,39 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
         matches!(failure.error(), WasmBuildError::InvalidSpec { message } if message.contains("cannot be combined"))
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_missing_input_does_not_fail_other_compatible_batch_entries() {
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+    for invalid_first in [true, false] {
+        for observed in [true, false] {
+            let (root, spec) = fake_wasm_build_spec("batch-hash-isolation");
+            let good = LabeledWasmBuildSpec::new("good", spec.clone());
+            let bad =
+                LabeledWasmBuildSpec::new("bad", spec.with_additional_inputs(["missing-input"]));
+            let specs = if invalid_first {
+                [bad, good]
+            } else {
+                [good, bad]
+            };
+            let report = if observed {
+                build_wasm_canisters_cached_batch_with_progress(
+                    &specs,
+                    WasmBuildProgressConfig::new(),
+                    |_| {},
+                )
+            } else {
+                build_wasm_canisters_cached_batch(&specs)
+            }
+            .expect("valid batch labels");
+            assert_eq!(report.outcomes().count(), 1);
+            let failures = report.failures().collect::<Vec<_>>();
+            assert_eq!(failures.len(), 1);
+            assert_eq!(failures[0].label(), "bad");
+            assert_eq!(failures[0].phase(), WasmBuildFailurePhase::ContentHashing);
+            drop(report);
+            std::fs::remove_dir_all(root).expect("remove batch hashing fixture");
+        }
+    }
+}

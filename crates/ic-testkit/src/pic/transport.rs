@@ -1,10 +1,45 @@
 use std::any::Any;
 
-#[derive(Debug, Eq, PartialEq)]
-pub(super) enum PocketIcPanicKind {
-    DeadInstanceTransport { message: String },
-    Other { message: String },
+/// Captured PocketIC operation failure, retaining transport classification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PocketIcOperationError {
+    message: String,
+    transport: bool,
 }
+
+impl PocketIcOperationError {
+    /// Capture an upstream PocketIC panic message and classify its transport.
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        let message = message.into();
+        let transport = message_is_dead_instance_transport_error(&message);
+        Self { message, transport }
+    }
+
+    pub(super) fn from_panic(payload: &(dyn Any + Send)) -> Self {
+        Self::new(panic_payload_to_string(payload))
+    }
+
+    /// Read the original upstream message without contextual wrappers.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// Whether the message matches a recognized PocketIC transport failure.
+    #[must_use]
+    pub const fn is_transport(&self) -> bool {
+        self.transport
+    }
+}
+
+impl std::fmt::Display for PocketIcOperationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for PocketIcOperationError {}
 
 // Extract a stable string message from one panic payload.
 pub(super) fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
@@ -18,25 +53,14 @@ pub(super) fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
     "non-string panic payload".to_string()
 }
 
-// Classify one panic payload so callers can recover dead-instance restores
-// without repeating transport-string matching at each call site.
-pub(super) fn classify_pocket_ic_panic(payload: Box<dyn Any + Send>) -> PocketIcPanicKind {
-    let message = panic_payload_to_string(payload.as_ref());
-
-    if message_is_dead_instance_transport_error(&message) {
-        return PocketIcPanicKind::DeadInstanceTransport { message };
-    }
-
-    PocketIcPanicKind::Other { message }
-}
-
 // Check whether one panic payload belongs to the dead-instance transport class
 // without consuming it, so callers can still resume the original panic.
 pub(super) fn panic_is_dead_instance_transport(payload: &(dyn Any + Send)) -> bool {
-    matches!(
-        classify_pocket_ic_panic(Box::new(panic_payload_to_string(payload))),
-        PocketIcPanicKind::DeadInstanceTransport { .. }
-    )
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&'static str>().copied())
+        .is_some_and(message_is_dead_instance_transport_error)
 }
 
 // Recognize maintained PocketIC request-error shapes for restore recovery.
@@ -51,8 +75,10 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 /// requires a reqwest debug error with a PocketIC instance URL and a recognized
 /// transport source, optionally prefixed by PocketIC's HTTP panic context.
 /// Generic application messages and bare I/O error kinds do not qualify.
-/// A testkit [`super::CandidCallError`] tagged as transport is recognized by
-/// its structured kind rather than by parsing its contextual display message.
+/// Testkit [`super::CandidCallError`] and [`PocketIcOperationError`] causes
+/// retain their transport classification through contextual display wrappers.
+/// Snapshot and installation failures expose their operation cause through
+/// the error source chain.
 ///
 /// Use this only for errors originating in a PocketIC operation. This is a
 /// message-based heuristic, not proof that the server or instance has died;
@@ -62,6 +88,12 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(candidate) = current {
+        if candidate
+            .downcast_ref::<PocketIcOperationError>()
+            .is_some_and(PocketIcOperationError::is_transport)
+        {
+            return true;
+        }
         if candidate
             .downcast_ref::<super::CandidCallError>()
             .is_some_and(|error| error.kind() == super::CandidCallErrorKind::Transport)
@@ -132,8 +164,8 @@ fn message_is_dead_instance_transport_error(message: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PocketIcPanicKind, classify_pocket_ic_panic, is_dead_instance_transport_error,
-        is_dead_pocket_ic_transport_error,
+        PocketIcOperationError, is_dead_instance_transport_error,
+        is_dead_pocket_ic_transport_error, panic_is_dead_instance_transport,
     };
 
     #[derive(Debug)]
@@ -172,12 +204,10 @@ mod tests {
 
     #[test]
     fn classify_pocket_ic_panic_marks_dead_instance_transport() {
-        let classified = classify_pocket_ic_panic(Box::new(INCOMPLETE.to_owned()));
+        let classified = PocketIcOperationError::new(INCOMPLETE);
 
-        assert!(matches!(
-            classified,
-            PocketIcPanicKind::DeadInstanceTransport { .. }
-        ));
+        assert!(classified.is_transport());
+        assert!(panic_is_dead_instance_transport(&INCOMPLETE));
     }
 
     #[test]
@@ -187,6 +217,44 @@ mod tests {
 
         let unrelated = WrapperError(std::io::Error::other("request rejected"));
         assert!(!is_dead_pocket_ic_transport_error(&unrelated));
+    }
+
+    #[test]
+    fn snapshot_and_install_wrappers_preserve_transport_causes() {
+        use super::super::{CanisterInstallError, CanisterInstallPhase, ControllerSnapshotError};
+        let canister_id = candid::Principal::anonymous();
+        for message in [REFUSED, "unrelated application panic"] {
+            let expected = message == REFUSED;
+            let capture = ControllerSnapshotError::CapturePanicked {
+                canister_id,
+                source: PocketIcOperationError::new(message),
+                cleanup_failures: vec![],
+            };
+            let restore = ControllerSnapshotError::RestorePanicked {
+                canister_id,
+                source: PocketIcOperationError::new(message),
+            };
+            for snapshot in [capture, restore] {
+                assert_eq!(is_dead_pocket_ic_transport_error(&snapshot), expected);
+                let wrapper = WrapperError(std::io::Error::other(snapshot));
+                assert_eq!(is_dead_pocket_ic_transport_error(&wrapper), expected);
+            }
+            for phase in [
+                CanisterInstallPhase::CreateCanister,
+                CanisterInstallPhase::AddCycles,
+                CanisterInstallPhase::InstallCode,
+            ] {
+                let install = CanisterInstallError::new(
+                    phase,
+                    None,
+                    Some("fixture".into()),
+                    PocketIcOperationError::new(message),
+                );
+                assert_eq!(is_dead_pocket_ic_transport_error(&install), expected);
+                let wrapper = WrapperError(std::io::Error::other(install));
+                assert_eq!(is_dead_pocket_ic_transport_error(&wrapper), expected);
+            }
+        }
     }
 
     #[test]
@@ -211,10 +279,8 @@ mod tests {
         ] {
             let error = WrapperError(std::io::Error::other(message.to_owned()));
             assert!(!is_dead_pocket_ic_transport_error(&error), "{message}");
-            assert!(matches!(
-                classify_pocket_ic_panic(Box::new(message.to_owned())),
-                PocketIcPanicKind::Other { .. }
-            ));
+            assert!(!PocketIcOperationError::new(message).is_transport());
+            assert!(!panic_is_dead_instance_transport(&message.to_owned()));
         }
         let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
         assert!(!is_dead_pocket_ic_transport_error(&refused));

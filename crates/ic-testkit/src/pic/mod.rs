@@ -32,10 +32,7 @@ mod startup;
 mod time;
 mod transport;
 
-pub use baseline::{
-    CachedPocketIcBaseline, CachedPocketIcBaselineGuard,
-    restore_or_rebuild_cached_pocket_ic_baseline,
-};
+pub use baseline::CachedPocketIcBaseline;
 pub use baseline_pool::{
     BaselinePoolContractError, BaselinePoolError, BaselinePoolOutcome,
     BaselinePoolPreparationError, BaselinePoolTimings, BaselinePreparationStage,
@@ -55,7 +52,7 @@ pub use diagnostics::{
 };
 pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
-    StandaloneCanisterInstallError,
+    CanisterInstallPhase, StandaloneCanisterInstallError,
 };
 pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
 pub use snapshot::{
@@ -73,7 +70,7 @@ pub use startup::{
     PocketIcStartupError,
 };
 pub use time::PocketIcTimeExt;
-pub use transport::is_dead_pocket_ic_transport_error;
+pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};
 
 /// All PocketIC extension traits, and no data types.
 ///

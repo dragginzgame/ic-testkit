@@ -6,7 +6,7 @@ use std::{
 use candid::Principal;
 use pocket_ic::{PocketIc, RejectResponse};
 
-use super::transport;
+use super::{PocketIcOperationError, transport};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ControllerSnapshot {
@@ -76,8 +76,8 @@ pub enum ControllerSnapshotError {
     CapturePanicked {
         /// Canister whose capture panicked.
         canister_id: Principal,
-        /// Captured panic message.
-        message: String,
+        /// Original operation failure and transport classification.
+        source: PocketIcOperationError,
         /// Failures while deleting snapshots captured earlier in the set.
         cleanup_failures: Vec<SnapshotCleanupFailure>,
     },
@@ -92,14 +92,14 @@ pub enum ControllerSnapshotError {
     RestorePanicked {
         /// Canister whose restore panicked.
         canister_id: Principal,
-        /// Captured panic message.
-        message: String,
+        /// Original operation failure and transport classification.
+        source: PocketIcOperationError,
     },
 }
 
 enum SnapshotCaptureFailure {
     Rejected(Vec<SnapshotAttemptFailure>),
-    Panicked(String),
+    Panicked(PocketIcOperationError),
 }
 
 /// Controller-aware capture and restore of related canister snapshots.
@@ -317,11 +317,11 @@ where
                     cleanup_failures,
                 });
             }
-            Err(SnapshotCaptureFailure::Panicked(message)) => {
+            Err(SnapshotCaptureFailure::Panicked(source)) => {
                 let cleanup_failures = cleanup_captured_snapshots(pocket_ic, &snapshots);
                 return Err(ControllerSnapshotError::CapturePanicked {
                     canister_id,
-                    message,
+                    source,
                     cleanup_failures,
                 });
             }
@@ -417,11 +417,11 @@ impl std::fmt::Display for ControllerSnapshotError {
             ),
             Self::CapturePanicked {
                 canister_id,
-                message,
+                source,
                 cleanup_failures,
             } => write!(
                 f,
-                "snapshot capture panicked for {canister_id}: {message}; {} partial snapshots could not be cleaned up",
+                "snapshot capture panicked for {canister_id}: {source}; {} partial snapshots could not be cleaned up",
                 cleanup_failures.len()
             ),
             Self::RestoreFailed {
@@ -434,13 +434,22 @@ impl std::fmt::Display for ControllerSnapshotError {
             ),
             Self::RestorePanicked {
                 canister_id,
-                message,
-            } => write!(f, "snapshot restore panicked for {canister_id}: {message}"),
+                source,
+            } => write!(f, "snapshot restore panicked for {canister_id}: {source}"),
         }
     }
 }
 
-impl std::error::Error for ControllerSnapshotError {}
+impl std::error::Error for ControllerSnapshotError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::CapturePanicked { source, .. } | Self::RestorePanicked { source, .. } => {
+                Some(source)
+            }
+            _ => None,
+        }
+    }
+}
 
 fn ordered_unique_canister_ids<I>(
     canister_ids: I,
@@ -488,7 +497,7 @@ fn try_take_snapshot(
         match capture {
             Err(payload) => {
                 return Err(SnapshotCaptureFailure::Panicked(
-                    transport::panic_payload_to_string(payload.as_ref()),
+                    PocketIcOperationError::from_panic(payload.as_ref()),
                 ));
             }
             Ok(snapshot) => match snapshot {
@@ -556,7 +565,7 @@ fn restore_controller_snapshot(
             Err(payload) => {
                 return Err(ControllerSnapshotError::RestorePanicked {
                     canister_id,
-                    message: transport::panic_payload_to_string(payload.as_ref()),
+                    source: PocketIcOperationError::from_panic(payload.as_ref()),
                 });
             }
             Ok(Ok(())) => return Ok(()),

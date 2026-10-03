@@ -6,12 +6,64 @@ repository checkout. The complete historical changelog remains at
 
 ## Unreleased
 
+## 0.11.0
+
+This minor release fixes cache-hit input races and batch failure isolation,
+consolidates baseline reuse and installation APIs, and makes operation failures
+and benchmark aggregate identity explicit. The API and CSV schema changes are
+hard cuts; cache, stamp, protocol, and digest identifiers remain `v1`.
+
+### Migration
+
+Update downstream code for these API and report-schema changes:
+
+| Previous API or schema | 0.11.0 replacement |
+| --- | --- |
+| `restore_or_rebuild_cached_pocket_ic_baseline` and `CachedPocketIcBaselineGuard` | `CachedPocketIcBaselinePool::new(capacity, recipe)` and `acquire()`. Use capacity one for sequential reuse; acquisition returns a typed outcome and an exclusive lease. |
+| `create_and_install_with_args` and `try_create_and_install_with_args` | `create_and_install(InstallSpec::new(...))` and `try_create_and_install(InstallSpec::new(...))` |
+| `CanisterInstallError::canister_id() -> Principal` | `Option<Principal>`; creation failures have no id. Inspect `phase()` for `CreateCanister`, `AddCycles`, or `InstallCode`. |
+| `CanisterInstallError::new(id, message)` / `labeled(...)` | `new(phase, optional_id, optional_label, PocketIcOperationError)` |
+| Snapshot panic variants' `message` field | `source: PocketIcOperationError`; inspect `message()` and `is_transport()` on the cause, or follow `Error::source()`. |
+| `WasmBuildError::InputsChangedDuringBuild` and `ArtifactCacheError::InputsChangedDuringBuild` | `InputsChangedDuringAcquisition` |
+| `comparison.csv` without aggregate scope | Leading `scope` column, containing `suite` or `all`. Named suite `ALL` and the cross-suite aggregate are distinct. |
+
+`CachedPocketIcBaseline<T>` remains the owned snapshot-and-metadata value used
+by recipe pools. A recipe declares its restore/reset/readiness/validation
+contract and recovery policy; pool leases prevent another acquisition from
+replacing or mutating the slot during recovery.
+
+Fallible installation now captures upstream failures during creation and cycle
+funding as well as installation. Standalone errors retain the caller's PocketIC
+instance at every failed stage. Snapshot and installation errors retain a shared
+operation cause so `is_dead_pocket_ic_transport_error` can classify it through
+contextual wrappers without broadening the strict transport parser.
+
+Ordinary warm Wasm acquisitions reject inputs that change after initial
+resolution, including conservative workspace inputs. Immutable-source sessions
+and prepared readers retain their explicit lease contract and skip repeated
+warm validation. Batches report input hashing/discovery failures per entry and
+continue with valid compatible entries. Input-race errors invalidate leased
+readers as before.
+
+Server diagnostic reads allocate only the bounded log prefix. Benchmark indices
+continue past `9999`, previous-run selection compares them numerically, and
+exhaustion returns an error rather than reusing an existing path. Empty commit
+hashes consistently use the `unknown` directory prefix.
+
+### Repository tooling and documentation
+
 Release CI cleanup now matches the selected server binary's device/inode,
 including renamed binaries, alongside its private port-file path. Unknown or
 unavailable executable identities retain scratch without signalling unrelated
 processes. Focused process/socket regressions cover configured and default
 binary selection, identity failures and ownership races. This changes repository
-release tooling; the published crate's runtime API and dependencies are unchanged.
+release tooling; the runtime changes are described above.
+
+README examples and API guidance are updated against the implementation, with
+all 27 Rust examples checked. The documentation index separates current usage
+from historical design records. Targeted regressions cover the cache, transport,
+installation, output-read, and benchmark boundaries described above, alongside
+existing live PocketIC recovery and concurrency checks.
 
 ## 0.10.4
 

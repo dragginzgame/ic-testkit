@@ -1108,3 +1108,60 @@ fn create_cache_entry(
     write_last_used(&path, last_used).expect("write cache use time");
     path
 }
+
+#[cfg(unix)]
+#[test]
+fn warm_hits_reject_source_mutation_for_active_and_materialized_artifacts() {
+    use super::build_wasm_canisters_cached;
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    for mode in ["isolated", "shared", "scheduled"] {
+        for active_artifact in [true, false] {
+            let (root, mut spec) = fake_wasm_build_spec("warm-hit-source-race");
+            if mode != "isolated" {
+                spec = spec.with_shared_incremental_target(root.join("incremental"));
+            }
+            if mode == "scheduled" {
+                spec = spec.with_shared_incremental_target_maintenance_at_most_every(
+                    SharedIncrementalTargetPrunePolicy::new(),
+                    Duration::from_secs(60),
+                );
+            }
+            let cold = build_wasm_canisters_cached(&spec).expect("build initial artifacts");
+            assert!(
+                build_wasm_canisters_cached(&spec)
+                    .expect("unchanged hit")
+                    .is_reused()
+            );
+            if !active_artifact {
+                fs::remove_file(&super::expected_artifacts(&spec, &spec.target_dir)[0])
+                    .expect("remove caller artifact");
+            }
+            let mut mutated = false;
+            let result = build_wasm_canisters_cached_with_progress(
+                &spec,
+                WasmBuildProgressConfig::new(),
+                |event| {
+                    if !mutated && matches!(event, WasmBuildProgressEvent::InputsResolved { .. }) {
+                        fs::write(
+                            root.join("fixture/src/lib.rs"),
+                            "pub fn value() -> u8 { 2 }\n",
+                        )
+                        .expect("mutate source during acquisition");
+                        mutated = true;
+                    }
+                },
+            );
+            assert!(mutated);
+            assert!(
+                matches!(
+                    result,
+                    Err(WasmBuildError::InputsChangedDuringAcquisition { .. })
+                ),
+                "{mode}, active={active_artifact}: {result:?}"
+            );
+            drop(cold);
+            fs::remove_dir_all(root).expect("remove warm-hit race fixture");
+        }
+    }
+}

@@ -14,7 +14,7 @@ fn fallible_install_preserves_the_original_failure_after_diagnostics() {
         error.message()
     );
     pocket_ic
-        .canister_status(error.canister_id(), None)
+        .canister_status(error.canister_id().expect("creation succeeded"), None)
         .expect("the failed install's canister should remain inspectable");
 }
 
@@ -27,7 +27,10 @@ fn failed_standalone_install_returns_the_caller_instance() {
         panic!("invalid Wasm should fail standalone installation");
     };
 
-    let canister_id = error.install_error().canister_id();
+    let canister_id = error
+        .install_error()
+        .canister_id()
+        .expect("creation succeeded");
     assert_eq!(
         error.install_error().label(),
         Some("invalid-standalone-wasm")

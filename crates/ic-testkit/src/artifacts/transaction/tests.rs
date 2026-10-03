@@ -259,7 +259,7 @@ fn changed_inputs_reject_commit_and_remove_staging() {
 
     assert!(matches!(
         error,
-        ArtifactCacheError::InputsChangedDuringBuild { .. }
+        ArtifactCacheError::InputsChangedDuringAcquisition { .. }
     ));
     assert!(!staging.exists());
     fs::remove_dir_all(root).expect("remove changed-inputs test directory");

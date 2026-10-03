@@ -22,6 +22,9 @@
 pub mod benchmark;
 
 #[cfg(not(target_arch = "wasm32"))]
+mod batch;
+
+#[cfg(not(target_arch = "wasm32"))]
 mod timing;
 
 #[cfg(not(target_arch = "wasm32"))]
