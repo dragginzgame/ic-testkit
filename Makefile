@@ -12,7 +12,7 @@ CHANGELOG_VERSION ?=
 
 CI_TARGETS := changelog-check actions-check publish-guards-check \
 	release-guards-check fmt-check check check-wasm clippy docs-check test \
-	build-test-canisters test-canisters package publish-dry-run
+	package publish-dry-run
 
 RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 
@@ -57,7 +57,7 @@ test:
 build-test-canisters:
 	CARGO_TARGET_DIR=target/pic-wasm cargo build --locked --target wasm32-unknown-unknown -p ic_testkit_perf_probe
 
-test-canisters: build-test-canisters
+test-canisters:
 	cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
 
 fmt:

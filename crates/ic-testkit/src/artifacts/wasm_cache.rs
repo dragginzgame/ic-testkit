@@ -1814,12 +1814,16 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             })
             .collect::<Vec<_>>();
         let results = progress.run_phase(WasmBuildProgressPhase::InputDiscovery, || {
+            let parsed = ParsedCargoMetadata::parse(metadata);
             pending
                 .into_iter()
                 .map(|index| {
                     let spec = &self.specs[index];
                     let result = (|| {
-                        let inputs = resolve_local_inputs(spec, metadata)?;
+                        let parsed = parsed
+                            .as_ref()
+                            .map_err(|message| invalid_metadata(message))?;
+                        let inputs = resolve_local_inputs(spec, parsed)?;
                         validate_shared_incremental_target_boundary(
                             spec,
                             &inputs.validation_inputs,
@@ -3438,7 +3442,9 @@ fn build_fingerprint_with_progress(
     let discovery_started = Instant::now();
     let (inputs, exclusions) =
         progress.run_phase(WasmBuildProgressPhase::InputDiscovery, || {
-            let inputs = resolve_local_inputs(spec, &metadata)?;
+            let parsed = ParsedCargoMetadata::parse(&metadata)
+                .map_err(|message| invalid_metadata(&message))?;
+            let inputs = resolve_local_inputs(spec, &parsed)?;
             validate_shared_incremental_target_boundary(spec, &inputs.validation_inputs)?;
             let exclusions = source_exclusions(spec, &inputs.validation_inputs);
             Ok::<_, WasmBuildError>((inputs, exclusions))
@@ -3597,6 +3603,61 @@ struct MetadataPackage {
     semantic_fields: Vec<(&'static str, Option<String>)>,
 }
 
+// Parsed once per Cargo resolution context. Each specification still selects
+// its own closure and independently validates filesystem inputs.
+struct ParsedCargoMetadata<'a> {
+    packages: HashMap<String, MetadataPackage>,
+    workspace_members: HashSet<&'a str>,
+    nodes: HashMap<String, MetadataNode<'a>>,
+    workspace_root: Option<&'a str>,
+}
+
+struct MetadataNode<'a> {
+    dependencies: Vec<String>,
+    value: &'a Value,
+}
+
+impl<'a> ParsedCargoMetadata<'a> {
+    fn parse(metadata: &'a Value) -> Result<Self, String> {
+        let packages = metadata_packages(metadata)?;
+        let workspace_members = metadata
+            .get("workspace_members")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "Cargo metadata has no workspace member array".to_owned())?
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        let values = metadata
+            .pointer("/resolve/nodes")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "Cargo metadata has no resolved dependency nodes".to_owned())?;
+        let mut nodes = HashMap::new();
+        for value in values {
+            let id = required_string(value, "id")?;
+            let dependencies = value
+                .get("deps")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "Cargo metadata dependency node has no deps array".to_owned())?
+                .iter()
+                .map(|dependency| required_string(dependency, "pkg"))
+                .collect::<Result<_, _>>()?;
+            nodes.insert(
+                id,
+                MetadataNode {
+                    dependencies,
+                    value,
+                },
+            );
+        }
+        Ok(Self {
+            packages,
+            workspace_members,
+            nodes,
+            workspace_root: metadata.get("workspace_root").and_then(Value::as_str),
+        })
+    }
+}
+
 const SEMANTIC_PACKAGE_FIELDS: &[&str] = &[
     "authors",
     "default_run",
@@ -3624,28 +3685,30 @@ struct LockedPackageIdentity {
 
 fn resolve_local_inputs(
     spec: &WasmBuildSpec,
-    metadata: &Value,
+    metadata: &ParsedCargoMetadata<'_>,
 ) -> Result<ResolvedLocalInputs, WasmBuildError> {
-    let packages = metadata_packages(metadata)?;
-    let mut selected_ids = selected_package_ids(spec, metadata, &packages)?;
-    let dependencies = metadata_dependencies(metadata)?;
+    let mut selected_ids = selected_package_ids(spec, metadata)?;
     let mut closure = BTreeSet::new();
     while let Some(id) = selected_ids.pop_front() {
         if !closure.insert(id.clone()) {
             continue;
         }
-        if let Some(deps) = dependencies.get(&id) {
-            selected_ids.extend(deps.iter().cloned());
+        if let Some(node) = metadata.nodes.get(&id) {
+            selected_ids.extend(node.dependencies.iter().cloned());
         }
     }
 
     let workspace_root = metadata
-        .get("workspace_root")
-        .and_then(Value::as_str)
+        .workspace_root
         .map_or_else(|| spec.workspace_root.clone(), PathBuf::from);
-    let projection = semantic_workspace_projection(metadata, &packages, &closure, &workspace_root)?;
+    let projection = semantic_workspace_projection(metadata, &closure, &workspace_root)?;
     let mut validation_inputs = workspace_configuration_inputs(spec, &workspace_root)?;
-    append_package_inputs(&mut validation_inputs, &packages, closure, &workspace_root)?;
+    append_package_inputs(
+        &mut validation_inputs,
+        &metadata.packages,
+        closure,
+        &workspace_root,
+    )?;
     append_additional_inputs(&mut validation_inputs, spec, &workspace_root);
     let fingerprint = projection.map_or(LocalInputFingerprint::Conservative, |workspace| {
         LocalInputFingerprint::Projected {
@@ -3663,11 +3726,11 @@ fn resolve_local_inputs(
     })
 }
 
-fn metadata_packages(metadata: &Value) -> Result<HashMap<String, MetadataPackage>, WasmBuildError> {
+fn metadata_packages(metadata: &Value) -> Result<HashMap<String, MetadataPackage>, String> {
     let packages_value = metadata
         .get("packages")
         .and_then(Value::as_array)
-        .ok_or_else(|| invalid_metadata("Cargo metadata has no package array"))?;
+        .ok_or_else(|| "Cargo metadata has no package array".to_owned())?;
     let mut packages = HashMap::new();
     for value in packages_value {
         let source = optional_string(value, "source")?;
@@ -3690,22 +3753,16 @@ fn metadata_packages(metadata: &Value) -> Result<HashMap<String, MetadataPackage
 
 fn selected_package_ids(
     spec: &WasmBuildSpec,
-    metadata: &Value,
-    packages: &HashMap<String, MetadataPackage>,
+    metadata: &ParsedCargoMetadata<'_>,
 ) -> Result<VecDeque<String>, WasmBuildError> {
-    let workspace_members = metadata
-        .get("workspace_members")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_metadata("Cargo metadata has no workspace member array"))?
-        .iter()
-        .filter_map(Value::as_str)
-        .collect::<HashSet<_>>();
     let mut selected_ids = VecDeque::new();
     for requested in &spec.packages {
-        let matches = packages
+        let matches = metadata
+            .packages
             .values()
             .filter(|package| {
-                package.name == *requested && workspace_members.contains(package.id.as_str())
+                package.name == *requested
+                    && metadata.workspace_members.contains(package.id.as_str())
             })
             .map(|package| package.id.clone())
             .collect::<Vec<_>>();
@@ -3726,29 +3783,8 @@ fn selected_package_ids(
     Ok(selected_ids)
 }
 
-fn metadata_dependencies(metadata: &Value) -> Result<HashMap<String, Vec<String>>, WasmBuildError> {
-    let mut dependencies = HashMap::<String, Vec<String>>::new();
-    let nodes = metadata
-        .pointer("/resolve/nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_metadata("Cargo metadata has no resolved dependency nodes"))?;
-    for node in nodes {
-        let id = required_string(node, "id")?;
-        let deps = node
-            .get("deps")
-            .and_then(Value::as_array)
-            .ok_or_else(|| invalid_metadata("Cargo metadata dependency node has no deps array"))?
-            .iter()
-            .map(|dependency| required_string(dependency, "pkg"))
-            .collect::<Result<Vec<_>, _>>()?;
-        dependencies.insert(id, deps);
-    }
-    Ok(dependencies)
-}
-
 fn semantic_workspace_projection(
-    metadata: &Value,
-    packages: &HashMap<String, MetadataPackage>,
+    metadata: &ParsedCargoMetadata<'_>,
     closure: &BTreeSet<String>,
     workspace_root: &Path,
 ) -> Result<Option<InputDigest>, WasmBuildError> {
@@ -3757,7 +3793,8 @@ fn semantic_workspace_projection(
     let locked_packages = locked_package_identities(workspace_root)?;
     let mut identities = HashMap::new();
     for id in closure {
-        let package = packages
+        let package = metadata
+            .packages
             .get(id)
             .ok_or_else(|| invalid_metadata(&format!("resolved package `{id}` is missing")))?;
         let Some(identity) = semantic_package_identity(package, workspace_root, &locked_packages)
@@ -3767,25 +3804,18 @@ fn semantic_workspace_projection(
         identities.insert(id.as_str(), identity);
     }
 
-    let nodes = metadata
-        .pointer("/resolve/nodes")
-        .and_then(Value::as_array)
-        .ok_or_else(|| invalid_metadata("Cargo metadata has no resolved dependency nodes"))?;
-    let nodes_by_id = nodes
-        .iter()
-        .map(|node| Ok((required_string(node, "id")?, node)))
-        .collect::<Result<HashMap<_, _>, WasmBuildError>>()?;
     let mut projected_packages = closure
         .iter()
         .map(|id| {
-            let package = packages
+            let package = metadata
+                .packages
                 .get(id)
                 .expect("selected package closure was validated above");
             let identity = identities[id.as_str()];
-            let node = nodes_by_id.get(id).copied().ok_or_else(|| {
+            let node = metadata.nodes.get(id).ok_or_else(|| {
                 invalid_metadata(&format!("resolved package `{id}` has no dependency node"))
             })?;
-            let projection = semantic_package_projection(package, node, &identities)?;
+            let projection = semantic_package_projection(package, node.value, &identities)?;
             Ok::<_, WasmBuildError>((identity, projection))
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -3985,8 +4015,10 @@ fn semantic_package_projection(
         .ok_or_else(|| invalid_metadata("Cargo metadata dependency node has no deps array"))?
         .iter()
         .map(|dependency| {
-            let name = required_string(dependency, "name")?;
-            let package_id = required_string(dependency, "pkg")?;
+            let name = required_string(dependency, "name")
+                .map_err(|message| invalid_metadata(&message))?;
+            let package_id =
+                required_string(dependency, "pkg").map_err(|message| invalid_metadata(&message))?;
             let identity = identities
                 .get(package_id.as_str())
                 .copied()
@@ -4895,21 +4927,21 @@ fn add_if_present(inputs: &mut Vec<(PathBuf, PathBuf)>, label: &str, path: PathB
     }
 }
 
-fn required_string(value: &Value, field: &str) -> Result<String, WasmBuildError> {
+fn required_string(value: &Value, field: &str) -> Result<String, String> {
     value
         .get(field)
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| invalid_metadata(&format!("Cargo metadata field `{field}` is missing")))
+        .ok_or_else(|| format!("Cargo metadata field `{field}` is missing"))
 }
 
-fn optional_string(value: &Value, field: &str) -> Result<Option<String>, WasmBuildError> {
+fn optional_string(value: &Value, field: &str) -> Result<Option<String>, String> {
     match value.get(field) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(value)) => Ok(Some(value.clone())),
-        Some(_) => Err(invalid_metadata(&format!(
+        Some(_) => Err(format!(
             "Cargo metadata field `{field}` is not a string or null"
-        ))),
+        )),
     }
 }
 

@@ -6,6 +6,46 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.0] - 2026-10-03 - One fixture builder and shared Cargo metadata
+
+### Changed
+
+- Standalone fixture pools own their builder at construction:
+  `CachedStandaloneCanisterFixturePool::new(build_fixture)`. Acquire with
+  `pool.acquire()`. The per-acquisition builder and `Default` constructor are
+  removed as a source API hard cut; captured builders use the additional inferred
+  type parameter. Capacity, snapshot funding, restore order, recovery, and guard
+  types are preserved.
+- Wasm batches parse Cargo package, membership, and dependency indexes once per
+  resolution group. Standalone builds share this representation. Each batch
+  entry still selects its own dependency closure and validates filesystem inputs;
+  distinct feature graphs remain separately resolved.
+- CI runs canister integration tests once through the ordinary test stage,
+  removing their repeated stage and unused preliminary fixture build.
+  `make test-canisters` acquires its own artifacts; the standalone manual
+  `make build-test-canisters` target remains available.
+- Release-push guards exercise command behavior instead of asserting exact
+  Makefile recipe text. Clean, dirty, untracked, stale-tag, and failed-push cases
+  verify gating and failure propagation without real publication or pushes.
+
+### Documentation
+
+- Updates standalone pool examples and ships the constructor/acquisition
+  migration in the package changelog. Downstream callers must adopt both changes
+  together when selecting `0.14`.
+- Repository-owned format identifiers remain `v1`; persisted layouts are
+  unchanged.
+
+### Testing
+
+- Focused PocketIC 16 checks cover owned builders, cold builds, warm reuse,
+  failed-restore rebuilding, panic invalidation, and capacity-scoped concurrency.
+- Wasm checks cover shared malformed-metadata failures, entry-specific input
+  failures, feature resolution, semantic fingerprints, source-mutation rejection,
+  and a cold canister build with live benchmark markers.
+- Release guards and cleanup fixtures, Clippy, rustdoc, and formatting pass.
+  Full pre-push validation remains maintainer-owned.
+
 ## [0.13.0] - 2026-10-03 - Authoritative benchmark and baseline state
 
 ### Changed

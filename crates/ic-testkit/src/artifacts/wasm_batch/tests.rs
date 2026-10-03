@@ -85,6 +85,44 @@ fn batch_failure_retains_partial_metadata_timing() {
     std::fs::remove_dir_all(root).expect("remove failure timing fixture");
 }
 
+#[cfg(unix)]
+#[test]
+fn malformed_shared_metadata_is_reported_for_every_entry() {
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, spec) = fake_wasm_build_spec("batch-malformed-metadata");
+    let cargo = root.join("cargo.sh");
+    write_executable_script(
+        &cargo,
+        b"#!/bin/sh\ncase \"$1\" in\n--version) echo 'cargo 1.0.0' ;;\nmetadata) echo '{}' ;;\n*) exit 97 ;;\nesac\n",
+    );
+    let specs = [
+        LabeledWasmBuildSpec::new("first", spec.clone()),
+        LabeledWasmBuildSpec::new("second", spec),
+    ];
+    let report = build_wasm_canisters_cached_batch_with_progress(
+        &specs,
+        WasmBuildProgressConfig::new(),
+        |_| {},
+    )
+    .expect("valid labeled batch");
+
+    assert_eq!(report.outcomes().count(), 0);
+    let failures = report.failures().collect::<Vec<_>>();
+    assert_eq!(failures.len(), 2);
+    for (index, failure) in failures.iter().enumerate() {
+        assert_eq!(failure.index(), index);
+        assert_eq!(failure.label(), specs[index].label());
+        assert_eq!(failure.phase(), WasmBuildFailurePhase::InputDiscovery);
+        assert!(matches!(
+            failure.error(),
+            WasmBuildError::InvalidMetadata { .. }
+        ));
+        assert_eq!(failure.timings().cargo_build(), None);
+    }
+    std::fs::remove_dir_all(root).expect("remove malformed metadata fixture");
+}
+
 #[test]
 fn batch_rejects_invalid_labels_before_progress_or_build_work() {
     let invalid = WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug");

@@ -444,12 +444,12 @@ use ic_testkit::pic::{
 };
 
 static POOL: CachedStandaloneCanisterFixturePool<8> =
-    CachedStandaloneCanisterFixturePool::new();
+    CachedStandaloneCanisterFixturePool::new(build_fixture);
 
-fn read_pooled_counter(build_fixture: impl Fn() -> StandaloneCanisterFixture)
-    -> Result<u64, Box<dyn std::error::Error>>
+# fn build_fixture() -> StandaloneCanisterFixture { unimplemented!() }
+fn read_pooled_counter() -> Result<u64, Box<dyn std::error::Error>>
 {
-    let (fixture, outcome) = POOL.acquire(build_fixture)?;
+    let (fixture, outcome) = POOL.acquire()?;
     let value: u64 = fixture.query_candid("get", ())?;
     assert!(matches!(
         outcome,
@@ -466,10 +466,11 @@ stale teardown, and total time. Snapshot failures retain their partial timings,
 while dead-transport recovery preserves both the restore and rebuild failure
 when replacement capture also fails.
 
-One pool must represent one fixture recipe. Pass a builder with the same Wasm,
-init arguments, topology, and seeded state on every acquisition; use a separate
-pool for a different recipe. Setup performed by the builder is included in the
-captured baseline.
+One pool owns one fixture builder. It must produce the same Wasm, init arguments,
+topology, and seeded state whenever it runs; use a separate pool for a different
+recipe. Setup performed by the builder is included in the captured baseline.
+For builders that capture configuration, use
+`CachedStandaloneCanisterFixturePool::<8, _>::new(move || build_fixture(&config))`.
 
 The lease's `Drop` implementation releases a capacity slot, so Clippy can
 suggest tightening its scope. Drop the lease explicitly when the test no longer
@@ -1411,8 +1412,9 @@ make release-check
 ```
 
 The release gate includes formatting, native and Wasm checks, warnings-denied
-Clippy, rustdoc, unit and live PocketIC tests, canister fixture builds, package
-verification, publish dry-run, and the Rust 1.88 MSRV check.
+Clippy, rustdoc, unit and live PocketIC tests, package verification, publish
+dry-run, and the Rust 1.88 MSRV check. The test suite builds its own canister
+artifacts; CI runs the canister integration target once through `make test`.
 
 CI, release, and publish flows preserve Cargo build artifacts for incremental
 reuse. Only the standalone, manually invoked `make clean` target runs

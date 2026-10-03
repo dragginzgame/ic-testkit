@@ -270,9 +270,12 @@ mkdir -p "${push_case}/bin"
 printf '[workspace.package]\nversion = "0.8.1"\n' >"${push_case}/Cargo.toml"
 cat >"${push_case}/bin/git" <<'EOF'
 #!/usr/bin/env bash
+printf 'git %s\n' "$*" >>"${TRACE_FILE}"
 case "${1:-}" in
-  diff-index) exit 0 ;;
-  ls-files) exit 0 ;;
+  diff-index) exit "${CLEAN_STATUS:-0}" ;;
+  ls-files)
+    [[ -z "${UNTRACKED_FILE:-}" ]] || printf '%s\n' "${UNTRACKED_FILE}"
+    ;;
   rev-parse)
     case "${2:-}" in
       'v0.8.1^{}') printf '%s\n' "${TAG_COMMIT}" ;;
@@ -281,42 +284,57 @@ case "${1:-}" in
     esac
     ;;
   push)
-    : >"${PUSH_MARKER}"
+    exit "${PUSH_STATUS:-0}"
     ;;
   *) exit 2 ;;
 esac
 EOF
+# A push may not start another build or validation stage. These command
+# doubles make such a regression harmless and visible in the trace.
+for program in make cargo; do
+  cat >"${push_case}/bin/${program}" <<'EOF'
+#!/usr/bin/env bash
+printf 'unexpected %s %s\n' "${0##*/}" "$*" >>"${TRACE_FILE}"
+exit 97
+EOF
+  chmod +x "${push_case}/bin/${program}"
+done
 chmod +x "${push_case}/bin/git"
-(
-  cd "${push_case}"
-  PATH="${push_case}/bin:${PATH}" PUSH_MARKER="${push_case}/pushed" \
-    TAG_COMMIT=release HEAD_COMMIT=release \
-    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" release-push
-) >/dev/null 2>&1
-[[ -e "${push_case}/pushed" ]] \
-  || fail "release-push did not push a clean release tag"
 
-rm -f "${push_case}/pushed"
-set +e
-(
-  cd "${push_case}"
-  PATH="${push_case}/bin:${PATH}" PUSH_MARKER="${push_case}/pushed" \
-    TAG_COMMIT=stale HEAD_COMMIT=current \
-    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" release-push
-) >/dev/null 2>&1
-stale_tag_status="$?"
-set -e
-[[ "${stale_tag_status}" -ne 0 ]] || fail "release-push accepted a stale release tag"
-[[ ! -e "${push_case}/pushed" ]] || fail "release-push pushed a stale tag"
-
-release_push_block="$(awk '
-  $0 == "release-push: ensure-clean release-tag-check" { found = 1; next }
-  found && /^[^[:space:]].*:/ { exit }
-  found { print }
-' "${repo_root}/Makefile")"
-expected_push_block="$(printf '\tgit push --follow-tags')"
-[[ "${release_push_block}" == "${expected_push_block}" ]] \
-  || fail "release-push repeats fallible validation after the release commit and tag"
+for push_scenario in success stale-tag dirty untracked push-failure; do
+  : >"${push_case}/trace"
+  clean_status=0
+  push_status=0
+  tag_commit=release
+  untracked_file=""
+  expected_trace=$'git diff-index --quiet HEAD --\ngit ls-files --others --exclude-standard'
+  case "${push_scenario}" in
+    stale-tag) tag_commit=stale ;;
+    dirty) clean_status=23; expected_trace='git diff-index --quiet HEAD --' ;;
+    untracked) untracked_file=untracked-release-note.md ;;
+    push-failure) push_status=37 ;;
+  esac
+  if [[ "${clean_status}" -eq 0 && -z "${untracked_file}" ]]; then
+    expected_trace+=$'\ngit rev-parse v0.8.1^{}\ngit rev-parse HEAD'
+    [[ "${tag_commit}" != release ]] || expected_trace+=$'\ngit push --follow-tags'
+  fi
+  status=0
+  (
+    cd "${push_case}"
+    PATH="${push_case}/bin:${PATH}" TRACE_FILE="${push_case}/trace" \
+      TAG_COMMIT="${tag_commit}" HEAD_COMMIT=release CLEAN_STATUS="${clean_status}" \
+      UNTRACKED_FILE="${untracked_file}" PUSH_STATUS="${push_status}" \
+      "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
+      MAKE="${push_case}/bin/make" release-push
+  ) >/dev/null 2>&1 || status="$?"
+  if [[ "${push_scenario}" == success ]]; then
+    [[ "${status}" -eq 0 ]] || fail "release-push rejected a clean release tag"
+  else
+    [[ "${status}" -ne 0 ]] || fail "release-push hid ${push_scenario}"
+  fi
+  [[ "$(<"${push_case}/trace")" == "${expected_trace}" ]] \
+    || fail "release-push ran unexpected commands for ${push_scenario}"
+done
 
 sequence_case="${work_dir}/sequence"
 mkdir -p "${sequence_case}/bin"

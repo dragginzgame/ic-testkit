@@ -22,13 +22,13 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
 
 static STANDALONE_RESTORE_POOL: CachedStandaloneCanisterFixturePool<1> =
-    CachedStandaloneCanisterFixturePool::new();
+    CachedStandaloneCanisterFixturePool::new(build_empty_standalone_fixture);
 static STANDALONE_OVERLAP_POOL: CachedStandaloneCanisterFixturePool<2> =
-    CachedStandaloneCanisterFixturePool::new();
+    CachedStandaloneCanisterFixturePool::new(build_empty_standalone_fixture);
 static STANDALONE_CAPACITY_POOL: CachedStandaloneCanisterFixturePool<1> =
-    CachedStandaloneCanisterFixturePool::new();
+    CachedStandaloneCanisterFixturePool::new(build_empty_standalone_fixture);
 static STANDALONE_PANIC_POOL: CachedStandaloneCanisterFixturePool<1> =
-    CachedStandaloneCanisterFixturePool::new();
+    CachedStandaloneCanisterFixturePool::new(build_counted_empty_standalone_fixture);
 static STANDALONE_PANIC_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
@@ -110,7 +110,7 @@ fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
 #[test]
 fn bounded_standalone_pool_restores_and_reuses_one_slot() {
     let (fixture, outcome) = STANDALONE_RESTORE_POOL
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("first standalone pool fixture should capture");
     assert!(matches!(
         &outcome,
@@ -137,7 +137,7 @@ fn bounded_standalone_pool_restores_and_reuses_one_slot() {
     drop(fixture);
 
     let (fixture, outcome) = STANDALONE_RESTORE_POOL
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("cached standalone pool fixture should restore");
     assert!(matches!(
         &outcome,
@@ -160,7 +160,7 @@ fn bounded_standalone_pool_restores_and_reuses_one_slot() {
     drop(fixture);
 
     let (fixture, outcome) = STANDALONE_RESTORE_POOL
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("standalone pool snapshot should remain reusable");
     assert!(
         outcome.is_reused(),
@@ -172,14 +172,14 @@ fn bounded_standalone_pool_restores_and_reuses_one_slot() {
 #[test]
 fn bounded_standalone_pool_allows_capacity_scoped_overlap() {
     let (first, first_outcome) = STANDALONE_OVERLAP_POOL
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("first overlapping fixture should capture");
     assert!(!first_outcome.is_reused(), "first pool slot should be new");
 
     let (ready_tx, ready_rx) = mpsc::channel();
     let worker = thread::spawn(move || {
         let (second, second_outcome) = STANDALONE_OVERLAP_POOL
-            .acquire(build_empty_standalone_fixture)
+            .acquire()
             .expect("second overlapping fixture should capture");
         ready_tx
             .send((second.pocket_ic().instance_id(), second_outcome))
@@ -202,7 +202,7 @@ fn bounded_standalone_pool_allows_capacity_scoped_overlap() {
 #[test]
 fn bounded_standalone_pool_waits_when_capacity_is_exhausted() {
     let (first, first_outcome) = STANDALONE_CAPACITY_POOL
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("first capacity-limited fixture should capture");
     assert!(!first_outcome.is_reused(), "first pool slot should be new");
     let first_instance = first.pocket_ic().instance_id();
@@ -214,7 +214,7 @@ fn bounded_standalone_pool_waits_when_capacity_is_exhausted() {
             .send(())
             .expect("capacity test coordinator should remain live");
         let (second, outcome) = STANDALONE_CAPACITY_POOL
-            .acquire(build_empty_standalone_fixture)
+            .acquire()
             .expect("waiting fixture should restore after release");
         acquired_tx
             .send((second.pocket_ic().instance_id(), outcome))
@@ -252,14 +252,14 @@ fn bounded_standalone_pool_waits_when_capacity_is_exhausted() {
 #[test]
 fn bounded_standalone_pool_rebuilds_after_a_leased_test_panics() {
     let (fixture, outcome) = STANDALONE_PANIC_POOL
-        .acquire(build_counted_empty_standalone_fixture)
+        .acquire()
         .expect("first panic-test fixture should capture");
     assert!(!outcome.is_reused());
     drop(fixture);
 
     let panic = catch_unwind(AssertUnwindSafe(|| {
         let (_fixture, outcome) = STANDALONE_PANIC_POOL
-            .acquire(build_counted_empty_standalone_fixture)
+            .acquire()
             .expect("panic-test fixture should restore");
         assert!(outcome.is_reused());
         panic!("synthetic pooled-test panic");
@@ -267,7 +267,7 @@ fn bounded_standalone_pool_rebuilds_after_a_leased_test_panics() {
     assert!(panic.is_err(), "the test panic must keep unwinding");
 
     let (fixture, outcome) = STANDALONE_PANIC_POOL
-        .acquire(build_counted_empty_standalone_fixture)
+        .acquire()
         .expect("the invalidated standalone slot should rebuild");
     assert!(matches!(
         &outcome,
@@ -285,8 +285,8 @@ fn bounded_standalone_pool_rebuilds_after_a_leased_test_panics() {
 
 #[test]
 fn structured_standalone_acquisition_error_retains_build_timings() {
-    let pool = CachedStandaloneCanisterFixturePool::<1>::new();
-    let Err(error) = pool.acquire(build_deleted_standalone_fixture) else {
+    let pool = CachedStandaloneCanisterFixturePool::<1>::new(build_deleted_standalone_fixture);
+    let Err(error) = pool.acquire() else {
         panic!("capturing a deleted fixture canister must fail");
     };
 
@@ -305,14 +305,26 @@ fn structured_standalone_acquisition_error_retains_build_timings() {
 
 #[test]
 fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
-    let pool = CachedStandaloneCanisterFixturePool::<1>::new();
+    let builds = Arc::new(AtomicUsize::new(0));
+    let builder_count = Arc::clone(&builds);
+    let pool = CachedStandaloneCanisterFixturePool::<1, _>::new(move || {
+        builder_count.fetch_add(1, Ordering::SeqCst);
+        build_empty_standalone_fixture()
+    });
     let (fixture, outcome) = pool
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("standalone fixture should build before restore failure");
     assert!(matches!(
         outcome,
         StandaloneFixturePoolOutcome::Built { .. }
     ));
+    assert_eq!(builds.load(Ordering::SeqCst), 1);
+    drop(fixture);
+    let (fixture, outcome) = pool
+        .acquire()
+        .expect("owned builder baseline should restore");
+    assert!(outcome.is_reused());
+    assert_eq!(builds.load(Ordering::SeqCst), 1);
     fixture
         .pocket_ic()
         .stop_canister(fixture.canister_id(), None)
@@ -323,7 +335,7 @@ fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
         .expect("delete fixture canister before restore");
     drop(fixture);
 
-    let Err(error) = pool.acquire(build_empty_standalone_fixture) else {
+    let Err(error) = pool.acquire() else {
         panic!("restoring a deleted fixture canister must fail");
     };
     let timings = error.timings();
@@ -338,7 +350,7 @@ fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
     ));
 
     let (fixture, outcome) = pool
-        .acquire(build_empty_standalone_fixture)
+        .acquire()
         .expect("partially restored standalone slot should rebuild next");
     assert!(matches!(
         &outcome,
@@ -350,6 +362,7 @@ fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
     let timings = outcome.timings();
     assert!(timings.stale_teardown().is_some());
     assert!(timings.build().is_some());
+    assert_eq!(builds.load(Ordering::SeqCst), 2);
     drop(fixture);
 }
 

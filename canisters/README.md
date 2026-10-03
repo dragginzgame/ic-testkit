@@ -39,9 +39,13 @@ it does not consume the standalone build above. It uses upstream PocketIC
 startup, which may download the server. Set `POCKET_IC_BIN=/path/to/pocket-ic`
 to use an existing PocketIC 16 binary.
 
-The maintainer can build the fixture and run the complete `canister_benchmark`
-integration target, including artifact-cache and orchestration coverage, with:
+Run the complete `canister_benchmark` integration target, including
+artifact-cache and orchestration coverage, with:
 
 ```sh
 make test-canisters
 ```
+
+These tests build their own artifacts. The main CI test command already
+includes this integration target; the standalone fixture build is a manual
+command, not a prerequisite for testing.

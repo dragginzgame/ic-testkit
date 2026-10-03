@@ -4,6 +4,62 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.0
+
+Standalone fixture pools own one builder, removing the per-acquisition builder
+that warm slots ignored. This is a source API hard cut. Snapshot funding,
+capacity, restoration, recovery, guard types, and persisted formats are unchanged.
+Repository-owned format identifiers remain `v1`.
+
+### Migration
+
+| Previous usage | Replacement |
+| --- | --- |
+| `CachedStandaloneCanisterFixturePool::<N>::new()` or `default()` | `CachedStandaloneCanisterFixturePool::<N>::new(build_fixture)` |
+| `pool.acquire(build_fixture)` | `pool.acquire()` |
+| Pass a closure capturing configuration to every acquisition | Own it once with `CachedStandaloneCanisterFixturePool::<N, _>::new(move || build_fixture(&config))`. |
+
+Static pools can use a function pointer or a noncapturing closure:
+
+```rust
+use ic_testkit::pic::{CachedStandaloneCanisterFixturePool, StandaloneCanisterFixture};
+
+static POOL: CachedStandaloneCanisterFixturePool<8> =
+    CachedStandaloneCanisterFixturePool::<8>::new(build_fixture);
+
+fn build_fixture() -> StandaloneCanisterFixture {
+    // Install and seed the canister here.
+    todo!()
+}
+
+let (fixture, outcome) = POOL.acquire()?;
+```
+
+The builder must produce the same Wasm, initialization, topology, and seeded
+state each time it runs. Use separate pools for different recipes. Cold and
+replacement slots invoke the owned builder; warm acquisitions restore the
+captured snapshot. Apply the constructor and acquisition changes together when
+downstream suites adopt `0.14`.
+
+For statics that chain `with_restore_funding`, specify the constructor capacity
+as above so Rust selects the default function-pointer builder type before
+applying the funding policy.
+
+### Implementation simplification
+
+Wasm batches parse Cargo package, membership, and dependency indexes once per
+resolution group. Each specification still selects its own dependency closure
+and validates its filesystem inputs; differing features remain separate groups.
+Standalone Wasm builds use the same parsed representation.
+
+CI runs the canister integration target through the ordinary test stage, removing
+its separate repeat and unused preliminary fixture build. `make test-canisters`
+remains a focused entry point whose tests acquire their own artifacts;
+`make build-test-canisters` remains available for manual builds.
+
+Release-push guards exercise clean, dirty, untracked, stale-tag, and failed-push
+behavior using harmless command doubles, replacing the exact recipe-text check.
+
 ## 0.13.0
 
 This release gives benchmark identity and averages one authoritative

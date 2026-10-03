@@ -45,6 +45,7 @@ The [documentation index](https://github.com/dragginzgame/ic-testkit/blob/main/d
 links current usage guidance and historical design records.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
+the [0.14.0 standalone pool migration](CHANGELOG.md#0140),
 the [0.13.0 benchmark and reset-requirement migration](CHANGELOG.md#0130),
 the `0.11.0` API and report-schema cuts, the `0.10` retained-artifact migration,
 the `0.9` managed-server lifetime migration, and earlier hard-cut tables.

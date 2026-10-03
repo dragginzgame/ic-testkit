@@ -132,10 +132,9 @@ pub enum StandaloneFixturePoolError {
 /// snapshot before returning it. At most `CAPACITY` leases can overlap; a
 /// caller waits only when every slot is in use.
 ///
-/// One pool represents one logical fixture recipe. Every call to
-/// [`acquire`](Self::acquire) must supply a builder for the same Wasm, init
-/// arguments, topology, and seeded baseline. The builder is not evaluated on
-/// a cache hit, so callers should use a separate pool for each recipe.
+/// One pool owns one fixture builder. The builder must produce the same Wasm,
+/// init arguments, topology, and seeded baseline each time it runs. It is not
+/// evaluated on a cache hit; use a separate pool for each recipe.
 ///
 /// Snapshot restoration rewinds the installed canister, not the surrounding
 /// PocketIC instance. Instance time, other canisters, and cycle changes not
@@ -145,7 +144,11 @@ pub enum StandaloneFixturePoolError {
 /// capacity that fits their host and keep lifecycle-sensitive tests on fresh
 /// [`StandaloneCanisterFixture`] values when snapshot restoration is not the
 /// intended isolation boundary.
-pub struct CachedStandaloneCanisterFixturePool<const CAPACITY: usize> {
+pub struct CachedStandaloneCanisterFixturePool<
+    const CAPACITY: usize,
+    B = fn() -> StandaloneCanisterFixture,
+> {
+    build: B,
     slots: OnceLock<BoundedSlotPool<StandaloneFixtureBaseline>>,
     restore_funding: SnapshotRestoreFunding,
 }
@@ -158,18 +161,22 @@ pub struct CachedStandaloneCanisterFixtureGuard<'a> {
     slot: BoundedSlotLease<'a, StandaloneFixtureBaseline>,
 }
 
-impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
-    /// Create an empty caller-owned fixture pool.
+impl<const CAPACITY: usize, B> CachedStandaloneCanisterFixturePool<CAPACITY, B>
+where
+    B: Fn() -> StandaloneCanisterFixture,
+{
+    /// Create an empty pool that owns its fixture builder.
     ///
     /// # Panics
     ///
     /// Panics at compile time for a statically initialized zero-capacity pool,
     /// or at runtime if constructed dynamically with zero capacity.
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(build: B) -> Self {
         assert!(CAPACITY > 0, "fixture pool capacity must be non-zero");
 
         Self {
+            build,
             slots: OnceLock::new(),
             restore_funding: SnapshotRestoreFunding::Preserve,
         }
@@ -186,9 +193,8 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
     /// Acquire one isolated fixture, building a slot on first use and restoring
     /// its captured snapshot on later uses.
     ///
-    /// `build` must create the same logical fixture baseline on every call to
-    /// this pool. It runs only when an empty slot is first populated or a dead
-    /// PocketIC instance must be replaced.
+    /// The pool's builder runs only when an empty or invalid slot is populated
+    /// or a dead PocketIC instance must be replaced.
     ///
     /// A recognized dead-instance transport failure evicts and rebuilds only
     /// the affected slot. Other snapshot failures are returned unchanged and
@@ -201,27 +207,22 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
     /// Returns the failed preparation stage, the structured snapshot error,
     /// and all phase timings completed before failure. If dead-transport
     /// restoration and replacement capture both fail, both errors are retained.
-    pub fn acquire<B>(
+    pub fn acquire(
         &self,
-        build: B,
     ) -> Result<
         (
             CachedStandaloneCanisterFixtureGuard<'_>,
             StandaloneFixturePoolOutcome,
         ),
         StandaloneFixturePoolError,
-    >
-    where
-        B: Fn() -> StandaloneCanisterFixture,
-    {
+    > {
         let total_started = Instant::now();
-        self.prepare_slot_with_outcome(self.slots().acquire(), &build, total_started)
+        self.prepare_slot_with_outcome(self.slots().acquire(), total_started)
     }
 
-    fn prepare_slot_with_outcome<'a, B>(
+    fn prepare_slot_with_outcome<'a>(
         &'a self,
         mut slot: BoundedSlotLease<'a, StandaloneFixtureBaseline>,
-        build: &B,
         total_started: Instant,
     ) -> Result<
         (
@@ -229,10 +230,7 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
             StandaloneFixturePoolOutcome,
         ),
         StandaloneFixturePoolError,
-    >
-    where
-        B: Fn() -> StandaloneCanisterFixture,
-    {
+    > {
         let slot_index = slot.slot_index();
         let mut timings = StandaloneFixturePoolTimings {
             wait: slot.wait(),
@@ -242,7 +240,7 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
         if !slot.is_reusable() {
             let rebuild_reason = Self::rebuild_reason_for_invalid_slot(&slot);
             Self::discard_stale_slot(&mut slot, &mut timings);
-            let baseline = match Self::build_slot(build, &mut timings) {
+            let baseline = match self.build_slot(&mut timings) {
                 Ok(baseline) => baseline,
                 Err(source) => {
                     timings.total = total_started.elapsed();
@@ -291,7 +289,7 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
             }
             Err(error) if transport::is_dead_pocket_ic_transport_error(&error) => {
                 Self::discard_stale_slot(&mut slot, &mut timings);
-                let baseline = match Self::build_slot(build, &mut timings) {
+                let baseline = match self.build_slot(&mut timings) {
                     Ok(baseline) => baseline,
                     Err(rebuild) => {
                         timings.total = total_started.elapsed();
@@ -347,15 +345,12 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
         }
     }
 
-    fn build_slot<B>(
-        build: &B,
+    fn build_slot(
+        &self,
         timings: &mut StandaloneFixturePoolTimings,
-    ) -> Result<StandaloneFixtureBaseline, ControllerSnapshotError>
-    where
-        B: Fn() -> StandaloneCanisterFixture,
-    {
+    ) -> Result<StandaloneFixtureBaseline, ControllerSnapshotError> {
         let started = Instant::now();
-        let result = StandaloneFixtureBaseline::capture(build());
+        let result = StandaloneFixtureBaseline::capture((self.build)());
         timings.build = Some(started.elapsed());
         result
     }
@@ -380,12 +375,6 @@ impl<const CAPACITY: usize> CachedStandaloneCanisterFixturePool<CAPACITY> {
                 NonZeroUsize::new(CAPACITY).expect("fixture pool capacity must be non-zero"),
             )
         })
-    }
-}
-
-impl<const CAPACITY: usize> Default for CachedStandaloneCanisterFixturePool<CAPACITY> {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -533,12 +522,20 @@ impl std::error::Error for StandaloneFixturePoolError {
 
 #[cfg(test)]
 mod tests {
-    use super::CachedStandaloneCanisterFixturePool;
+    use super::{
+        CachedStandaloneCanisterFixturePool, SnapshotRestoreFunding, StandaloneCanisterFixture,
+    };
 
-    const _: CachedStandaloneCanisterFixturePool<1> = CachedStandaloneCanisterFixturePool::new();
+    const _: CachedStandaloneCanisterFixturePool<1> =
+        CachedStandaloneCanisterFixturePool::<1>::new(build_fixture)
+            .with_restore_funding(SnapshotRestoreFunding::TopUpTo { minimum_cycles: 1 });
+
+    fn build_fixture() -> StandaloneCanisterFixture {
+        panic!("constructing an empty pool must not invoke its builder")
+    }
 
     #[test]
     fn nonzero_pool_constructs() {
-        let _pool = CachedStandaloneCanisterFixturePool::<2>::new();
+        let _pool = CachedStandaloneCanisterFixturePool::<2>::new(build_fixture);
     }
 }
