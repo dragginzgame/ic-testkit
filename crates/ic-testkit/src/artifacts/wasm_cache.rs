@@ -212,14 +212,18 @@ pub struct ResolvedCargoBuildInputs {
     timings: WasmInputResolutionTimings,
 }
 
+pub(super) enum WasmBuildInputReuse<'reuse> {
+    Session(&'reuse mut WasmBuildSessionState),
+    Snapshot(&'reuse WasmBuildInputSnapshotState),
+}
+
 pub(super) struct WasmBuildBatchInputResolver<'a, 'session> {
     specs: &'a [WasmBuildSpec],
     groups: Vec<BatchResolutionGroup>,
     group_by_index: Vec<usize>,
     resolved:
         Vec<Option<Result<ResolvedCargoBuildInputs, (WasmBuildFailurePhase, WasmBuildError)>>>,
-    session: Option<&'session mut WasmBuildSessionState>,
-    snapshot: Option<&'session WasmBuildInputSnapshotState>,
+    reuse: Option<WasmBuildInputReuse<'session>>,
     metrics: WasmBuildBatchInputMetrics,
 }
 
@@ -240,19 +244,20 @@ pub(super) struct WasmBuildInputSnapshotState {
 
 pub(super) struct WasmBuildBatchAttempt {
     pub(super) result: Result<WasmBuildOutcome, WasmBuildError>,
-    pub(super) failure_phase: Option<WasmBuildFailurePhase>,
-    pub(super) failure_timings: Option<WasmBuildFailureTimings>,
+    pub(super) failure: Option<(WasmBuildFailurePhase, WasmBuildFailureTimings)>,
 }
 
 impl WasmBuildBatchAttempt {
     pub(super) fn invalid_spec(error: WasmBuildError, total: Duration) -> Self {
         Self {
             result: Err(error),
-            failure_phase: Some(WasmBuildFailurePhase::Specification),
-            failure_timings: Some(WasmBuildFailureTimings {
-                total,
-                ..WasmBuildFailureTimings::default()
-            }),
+            failure: Some((
+                WasmBuildFailurePhase::Specification,
+                WasmBuildFailureTimings {
+                    total,
+                    ..WasmBuildFailureTimings::default()
+                },
+            )),
         }
     }
 }
@@ -870,6 +875,8 @@ impl WasmBuildSpec {
     ///
     /// `profile_target_dir` is Cargo's output subdirectory, such as `debug`,
     /// `release`, or the name supplied to `--profile`.
+    /// Relative `workspace_root` and exact `target_dir` paths are resolved from
+    /// the caller's working directory. Shared targets are workspace-relative.
     #[must_use]
     pub fn new(
         workspace_root: &Path,
@@ -900,6 +907,9 @@ impl WasmBuildSpec {
     }
 
     /// Set Cargo profile and feature arguments used for the build and fingerprint.
+    ///
+    /// `--target-dir` overrides are rejected during acquisition; target
+    /// directories are selected by this specification's cache configuration.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -914,6 +924,9 @@ impl WasmBuildSpec {
     }
 
     /// Set deterministic OS-native child-process environment overrides.
+    ///
+    /// `CARGO_TARGET_DIR` is owned by the cache configuration and cannot be
+    /// overridden here. Conflicting specifications fail before acquisition.
     #[must_use]
     pub fn with_extra_env<I, K, V>(mut self, environment: I) -> Self
     where
@@ -1481,7 +1494,7 @@ impl WasmBuildInputSnapshotState {
         for spec in specs {
             validate_spec(spec)?;
         }
-        let mut resolver = WasmBuildBatchInputResolver::new(specs);
+        let mut resolver = WasmBuildBatchInputResolver::new(specs, None);
         let mut snapshots = Vec::with_capacity(specs.len());
         let mut preparation_timings = WasmInputResolutionTimings::default();
         let mut progress = ProgressReporter::silent();
@@ -1562,28 +1575,9 @@ impl WasmBuildInputSnapshotState {
 }
 
 impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
-    pub(super) fn new(specs: &'a [WasmBuildSpec]) -> Self {
-        Self::create(specs, None, None)
-    }
-
-    pub(super) fn with_session(
+    pub(super) fn new(
         specs: &'a [WasmBuildSpec],
-        session: &'session mut WasmBuildSessionState,
-    ) -> Self {
-        Self::create(specs, Some(session), None)
-    }
-
-    pub(super) fn with_snapshot(
-        specs: &'a [WasmBuildSpec],
-        snapshot: &'session WasmBuildInputSnapshotState,
-    ) -> Self {
-        Self::create(specs, None, Some(snapshot))
-    }
-
-    fn create(
-        specs: &'a [WasmBuildSpec],
-        mut session: Option<&'session mut WasmBuildSessionState>,
-        snapshot: Option<&'session WasmBuildInputSnapshotState>,
+        mut reuse: Option<WasmBuildInputReuse<'session>>,
     ) -> Self {
         let mut keys = Vec::<BatchResolutionKey>::new();
         let mut groups = Vec::<BatchResolutionGroup>::new();
@@ -1606,22 +1600,22 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         let mut metrics = WasmBuildBatchInputMetrics::default();
         let resolved = specs
             .iter()
-            .map(|spec| {
-                let session_reused = session
-                    .as_deref_mut()
-                    .and_then(|session| session.reuse(spec));
-                if session_reused.is_some() {
-                    metrics.session_reuses = metrics.session_reuses.saturating_add(1);
-                    return session_reused.map(Ok);
+            .map(|spec| match reuse.as_mut() {
+                Some(WasmBuildInputReuse::Session(session)) => {
+                    let reused = session.reuse(spec);
+                    if reused.is_some() {
+                        metrics.session_reuses = metrics.session_reuses.saturating_add(1);
+                    }
+                    reused.map(Ok)
                 }
-                if let Some(snapshot) = snapshot {
+                Some(WasmBuildInputReuse::Snapshot(snapshot)) => {
                     let reused = snapshot
                         .reuse(spec)
                         .expect("prepared input snapshot must contain every reader specification");
                     metrics.prepared_reuses = metrics.prepared_reuses.saturating_add(1);
-                    return Some(Ok(reused));
+                    Some(Ok(reused))
                 }
-                None
+                None => None,
             })
             .collect();
         Self {
@@ -1629,8 +1623,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             groups,
             group_by_index,
             resolved,
-            session,
-            snapshot,
+            reuse,
             metrics,
         }
     }
@@ -1640,27 +1633,31 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
     }
 
     pub(super) fn invalidate_source_lease(&mut self) {
-        if let Some(session) = self.session.as_deref_mut() {
-            session.invalidate();
-            // Every unresolved entry was captured before the detected source race,
-            // including entries resolved only for this batch. Force later entries
-            // through fresh discovery instead of consuming a now-stale snapshot.
-            for resolved in &mut self.resolved {
-                *resolved = None;
+        match self.reuse.as_mut() {
+            Some(WasmBuildInputReuse::Session(session)) => {
+                session.invalidate();
+                // Every unresolved entry was captured before the detected source race,
+                // including entries resolved only for this batch. Force later entries
+                // through fresh discovery instead of consuming a now-stale snapshot.
+                for resolved in &mut self.resolved {
+                    *resolved = None;
+                }
+                self.reuse = None;
             }
-            self.session = None;
-        }
-        if let Some(snapshot) = self.snapshot {
-            snapshot.invalidate();
+            Some(WasmBuildInputReuse::Snapshot(snapshot)) => snapshot.invalidate(),
+            None => {}
         }
     }
 
     pub(super) const fn assumes_sources_immutable(&self) -> bool {
-        self.session.is_some() || self.snapshot.is_some()
+        self.reuse.is_some()
     }
 
     pub(super) fn prepared_invalidation(&self) -> Option<Arc<RwLock<bool>>> {
-        self.snapshot.map(WasmBuildInputSnapshotState::invalidation)
+        match self.reuse.as_ref() {
+            Some(WasmBuildInputReuse::Snapshot(snapshot)) => Some(snapshot.invalidation()),
+            _ => None,
+        }
     }
 
     fn resolve(
@@ -1692,7 +1689,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         let active = &self.specs[active_index];
 
         let (cargo_identity, rustc_identity, tool_identity) =
-            resolve_batch_tool_identity(active, progress)?;
+            resolve_tool_identity(active, progress)?;
 
         let metadata_started = Instant::now();
         let metadata = progress.run_phase(WasmBuildProgressPhase::CargoMetadata, || {
@@ -1705,10 +1702,10 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
 
         let hashing_started = Instant::now();
         let mut batch_digest_cache = LabeledPathDigestCache::default();
-        let digest_cache = self
-            .session
-            .as_deref_mut()
-            .map_or(&mut batch_digest_cache, |session| &mut session.digest_cache);
+        let digest_cache = match self.reuse.as_mut() {
+            Some(WasmBuildInputReuse::Session(session)) => &mut session.digest_cache,
+            _ => &mut batch_digest_cache,
+        };
         let workspace_root = active.workspace_root.clone();
         let resolved_inputs = progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
             discovered
@@ -1783,7 +1780,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
                     WasmInputResolutionTimings::default()
                 },
             };
-            if let Some(session) = self.session.as_deref_mut() {
+            if let Some(WasmBuildInputReuse::Session(session)) = self.reuse.as_mut() {
                 session.remember(spec, &resolved);
             }
             self.resolved[index] = Some(Ok(resolved));
@@ -1836,7 +1833,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
     }
 }
 
-fn resolve_batch_tool_identity(
+fn resolve_tool_identity(
     spec: &WasmBuildSpec,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<(Vec<u8>, Vec<u8>, Duration), WasmBuildError> {
@@ -2530,15 +2527,11 @@ fn batch_attempt(
     progress: &ProgressReporter<'_>,
     total: Duration,
 ) -> WasmBuildBatchAttempt {
-    let (failure_phase, failure_timings) = result.as_ref().err().map_or((None, None), |error| {
-        let (phase, timings) = progress.failure_details(error, total);
-        (Some(phase), Some(timings))
-    });
-    WasmBuildBatchAttempt {
-        result,
-        failure_phase,
-        failure_timings,
-    }
+    let failure = result
+        .as_ref()
+        .err()
+        .map(|error| progress.failure_details(error, total));
+    WasmBuildBatchAttempt { result, failure }
 }
 
 fn batch_source_assumptions(
@@ -2633,17 +2626,8 @@ fn build_wasm_with_shared_incremental(
     total_started: Instant,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
-    let configured_target = shared_incremental_target(spec)
-        .expect("shared cache mode must resolve a shared Cargo target");
-    progress.emit(WasmBuildProgressEvent::SharedTargetLockStarted {
-        target_dir: configured_target,
-    });
     let (shared_lock, shared_lock_wait, shared_target) =
         lock_shared_incremental_target_with_progress(spec, progress)?;
-    progress.emit(WasmBuildProgressEvent::SharedTargetLockAcquired {
-        target_dir: shared_target.clone(),
-        wait: shared_lock_wait,
-    });
     let (_cache_lock, second_lock_wait) =
         lock_wasm_build_cache_with_progress(&spec.target_dir, progress)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
@@ -2694,17 +2678,8 @@ fn build_wasm_canisters_cached_with_scheduled_shared_maintenance(
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
     let (assumes_sources_immutable, prepared_invalidation) =
         batch_source_assumptions(batch_resolution.as_ref());
-    let configured_target = shared_incremental_target(spec)
-        .expect("validated scheduled maintenance must have a shared Cargo target");
-    progress.emit(WasmBuildProgressEvent::SharedTargetLockStarted {
-        target_dir: configured_target,
-    });
     let (_shared_lock, shared_lock_wait, shared_target) =
         lock_shared_incremental_target_with_progress(spec, progress)?;
-    progress.emit(WasmBuildProgressEvent::SharedTargetLockAcquired {
-        target_dir: shared_target.clone(),
-        wait: shared_lock_wait,
-    });
     let (_cache_lock, lock_wait) = lock_wasm_build_cache_with_progress(&spec.target_dir, progress)?;
     ensure_cache_directory_tag(&spec.target_dir)?;
 
@@ -2919,36 +2894,20 @@ fn try_reuse_wasm_artifacts(
     });
     if artifacts_match {
         ensure_exact_cache_entry(spec, &artifacts, &cache_entry, fingerprint, progress)?;
-        let input_resolution =
-            validate_reused_inputs(spec, resolved, shared_incremental, progress)?;
-        return Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
-            spec,
-            BuildRecordInput {
-                fingerprint,
-                input_digest: resolved.input_digest,
-                lock_wait,
-                shared_incremental: shared_incremental.clone(),
-                input_resolution,
-                cargo_build: None,
-                active_entry: &cache_entry,
-            },
-            total_started,
-            progress,
-        )?)));
+    } else {
+        let cached_artifacts = expected_artifacts(spec, &cache_entry);
+        let cached_artifacts_match = progress
+            .run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
+                artifact_set_matches(&cached_artifacts, fingerprint)
+            });
+        if !cached_artifacts_match {
+            return Ok(None);
+        }
+        progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
+            materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
+            record_cache_entry_use(&cache_entry)
+        })?;
     }
-
-    let cached_artifacts = expected_artifacts(spec, &cache_entry);
-    let cached_artifacts_match = progress
-        .run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-            artifact_set_matches(&cached_artifacts, fingerprint)
-        });
-    if !cached_artifacts_match {
-        return Ok(None);
-    }
-    progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-        materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
-        record_cache_entry_use(&cache_entry)
-    })?;
     let input_resolution = validate_reused_inputs(spec, resolved, shared_incremental, progress)?;
     Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
         spec,
@@ -3308,7 +3267,15 @@ fn lock_shared_incremental_target_with_progress(
     spec: &WasmBuildSpec,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<(File, Duration, PathBuf), WasmBuildError> {
-    lock_shared_incremental_target_internal(spec, Some(progress))
+    let target_dir = shared_incremental_target(spec)
+        .expect("validated shared acquisition must have a shared Cargo target");
+    progress.emit(WasmBuildProgressEvent::SharedTargetLockStarted { target_dir });
+    let (lock, wait, canonical) = lock_shared_incremental_target_internal(spec, Some(progress))?;
+    progress.emit(WasmBuildProgressEvent::SharedTargetLockAcquired {
+        target_dir: canonical.clone(),
+        wait,
+    });
+    Ok((lock, wait, canonical))
 }
 
 fn lock_shared_incremental_target_internal(
@@ -3403,6 +3370,16 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "Cargo compilation target must not be empty".to_owned(),
         });
     }
+    if spec.extra_env.contains_key(OsStr::new("CARGO_TARGET_DIR"))
+        || spec.cargo_profile_args.iter().any(|argument| {
+            argument == OsStr::new("--target-dir")
+                || argument.as_encoded_bytes().starts_with(b"--target-dir=")
+        })
+    {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "Cargo target directories are owned by the build specification; use target_dir or with_shared_incremental_target instead of command overrides".to_owned(),
+        });
+    }
     if matches!(
         &spec.cache_mode,
         WasmBuildCacheMode::SharedIncremental { target_dir } if target_dir.as_os_str().is_empty()
@@ -3435,23 +3412,7 @@ fn build_fingerprint_with_progress(
     progress: &mut ProgressReporter<'_>,
 ) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
     let total_started = Instant::now();
-    let tool_started = Instant::now();
-    let cargo_identity = progress.run_phase(WasmBuildProgressPhase::CargoIdentity, || {
-        command_identity(
-            spec,
-            WasmBuildPhase::CargoIdentity,
-            &spec.cargo_program,
-            &["--version", "--verbose"],
-        )
-    })?;
-    let rustc_program = spec
-        .extra_env
-        .get(OsStr::new("RUSTC"))
-        .unwrap_or(&spec.rustc_program);
-    let rustc_identity = progress.run_phase(WasmBuildProgressPhase::RustcIdentity, || {
-        command_identity(spec, WasmBuildPhase::RustcIdentity, rustc_program, &["-vV"])
-    })?;
-    let tool_identity = tool_started.elapsed();
+    let (cargo_identity, rustc_identity, tool_identity) = resolve_tool_identity(spec, progress)?;
 
     let metadata_started = Instant::now();
     let metadata = progress.run_phase(WasmBuildProgressPhase::CargoMetadata, || {
@@ -3599,6 +3560,7 @@ fn metadata_arguments(arguments: &[OsString]) -> Vec<OsString> {
                 }
             }
             _ if argument_text.starts_with("--features=")
+                || argument_text.starts_with("-F")
                 || argument_text.starts_with("--filter-platform=") =>
             {
                 selected.push(argument.clone());
@@ -4416,6 +4378,24 @@ fn validate_shared_incremental_target_boundary(
             path: shared_target.clone(),
             source,
         })?;
+    let exact_entries = spec.target_dir.join(".ic-testkit/wasm-targets");
+    let exact_entries =
+        canonicalize_allow_missing(&exact_entries).map_err(|source| WasmBuildError::Io {
+            operation: "resolve exact Wasm cache boundary",
+            path: exact_entries,
+            source,
+        })?;
+    // Maintenance preserves only the shared target's direct metadata child.
+    // An exact cache elsewhere beneath that target would lose retained entries.
+    if shared_target.starts_with(&exact_entries)
+        || (exact_entries.starts_with(&shared_target)
+            && !exact_entries.starts_with(shared_target.join(".ic-testkit")))
+    {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "shared incremental target must not overlap removable exact Wasm cache state"
+                .to_owned(),
+        });
+    }
     let resolved_inputs = inputs
         .iter()
         .map(|(_, input)| {
@@ -4470,7 +4450,7 @@ fn validate_shared_incremental_target_boundary(
     Ok(())
 }
 
-fn shared_incremental_target(spec: &WasmBuildSpec) -> Option<PathBuf> {
+pub(super) fn shared_incremental_target(spec: &WasmBuildSpec) -> Option<PathBuf> {
     let WasmBuildCacheMode::SharedIncremental { target_dir } = &spec.cache_mode else {
         return None;
     };
@@ -4533,10 +4513,16 @@ fn run_cargo_build(
     build_target_dir: &Path,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<(), WasmBuildError> {
+    let absolute_target_dir =
+        canonicalize_allow_missing(build_target_dir).map_err(|source| WasmBuildError::Io {
+            operation: "resolve Cargo build target directory",
+            path: build_target_dir.to_owned(),
+            source,
+        })?;
     let mut command = Command::new(&spec.cargo_program);
     command
         .current_dir(&spec.workspace_root)
-        .env("CARGO_TARGET_DIR", build_target_dir)
+        .env("CARGO_TARGET_DIR", absolute_target_dir)
         .args(["build", "--target", &spec.target])
         .args(&spec.cargo_profile_args);
     apply_command_environment(&mut command, spec);

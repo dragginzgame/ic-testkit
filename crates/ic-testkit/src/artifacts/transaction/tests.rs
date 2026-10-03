@@ -868,6 +868,12 @@ fn filesystem_boundaries_reject_cache_inputs_and_destination_aliases() {
         ArtifactCacheSpec::new(&cache, "directory-destination", "recipe/v1")
             .with_input("input", &input)
             .with_output("output", &input_directory),
+        ArtifactCacheSpec::new(&cache, "nested-output", "recipe/v1")
+            .with_output("first", &root.join("nested-output"))
+            .with_output("second", &root.join("nested-output/inner")),
+        ArtifactCacheSpec::new(&cache, "nested-output-reversed", "recipe/v1")
+            .with_output("first", &root.join("other-output/inner"))
+            .with_output("second", &root.join("other-output")),
     ];
     for spec in invalid {
         expect_invalid_spec(prepare_artifact_cache(&spec));
@@ -900,6 +906,70 @@ fn filesystem_boundaries_reject_cache_inputs_and_destination_aliases() {
         .expect("abort ancestor input transaction");
 
     fs::remove_dir_all(root).expect("remove filesystem-boundary test directory");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_destination_boundaries_validate_the_replaced_entry() {
+    use std::os::unix::fs::symlink;
+    let root = unique_temp_directory("symlink-destination-boundaries");
+    let cache = root.join("cache");
+    let public = root.join("public");
+    let input = root.join("input");
+    fs::create_dir_all(&cache).expect("create cache root");
+    fs::create_dir_all(&public).expect("create public outputs");
+    fs::write(&input, b"input").expect("write input");
+    let cache_link = cache.join("output-link");
+    symlink(&input, &cache_link).expect("create cache-internal output symlink");
+    let spec = ArtifactCacheSpec::new(&cache, "symlink-cache-output", "recipe/v1")
+        .with_output("output", &cache_link);
+    expect_invalid_spec(prepare_artifact_cache(&spec));
+    assert!(
+        fs::symlink_metadata(&cache_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+
+    let input_link = root.join("input-link");
+    symlink(&input, &input_link).expect("create declared input symlink");
+    let spec = ArtifactCacheSpec::new(&cache, "replace-input-link", "recipe/v1")
+        .with_input("input", &input_link)
+        .with_output("output", &input_link);
+    expect_invalid_spec(prepare_artifact_cache(&spec));
+
+    let public_link = public.join("replaceable-link");
+    symlink(&input, &public_link).expect("create replaceable public symlink");
+    let spec = ArtifactCacheSpec::new(&cache, "public-output-link", "recipe/v1")
+        .with_input("input", &input)
+        .with_output("output", &public_link);
+    let transaction =
+        expect_build(prepare_artifact_cache(&spec).expect("prepare public symlink output"));
+    fs::write(transaction.output_path("output").unwrap(), b"published")
+        .expect("populate symlink output transaction");
+    let outcome = transaction.commit().expect("replace public symlink entry");
+    assert_eq!(fs::read(&public_link).unwrap(), b"published");
+    assert_eq!(fs::read(&input).unwrap(), b"input");
+    assert!(
+        !fs::symlink_metadata(&public_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    drop(outcome);
+    let directory_link = public.join("directory-link");
+    symlink(&public, &directory_link).expect("create directory output link");
+    let spec = ArtifactCacheSpec::new(&cache, "directory-link-output", "recipe/v1")
+        .with_output("parent", &directory_link)
+        .with_output("child", &directory_link.join("child"));
+    expect_invalid_spec(prepare_artifact_cache(&spec));
+    assert!(
+        fs::symlink_metadata(&directory_link)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    fs::remove_dir_all(root).expect("remove symlink output fixture");
 }
 
 fn expect_build(preparation: ArtifactCachePreparation) -> super::ArtifactBuildTransaction {

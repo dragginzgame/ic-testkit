@@ -4,7 +4,79 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## Unreleased
+## 0.12.0
+
+This update tightens artifact path boundaries, fixes Unix managed-server
+descendant cleanup, and rejects benchmark aggregate overflow. Cache, stamp,
+protocol and digest identifiers remain `v1`.
+
+### Migration
+
+These source API and validation changes are hard cuts:
+
+| Previous usage | Replacement |
+| --- | --- |
+| `aggregate_benchmark_spans(...) -> BenchmarkAggregateReport` | `Result<BenchmarkAggregateReport, BenchmarkAggregateError>`; handle or propagate overflow before comparing aggregates or writing reports. |
+| Override `CARGO_TARGET_DIR` in `with_extra_env` or pass `--target-dir` in `with_cargo_profile_args` | Select the exact target with `WasmBuildSpec::new` or the shared target with `with_shared_incremental_target`; command overrides return `InvalidSpec` before acquisition. |
+| Configure one public artifact output beneath another | Use distinct, non-nested output destinations; overlapping destinations are rejected during preparation. |
+
+### Fixes and simplification
+
+Compact Cargo feature arguments (`-Fextra` and `-F=extra`) now reach metadata
+resolution as well as compilation. Optional dependencies enabled by these
+arguments are watched inputs, and batches resolve distinct feature graphs
+separately.
+
+Benchmark aggregation rejects counter and run-count overflow with a typed
+error identifying the scope, span and counter. No partial, wrapped or saturated
+totals are returned. `is_all_suites()` distinguishes a cross-suite failure from
+a named suite `ALL`.
+
+Shared-target maintenance now rejects layouts that could delete retained exact
+Wasm artifacts. Batches maintain each resolved target directory once, including
+workspace-relative paths and filesystem aliases. Relative exact targets use the
+caller's working directory consistently for Cargo output and cache operations.
+Conflicting `CARGO_TARGET_DIR` environment or `--target-dir` command overrides
+are rejected before acquisition; select target directories through the build spec.
+
+Artifact preparation rejects nested file destinations. Output boundary checks
+validate the directory entry replaced by atomic publication rather than a final
+symlink's referent; declared input and tool symlink entries remain protected.
+
+On Unix, managed-server teardown terminates descendants in its owned process
+group on handle drop, startup failure, and natural server exit. Cleanup reserves
+the leader's PID until after signaling the group, then reaps the child.
+
+Benchmark metadata now derives its JSON fields from `BenchmarkRunMetadata`.
+Existing JSON field names, object shape, field types, optional fields and integer
+bounds are preserved; invalid metadata returns `InvalidData` with Serde field
+diagnostics.
+Wasm warm hits share input validation and retained-record completion, and batch
+input reuse has one internal representation for sessions and prepared snapshots.
+Batch entry points call the same runner directly, and transport errors and panic
+payloads share one message classifier.
+Batch maintenance-policy errors use the common report-entry construction while
+retaining their failure phases and timings. Internal attempts store the phase
+and timings together; standalone and batch resolution share toolchain
+identification.
+ICP readiness delegates file validation to the watched-input snapshot.
+Background server reaping retains the original managed-server owner and its
+startup files. Shared-target lock acquisition owns progress events for both
+ordinary builds and scheduled maintenance.
+
+### Verification and documentation
+
+Targeted regressions cover retained-cache and output boundaries, relative target
+paths, Cargo override rejection, benchmark overflow and metadata validation,
+compact-feature dependency discovery and batch grouping, and observed
+session/prepared-reader batches. Unix descendant cleanup is checked
+on drop, startup timeout, natural exit and background reaping, with a real
+PocketIC 16 startup/reaping check. Maintenance behavior tests use outcome and
+filesystem assertions, with a positive-interval control for heartbeat validation.
+
+Installation examples select `0.11`. The README documents the updated path and
+cleanup rules and explains recipe-pool timings for profiling long suites.
+`POCKET-IC.md` refreshes upstream tracking.
 
 ## 0.11.0
 

@@ -46,8 +46,8 @@ pub enum ArtifactOutputValidation {
 /// Complete caller-owned description of one transactional artifact set.
 ///
 /// Declared inputs and tools must not be located inside `cache_root`. Output
-/// destinations must remain outside it, resolve to distinct paths, and not
-/// overlap a declared input or tool. Cargo-derived cache/output paths must
+/// destinations must remain outside it, resolve to distinct non-nested paths,
+/// and not overlap a declared input or tool. Cargo-derived cache/output paths must
 /// likewise remain outside resolved inputs unless covered by their exact
 /// generated-state exclusions.
 #[derive(Clone, Eq, PartialEq)]
@@ -1083,6 +1083,11 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
                     source,
                 })?
                 .is_dir();
+            let entry_path =
+                resolve_file_entry(&labeled.path, "resolve declared artifact cache path entry")?;
+            if entry_path != canonical {
+                declared_paths.push((kind, labeled.label.as_str(), entry_path, false));
+            }
             declared_paths.push((kind, labeled.label.as_str(), canonical, is_directory));
         }
     }
@@ -1097,25 +1102,23 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
 
     let mut destinations = BTreeSet::new();
     for output in &spec.outputs {
-        let destination = canonicalize_allow_missing(&output.destination).map_err(|source| {
-            ArtifactCacheError::Io {
-                operation: "resolve artifact output destination",
-                path: output.destination.clone(),
-                source,
-            }
-        })?;
+        let destination =
+            resolve_file_entry(&output.destination, "resolve artifact output destination")?;
         if destination.starts_with(&cache_root) {
             return invalid_spec(&format!(
                 "output `{}` destination must be outside the artifact cache root",
                 output.name
             ));
         }
-        if !destinations.insert(destination.clone()) {
+        if destinations.iter().any(|other: &PathBuf| {
+            destination.starts_with(other) || other.starts_with(&destination)
+        }) {
             return invalid_spec(&format!(
-                "output `{}` resolves to the same destination as another output",
+                "output `{}` destination overlaps another output",
                 output.name
             ));
         }
+        destinations.insert(destination.clone());
         for (kind, label, declared, is_directory) in &declared_paths {
             if destination == *declared || (*is_directory && destination.starts_with(declared)) {
                 return invalid_spec(&format!(
@@ -1151,6 +1154,22 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
         }
     }
     Ok(())
+}
+
+// Atomic publication replaces the directory entry, including a final symlink;
+// resolving that symlink's referent would validate a different write location.
+fn resolve_file_entry(path: &Path, operation: &'static str) -> Result<PathBuf, ArtifactCacheError> {
+    let resolved = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            canonicalize_allow_missing(parent).map(|parent| parent.join(name))
+        }
+        _ => canonicalize_allow_missing(path),
+    };
+    resolved.map_err(|source| ArtifactCacheError::Io {
+        operation,
+        path: path.to_owned(),
+        source,
+    })
 }
 
 fn resolved_cargo_inputs_watch_path(

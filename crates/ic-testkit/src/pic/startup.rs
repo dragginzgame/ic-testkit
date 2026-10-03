@@ -31,8 +31,9 @@ pub struct PocketIcStartupConfig {
 
 /// Caller-owned PocketIC server process with bounded startup and output capture.
 ///
-/// Dropping the handle terminates and waits for the managed child. Callers may
-/// create several instances through [`Self::url`] and
+/// Dropping the handle terminates and waits for the managed child. On Unix,
+/// teardown also terminates descendants remaining in its owned process group.
+/// Callers may create several instances through [`Self::url`] and
 /// [`PocketIcStartupConfig::connect`] while retaining explicit server ownership.
 /// The handle is process-local and does not coordinate ownership across Cargo
 /// or test-runner processes; use an externally owned server with bounded
@@ -413,7 +414,7 @@ fn build_bounded(
 struct ManagedServer {
     child: Option<Child>,
     binary: PathBuf,
-    files: Option<StartupFiles>,
+    files: StartupFiles,
     started: Instant,
 }
 
@@ -457,7 +458,7 @@ impl ManagedServer {
         let mut server = Self {
             child: Some(child),
             binary,
-            files: Some(files),
+            files,
             started,
         };
 
@@ -502,23 +503,19 @@ impl ManagedServer {
     }
 
     fn try_wait(&mut self) -> Result<Option<ExitStatus>, PocketIcStartupError> {
-        self.child
+        let child = self
+            .child
             .as_mut()
-            .expect("managed server child must remain present")
-            .try_wait()
-            .map_err(|source| PocketIcStartupError::Io {
-                operation: "inspect PocketIC server child",
-                path: self.binary.clone(),
-                source,
-            })
+            .expect("managed server child must remain present");
+        poll_child(child).map_err(|source| PocketIcStartupError::Io {
+            operation: "inspect PocketIC server child",
+            path: self.binary.clone(),
+            source,
+        })
     }
 
     fn read_port(&self) -> Result<PortFileState, PocketIcStartupError> {
-        let port_path = &self
-            .files
-            .as_ref()
-            .expect("managed server startup files must remain present")
-            .port;
+        let port_path = &self.files.port;
         let contents = match fs::read_to_string(port_path) {
             Ok(contents) => contents,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -567,10 +564,7 @@ impl ManagedServer {
     }
 
     fn capture(&self) -> CapturedServer {
-        let files = self
-            .files
-            .as_ref()
-            .expect("managed server startup files must remain present");
+        let files = &self.files;
         CapturedServer {
             stdout: read_bounded_lossy(&files.stdout),
             stderr: read_bounded_lossy(&files.stderr),
@@ -578,19 +572,19 @@ impl ManagedServer {
         }
     }
 
-    fn reap_in_background(mut self) {
-        let child = ServerChildGuard {
-            child: self.child.take(),
-        };
-        let files = self.files.take();
+    fn reap_in_background(self) {
         let _ = thread::Builder::new()
             .name("ic-testkit-pocket-ic-server-reaper".to_owned())
             .spawn(move || {
-                let mut child = child;
-                if let Some(mut process) = child.child.take() {
-                    let _ = process.wait();
+                // Keep child and files under one owner, including if spawning
+                // this thread fails. On Unix, Drop terminates the group before reaping.
+                let mut server = self;
+                if let Some(child) = server.child.as_mut() {
+                    #[cfg(unix)]
+                    let _ = wait_for_child_exit(child, false);
+                    #[cfg(not(unix))]
+                    let _ = child.wait();
                 }
-                drop(files);
             });
     }
 }
@@ -603,18 +597,74 @@ impl Drop for ManagedServer {
     }
 }
 
-struct ServerChildGuard {
-    child: Option<Child>,
-}
-
-impl Drop for ServerChildGuard {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = terminate_child(&mut child);
+#[cfg(unix)]
+fn wait_for_child_exit(child: &Child, nonblocking: bool) -> io::Result<bool> {
+    // WNOWAIT keeps the leader's PID reserved until group cleanup completes.
+    let flags = libc::WEXITED | libc::WNOWAIT | if nonblocking { libc::WNOHANG } else { 0 };
+    loop {
+        // SAFETY: siginfo_t is a C value for which zero initialization is valid.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: the PID is an owned, unreaped child and info is writable.
+        let result = unsafe { libc::waitid(libc::P_PID, child.id(), &raw mut info, flags) };
+        if result == 0 {
+            return Ok(info.si_signo != 0);
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
         }
     }
 }
 
+fn poll_child(child: &mut Child) -> io::Result<Option<ExitStatus>> {
+    #[cfg(unix)]
+    {
+        if !wait_for_child_exit(child, true)? {
+            return Ok(None);
+        }
+        // The leader is still unreaped, so its process group cannot be reused.
+        terminate_process_group(child)?;
+        child.wait().map(Some)
+    }
+    #[cfg(not(unix))]
+    child.try_wait()
+}
+
+#[cfg(unix)]
+fn terminate_process_group(child: &Child) -> io::Result<()> {
+    let group = libc::pid_t::try_from(child.id())
+        .map_err(|_| io::Error::other("managed child PID exceeds the OS process ID range"))?;
+    loop {
+        // SAFETY: spawn sets this child's PGID to its PID, and it remains
+        // unreaped until after this call. No caller/test-runner group is used.
+        let result = unsafe { libc::killpg(group, libc::SIGKILL) };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        if error.kind() != io::ErrorKind::Interrupted {
+            return Err(error);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_child(child: &mut Child) -> Option<String> {
+    let termination = terminate_process_group(child);
+    if termination.is_err() {
+        let _ = child.kill();
+    }
+    let wait = child.wait();
+    termination
+        .and_then(|()| wait.map(|_| ()))
+        .err()
+        .map(|error| error.to_string())
+}
+
+#[cfg(not(unix))]
 fn terminate_child(child: &mut Child) -> Option<String> {
     match child.try_wait() {
         Ok(Some(_)) => None,
@@ -994,6 +1044,78 @@ mod tests {
         assert!(!child_process.exists());
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn managed_server_cleans_descendants_on_drop_timeout_exit_and_background_reap() {
+        for mode in ["drop", "timeout", "exit", "background"] {
+            let publish = if matches!(mode, "drop" | "background") {
+                "printf '34567\\n' > \"$2\"\n"
+            } else {
+                ""
+            };
+            let finish = if matches!(mode, "exit" | "background") {
+                "sleep 0.03\nexit 23\n"
+            } else {
+                "exec sleep 30\n"
+            };
+            let script = TestServerScript::new(
+                mode,
+                &format!("#!/bin/sh\nsleep 3 &\nprintf '%s' \"$!\"\n{publish}{finish}"),
+            );
+            let result = PocketIcStartupConfig::spawn(script.path(), Duration::from_millis(300))
+                .start_managed_server();
+            let output = match result {
+                Ok(server) => {
+                    let output = server.output().stdout().to_owned();
+                    if mode == "background" {
+                        server.server.reap_in_background();
+                    } else {
+                        drop(server);
+                    }
+                    output
+                }
+                Err(PocketIcStartupError::ReadinessTimeout {
+                    stdout,
+                    termination_error,
+                    ..
+                }) => {
+                    assert_eq!(mode, "timeout");
+                    assert_eq!(termination_error, None);
+                    stdout
+                }
+                Err(PocketIcStartupError::ServerExited { stdout, status, .. }) => {
+                    assert_eq!(mode, "exit");
+                    assert_eq!(status.code(), Some(23));
+                    stdout
+                }
+                other => panic!(
+                    "unexpected {mode} startup result: {}",
+                    match other {
+                        Err(error) => error.to_string(),
+                        Ok(_) => unreachable!(),
+                    }
+                ),
+            };
+            let pid = output
+                .parse::<u32>()
+                .expect("server published its descendant PID");
+            let state_file = PathBuf::from(format!("/proc/{pid}/stat"));
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                match fs::read_to_string(&state_file) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                    Ok(state) if state.rsplit_once(") ").unwrap().1.starts_with('Z') => break,
+                    _ => {}
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "{mode} left its descendant running"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn managed_server_passes_an_explicit_hard_ttl() {
@@ -1040,11 +1162,7 @@ mod tests {
             .with_server_hard_ttl(Duration::from_secs(60))
             .start_managed_server()
             .expect("caller-provided PocketIC server must publish its port");
-        let files = server
-            .server
-            .files
-            .as_ref()
-            .expect("managed server must retain startup files");
+        let files = &server.server.files;
         let startup_directory = files.directory.clone();
 
         assert!(files.port.is_file());

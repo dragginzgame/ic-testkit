@@ -1,3 +1,4 @@
+use super::cache_fs::canonicalize_allow_missing;
 use crate::batch::{BatchLabelError, validate_labels};
 
 use std::{
@@ -10,11 +11,11 @@ use std::{
 use super::wasm_cache::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
     SharedIncrementalTargetPrunePolicy, WasmBuildBatchAttempt, WasmBuildBatchInputMetrics,
-    WasmBuildBatchInputResolver, WasmBuildCacheMode, WasmBuildError, WasmBuildFailurePhase,
-    WasmBuildFailureTimings, WasmBuildInputSnapshotState, WasmBuildOutcome,
-    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSessionState, WasmBuildSpec,
-    WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached_in_batch,
-    build_wasm_canisters_cached_in_batch_with_progress,
+    WasmBuildBatchInputResolver, WasmBuildError, WasmBuildFailurePhase, WasmBuildFailureTimings,
+    WasmBuildInputReuse, WasmBuildInputSnapshotState, WasmBuildOutcome, WasmBuildProgressConfig,
+    WasmBuildProgressEvent, WasmBuildSessionState, WasmBuildSpec, WasmBuildTimings,
+    WasmInputResolutionTimings, build_wasm_canisters_cached_in_batch,
+    build_wasm_canisters_cached_in_batch_with_progress, shared_incremental_target,
 };
 
 /// Orchestration shared by every entry in one independent Wasm build batch.
@@ -206,7 +207,12 @@ impl<'guard> WasmBuildSession<'guard> {
         specs: &[LabeledWasmBuildSpec],
         config: WasmBuildBatchConfig,
     ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-        build_wasm_canisters_cached_batch_with_session(specs, config, &mut self.state)
+        run_wasm_batch(
+            specs,
+            config,
+            Some(WasmBuildInputReuse::Session(&mut self.state)),
+            None,
+        )
     }
 
     /// Build one observed sequential batch using retained immutable inputs.
@@ -215,17 +221,16 @@ impl<'guard> WasmBuildSession<'guard> {
         specs: &[LabeledWasmBuildSpec],
         batch_config: WasmBuildBatchConfig,
         progress_config: WasmBuildProgressConfig,
-        observer: F,
+        mut observer: F,
     ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
     where
         F: FnMut(WasmBuildBatchProgressEvent),
     {
-        build_wasm_canisters_cached_batch_with_session_and_progress(
+        run_wasm_batch(
             specs,
             batch_config,
-            progress_config,
-            &mut self.state,
-            observer,
+            Some(WasmBuildInputReuse::Session(&mut self.state)),
+            Some((progress_config, &mut observer)),
         )
     }
 
@@ -286,7 +291,12 @@ impl<'guard> WasmBuildInputSnapshot<'guard> {
         specs: &[LabeledWasmBuildSpec],
         config: WasmBuildBatchConfig,
     ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-        build_wasm_canisters_cached_batch_with_snapshot(specs, config, &self.state)
+        run_wasm_batch(
+            specs,
+            config,
+            Some(WasmBuildInputReuse::Snapshot(&self.state)),
+            None,
+        )
     }
 
     /// Build one observed sequential batch from prepared inputs.
@@ -297,17 +307,16 @@ impl<'guard> WasmBuildInputSnapshot<'guard> {
         specs: &[LabeledWasmBuildSpec],
         batch_config: WasmBuildBatchConfig,
         progress_config: WasmBuildProgressConfig,
-        observer: F,
+        mut observer: F,
     ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
     where
         F: FnMut(WasmBuildBatchProgressEvent),
     {
-        build_wasm_canisters_cached_batch_with_snapshot_and_progress(
+        run_wasm_batch(
             specs,
             batch_config,
-            progress_config,
-            &self.state,
-            observer,
+            Some(WasmBuildInputReuse::Snapshot(&self.state)),
+            Some((progress_config, &mut observer)),
         )
     }
 
@@ -765,7 +774,7 @@ impl WasmBuildBatchConfig {
         }
     }
 
-    /// Maintain each distinct shared target once through its first batch entry.
+    /// Maintain each distinct resolved shared target once through its first batch entry.
     #[must_use]
     pub const fn with_shared_incremental_target_maintenance(
         mut self,
@@ -839,44 +848,7 @@ pub fn build_wasm_canisters_cached_batch_with_config(
     specs: &[LabeledWasmBuildSpec],
     config: WasmBuildBatchConfig,
 ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-    build_wasm_canisters_cached_batch_internal(specs, config, None)
-}
-
-enum WasmBuildInputReuse<'reuse> {
-    Session(&'reuse mut WasmBuildSessionState),
-    Snapshot(&'reuse WasmBuildInputSnapshotState),
-}
-
-fn build_wasm_canisters_cached_batch_with_session(
-    specs: &[LabeledWasmBuildSpec],
-    config: WasmBuildBatchConfig,
-    session: &mut WasmBuildSessionState,
-) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-    build_wasm_canisters_cached_batch_internal(
-        specs,
-        config,
-        Some(WasmBuildInputReuse::Session(session)),
-    )
-}
-
-fn build_wasm_canisters_cached_batch_with_snapshot(
-    specs: &[LabeledWasmBuildSpec],
-    config: WasmBuildBatchConfig,
-    snapshot: &WasmBuildInputSnapshotState,
-) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-    build_wasm_canisters_cached_batch_internal(
-        specs,
-        config,
-        Some(WasmBuildInputReuse::Snapshot(snapshot)),
-    )
-}
-
-fn build_wasm_canisters_cached_batch_internal(
-    specs: &[LabeledWasmBuildSpec],
-    config: WasmBuildBatchConfig,
-    reuse: Option<WasmBuildInputReuse<'_>>,
-) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError> {
-    run_wasm_batch(specs, config, reuse, None)
+    run_wasm_batch(specs, config, None, None)
 }
 
 /// Build an independent Wasm batch while forwarding structured progress.
@@ -905,63 +877,6 @@ pub fn build_wasm_canisters_cached_batch_with_config_and_progress<F>(
     specs: &[LabeledWasmBuildSpec],
     batch_config: WasmBuildBatchConfig,
     progress_config: WasmBuildProgressConfig,
-    observer: F,
-) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
-where
-    F: FnMut(WasmBuildBatchProgressEvent),
-{
-    build_wasm_canisters_cached_batch_with_progress_internal(
-        specs,
-        batch_config,
-        progress_config,
-        None,
-        observer,
-    )
-}
-
-fn build_wasm_canisters_cached_batch_with_session_and_progress<F>(
-    specs: &[LabeledWasmBuildSpec],
-    batch_config: WasmBuildBatchConfig,
-    progress_config: WasmBuildProgressConfig,
-    session: &mut WasmBuildSessionState,
-    observer: F,
-) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
-where
-    F: FnMut(WasmBuildBatchProgressEvent),
-{
-    build_wasm_canisters_cached_batch_with_progress_internal(
-        specs,
-        batch_config,
-        progress_config,
-        Some(WasmBuildInputReuse::Session(session)),
-        observer,
-    )
-}
-
-fn build_wasm_canisters_cached_batch_with_snapshot_and_progress<F>(
-    specs: &[LabeledWasmBuildSpec],
-    batch_config: WasmBuildBatchConfig,
-    progress_config: WasmBuildProgressConfig,
-    snapshot: &WasmBuildInputSnapshotState,
-    observer: F,
-) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
-where
-    F: FnMut(WasmBuildBatchProgressEvent),
-{
-    build_wasm_canisters_cached_batch_with_progress_internal(
-        specs,
-        batch_config,
-        progress_config,
-        Some(WasmBuildInputReuse::Snapshot(snapshot)),
-        observer,
-    )
-}
-
-fn build_wasm_canisters_cached_batch_with_progress_internal<F>(
-    specs: &[LabeledWasmBuildSpec],
-    batch_config: WasmBuildBatchConfig,
-    progress_config: WasmBuildProgressConfig,
-    reuse: Option<WasmBuildInputReuse<'_>>,
     mut observer: F,
 ) -> Result<WasmBuildBatchReport, WasmBuildBatchContractError>
 where
@@ -970,7 +885,7 @@ where
     run_wasm_batch(
         specs,
         batch_config,
-        reuse,
+        None,
         Some((progress_config, &mut observer)),
     )
 }
@@ -991,15 +906,7 @@ fn run_wasm_batch(
         .iter()
         .map(|labeled| labeled.spec.clone())
         .collect::<Vec<_>>();
-    let mut resolver = match reuse {
-        None => WasmBuildBatchInputResolver::new(&build_specs),
-        Some(WasmBuildInputReuse::Session(session)) => {
-            WasmBuildBatchInputResolver::with_session(&build_specs, session)
-        }
-        Some(WasmBuildInputReuse::Snapshot(snapshot)) => {
-            WasmBuildBatchInputResolver::with_snapshot(&build_specs, snapshot)
-        }
-    };
+    let mut resolver = WasmBuildBatchInputResolver::new(&build_specs, reuse);
     let mut report = build_wasm_batch(specs, batch_config, |spec, index| {
         let Some((progress_config, observer)) = observation.as_mut() else {
             return build_wasm_canisters_cached_in_batch(spec, index, &mut resolver);
@@ -1047,33 +954,21 @@ where
     for (index, labeled) in specs.iter().enumerate() {
         let entry_started = Instant::now();
         let spec = &labeled.spec;
-        if config.shared_incremental_maintenance.is_some()
+        let attempt = if config.shared_incremental_maintenance.is_some()
             && spec.shared_incremental_target_maintenance().is_some()
         {
-            let elapsed = entry_started.elapsed();
-            let attempt =
-                WasmBuildBatchAttempt::invalid_spec(batch_maintenance_ownership_error(), elapsed);
-            entries.push(WasmBuildBatchEntry {
-                index,
-                label: labeled.label.clone(),
-                result: attempt.result,
-                failure: Some(WasmBuildFailureDetails {
-                    phase: attempt
-                        .failure_phase
-                        .expect("invalid batch entry must retain its failure phase"),
-                    timings: attempt
-                        .failure_timings
-                        .expect("invalid batch entry must retain its failure timings"),
-                }),
-                entry_elapsed: elapsed,
-            });
-            continue;
-        }
-        let configured = maintenance.prepare_spec(spec);
-        let attempt = build(configured.as_ref().unwrap_or(spec), index);
+            WasmBuildBatchAttempt::invalid_spec(
+                batch_maintenance_ownership_error(),
+                entry_started.elapsed(),
+            )
+        } else {
+            match maintenance.prepare_spec(spec) {
+                Ok(configured) => build(configured.as_ref().unwrap_or(spec), index),
+                Err(error) => WasmBuildBatchAttempt::invalid_spec(error, entry_started.elapsed()),
+            }
+        };
         let failure = attempt
-            .failure_phase
-            .zip(attempt.failure_timings)
+            .failure
             .map(|(phase, timings)| WasmBuildFailureDetails { phase, timings });
         entries.push(WasmBuildBatchEntry {
             index,
@@ -1147,19 +1042,30 @@ impl BatchMaintenanceTracker {
         }
     }
 
-    fn prepare_spec(&mut self, spec: &WasmBuildSpec) -> Option<WasmBuildSpec> {
-        let config = self.config?;
-        debug_assert!(spec.shared_incremental_target_maintenance().is_none());
-        let WasmBuildCacheMode::SharedIncremental { target_dir } = spec.cache_mode() else {
-            return None;
+    fn prepare_spec(
+        &mut self,
+        spec: &WasmBuildSpec,
+    ) -> Result<Option<WasmBuildSpec>, WasmBuildError> {
+        let Some(config) = self.config else {
+            return Ok(None);
         };
-        if !self.configured_targets.insert(target_dir.clone()) {
-            return None;
+        debug_assert!(spec.shared_incremental_target_maintenance().is_none());
+        let Some(target_dir) = shared_incremental_target(spec) else {
+            return Ok(None);
+        };
+        let canonical =
+            canonicalize_allow_missing(&target_dir).map_err(|source| WasmBuildError::Io {
+                operation: "resolve batch shared incremental target",
+                path: target_dir,
+                source,
+            })?;
+        if !self.configured_targets.insert(canonical) {
+            return Ok(None);
         }
-        Some(
+        Ok(Some(
             spec.clone()
                 .with_shared_incremental_target_maintenance(config),
-        )
+        ))
     }
 }
 

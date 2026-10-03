@@ -42,7 +42,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.10"
+ic-testkit = "0.11"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -274,6 +274,8 @@ fn run_serial_suite(server_binary: &Path) -> Result<(), ic_testkit::pic::PocketI
 ```
 
 `PocketIcManagedServer` owns the child and terminates and waits for it on drop.
+On Unix, teardown also terminates descendants remaining in the server's owned
+process group, including after startup failure or a natural server exit.
 Its `process_id()` accessor identifies that child for caller-managed resource
 monitoring. It does not include descendants or establish liveness; the OS may
 reuse the PID after the child exits and is reaped. A copied PID retains no
@@ -546,6 +548,13 @@ Cache and pool outcomes and timing records implement compact single-line
 `Display`, so consumers can emit useful diagnostics without reformatting every
 phase themselves.
 
+For a long suite, log `eprintln!("baseline={outcome}")` after each acquisition
+and group the results by recipe. Compare cold `build` time with warm `restore`,
+`reset`, `readiness`, and `validation` time. Repeated `rebuilt` outcomes identify
+recovery costs; inspect their reasons before changing the recipe. Queue `wait`
+time shows time spent waiting for a pool slot. Measure total suite time when
+tuning capacity, since more concurrent instances also consume more host resources.
+
 Recipes that wrap PocketIC's currently unstructured transport failures can use
 `is_dead_pocket_ic_transport_error` in `classify_failure`, returning
 `RebuildReason::DeadPocketIcTransport` when it matches and
@@ -767,6 +776,12 @@ every successful acquisition.
 `WasmBuildTimings::input_resolution` returns the structured Cargo/rustc
 identity, Cargo metadata, input discovery, content hashing, and total timing.
 
+Relative exact target paths use the caller's working directory, matching cache
+filesystem operations. Relative shared targets use the workspace root. Select
+these paths through `WasmBuildSpec`; overriding `CARGO_TARGET_DIR` through
+`with_extra_env` or passing `--target-dir` through `with_cargo_profile_args`
+returns `InvalidSpec` before acquisition.
+
 Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
 retaining exact immutable final Wasm entries:
 
@@ -822,7 +837,9 @@ an age or size threshold is exceeded it removes every other child while
 retaining the root, cache tag, and live coordination lock. Callers must not
 colocate unrelated data that needs to survive a clear. Before clearing, the
 exact Cargo resolver rejects a target that overlaps source, configuration, or
-additional inputs. Independent high-frequency callers can use
+additional inputs, or whose clearing could reach exact cached artifacts.
+The exact and shared target may use the same container, whose `.ic-testkit`
+metadata remains preserved. Independent high-frequency callers can use
 `maintain_shared_incremental_target_at_most_every`; matching recent passes
 coordinate through a small cross-process marker and skip both Cargo input
 resolution and whole-target traversal. Missing targets remain uncreated,
@@ -1097,8 +1114,10 @@ for entry in batch.shared_incremental_maintenance_outcomes() {
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Maintenance is attached to the first specification for each distinct
-configured shared-target path. Isolated specs are unaffected. A specification
+Maintenance is attached to the first specification for each distinct resolved
+shared-target directory. Relative paths are workspace-relative, and filesystem
+aliases of the same directory share one maintenance attempt. Isolated specs
+are unaffected. A specification
 that also configures per-spec integrated maintenance receives a labeled,
 indexed error, and later entries still run.
 
@@ -1211,7 +1230,8 @@ that cannot be represented by stable input bytes.
 Declared input and tool roots may contain the cache directory, which is
 excluded while recursively hashing that broader tree, but they must not be
 located inside the cache themselves. Public output destinations must also stay
-outside the cache, resolve to distinct paths, and not overlap a declared input
+outside the cache, resolve to distinct non-nested paths, and not overlap a
+declared input
 or tool. These checks prevent silently unkeyed inputs, self-invalidating
 recipes, and two logical outputs overwriting the same file.
 
@@ -1288,7 +1308,7 @@ ICTK|storage/write:end|150|260|390|430
 ";
 let parsed = parse_benchmark_events(input, &BenchmarkParserConfig::default());
 let spans = pair_benchmark_spans(&parsed.events);
-let aggregates = aggregate_benchmark_spans(&spans.spans);
+let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
 
 assert_eq!(aggregates.rows[0].span_label, "storage/write");
 ```
@@ -1298,6 +1318,12 @@ and `all` identifies the cross-suite aggregate. A suite named `ALL` remains
 distinct from the global aggregate. Run indices have a minimum width of four
 digits, continue beyond `9999`, and fail explicitly if the numeric range is
 exhausted; previous-run discovery orders the indices numerically.
+
+`aggregate_benchmark_spans` returns `Result<BenchmarkAggregateReport,
+BenchmarkAggregateError>`. Counter totals and run counts use checked arithmetic;
+overflow rejects the complete aggregation rather than returning partial or
+wrapped totals. The error identifies the suite, span label and counter, and
+`is_all_suites()` distinguishes a cross-suite failure from a named suite `ALL`.
 
 The report writer emits raw events, spans, aggregates, comparisons, malformed
 and unpaired markers, `bench-summary.md`, and `metadata.json`. Run-directory

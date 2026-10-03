@@ -160,14 +160,73 @@ fn batch_maintenance_configures_each_shared_target_once() {
 
     let prepared_first = tracker
         .prepare_spec(&first)
+        .expect("resolve shared target")
         .expect("first shared target must own maintenance");
     assert_eq!(
         prepared_first.shared_incremental_target_maintenance(),
         Some(maintenance)
     );
-    assert!(tracker.prepare_spec(&second).is_none());
-    assert!(tracker.prepare_spec(&other).is_some());
-    assert!(tracker.prepare_spec(&isolated).is_none());
+    assert!(tracker.prepare_spec(&second).unwrap().is_none());
+    assert!(tracker.prepare_spec(&other).unwrap().is_some());
+    assert!(tracker.prepare_spec(&isolated).unwrap().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn batch_maintenance_distinguishes_workspaces_and_deduplicates_aliases() {
+    use crate::artifacts::SharedIncrementalTargetMaintenanceOutcome;
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+    use std::{fs, os::unix::fs::symlink};
+
+    let (first_root, first) = fake_wasm_build_spec("batch-maintenance-first");
+    let (second_root, second) = fake_wasm_build_spec("batch-maintenance-second");
+    let alias_root = unique_temp_directory("batch-maintenance-alias");
+    symlink(&first_root, alias_root.join("alias")).expect("create workspace alias");
+    let first = first.with_shared_incremental_target("shared");
+    let second = second.with_shared_incremental_target("shared");
+    let alias = first
+        .clone()
+        .with_shared_incremental_target(alias_root.join("alias/shared"));
+    let specs = [
+        LabeledWasmBuildSpec::new("first", first),
+        LabeledWasmBuildSpec::new("second", second),
+        LabeledWasmBuildSpec::new("alias", alias),
+    ];
+    let config = WasmBuildBatchConfig::new()
+        .with_shared_incremental_target_maintenance_at_most_every(
+            SharedIncrementalTargetPrunePolicy::new(),
+            Duration::ZERO,
+        );
+    let report = super::build_wasm_canisters_cached_batch_with_config(&specs, config)
+        .expect("valid maintenance batch");
+    assert!(report.is_success(), "{report:?}");
+    assert_eq!(report.shared_incremental_maintenance_outcomes().count(), 2);
+    assert!(
+        report
+            .shared_incremental_maintenance_outcomes()
+            .all(|outcome| {
+                matches!(
+                    outcome.outcome(),
+                    SharedIncrementalTargetMaintenanceOutcome::Performed { .. }
+                )
+            })
+    );
+    for root in [&first_root, &second_root] {
+        assert!(
+            root.join("shared/.ic-testkit/.ic-testkit-last-maintenance")
+                .is_file()
+        );
+    }
+    assert!(
+        report
+            .outcomes()
+            .last()
+            .is_some_and(|entry| entry.outcome().is_reused())
+    );
+    drop(report);
+    fs::remove_dir_all(first_root).expect("remove first maintenance workspace");
+    fs::remove_dir_all(second_root).expect("remove second maintenance workspace");
+    fs::remove_dir_all(alias_root).expect("remove maintenance alias");
 }
 
 #[test]

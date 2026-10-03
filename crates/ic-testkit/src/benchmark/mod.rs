@@ -119,11 +119,25 @@ impl BenchmarkCounters {
         })
     }
 
-    const fn add_assign(&mut self, other: Self) {
-        self.instructions += other.instructions;
-        self.heap_bytes += other.heap_bytes;
-        self.memory_bytes += other.memory_bytes;
-        self.total_allocation += other.total_allocation;
+    fn checked_add(self, other: Self) -> Result<Self, BenchmarkCounter> {
+        Ok(Self {
+            instructions: self
+                .instructions
+                .checked_add(other.instructions)
+                .ok_or(BenchmarkCounter::Instructions)?,
+            heap_bytes: self
+                .heap_bytes
+                .checked_add(other.heap_bytes)
+                .ok_or(BenchmarkCounter::HeapBytes)?,
+            memory_bytes: self
+                .memory_bytes
+                .checked_add(other.memory_bytes)
+                .ok_or(BenchmarkCounter::MemoryBytes)?,
+            total_allocation: self
+                .total_allocation
+                .checked_add(other.total_allocation)
+                .ok_or(BenchmarkCounter::TotalAllocation)?,
+        })
     }
 
     fn min_assign(&mut self, other: Self) {
@@ -231,6 +245,45 @@ pub struct BenchmarkAggregateReport {
     pub rows: Vec<BenchmarkAggregateRow>,
 }
 
+/// Counter whose aggregate cannot be represented.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BenchmarkCounter {
+    Runs,
+    Instructions,
+    HeapBytes,
+    MemoryBytes,
+    TotalAllocation,
+}
+
+/// Overflow rejects the complete aggregation, without returning partial totals.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BenchmarkAggregateError {
+    pub suite: String,
+    pub span_label: String,
+    pub counter: BenchmarkCounter,
+    scope: AggregateScope,
+}
+
+impl BenchmarkAggregateError {
+    /// Whether the overflow belongs to the cross-suite aggregate.
+    #[must_use]
+    pub const fn is_all_suites(&self) -> bool {
+        matches!(self.scope, AggregateScope::All)
+    }
+}
+
+impl std::fmt::Display for BenchmarkAggregateError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "benchmark aggregate overflow: scope={:?}, span={}, counter={:?}",
+            self.scope, self.span_label, self.counter
+        )
+    }
+}
+
+impl std::error::Error for BenchmarkAggregateError {}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct BenchmarkComparisonRow {
     pub suite: String,
@@ -265,7 +318,7 @@ pub struct BenchmarkComparisonReport {
     pub rows: Vec<BenchmarkComparisonRow>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BenchmarkRunMetadata {
     pub timestamp: String,
     pub run_directory_name: String,
@@ -413,18 +466,13 @@ pub fn read_benchmark_run_metadata(path: impl AsRef<Path>) -> io::Result<Benchma
     let input = fs::read_to_string(path)?;
     let value = serde_json::from_str::<Value>(&input).map_err(metadata_json_error)?;
 
-    Ok(BenchmarkRunMetadata {
-        timestamp: metadata_required_string(&value, "timestamp")?,
-        run_directory_name: metadata_required_string(&value, "run_directory_name")?,
-        run_index: metadata_required_u32(&value, "run_index")?,
-        git_commit_hash: metadata_optional_string(&value, "git_commit_hash")?,
-        git_commit_short_hash: metadata_optional_string(&value, "git_commit_short_hash")?,
-        ic_testkit_version: metadata_required_string(&value, "ic_testkit_version")?,
-        pocket_ic_version: metadata_required_string(&value, "pocket_ic_version")?,
-        rustc_version: metadata_required_string(&value, "rustc_version")?,
-        benchmark_command: metadata_optional_string(&value, "benchmark_command")?,
-        selected_previous_run: metadata_optional_string(&value, "selected_previous_run")?,
-    })
+    if !value.is_object() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "benchmark metadata JSON must be an object",
+        ));
+    }
+    serde_json::from_value(value).map_err(metadata_json_error)
 }
 
 #[must_use]
@@ -532,8 +580,13 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
     report
 }
 
-#[must_use]
-pub fn aggregate_benchmark_spans(spans: &[BenchmarkSpan]) -> BenchmarkAggregateReport {
+/// Aggregate spans by named suite and across all suites.
+///
+/// Returns an error if any counter total or run count overflows. No partial
+/// report is returned, and totals are never wrapped or saturated.
+pub fn aggregate_benchmark_spans(
+    spans: &[BenchmarkSpan],
+) -> Result<BenchmarkAggregateReport, BenchmarkAggregateError> {
     let mut rows: BTreeMap<(AggregateScope, String), AggregateBuilder> = BTreeMap::new();
 
     for span in spans {
@@ -542,13 +595,13 @@ pub fn aggregate_benchmark_spans(spans: &[BenchmarkSpan]) -> BenchmarkAggregateR
             AggregateScope::Suite(span.suite.clone()),
             &span.span_label,
             span,
-        );
-        add_span_to_aggregate(&mut rows, AggregateScope::All, &span.span_label, span);
+        )?;
+        add_span_to_aggregate(&mut rows, AggregateScope::All, &span.span_label, span)?;
     }
 
-    BenchmarkAggregateReport {
+    Ok(BenchmarkAggregateReport {
         rows: rows.into_values().map(AggregateBuilder::finish).collect(),
-    }
+    })
 }
 
 #[must_use]
@@ -834,12 +887,15 @@ impl AggregateBuilder {
         }
     }
 
-    fn push(&mut self, span: &BenchmarkSpan) {
-        self.runs += 1;
-        self.total.add_assign(span.delta);
+    fn push(&mut self, span: &BenchmarkSpan) -> Result<(), BenchmarkCounter> {
+        let runs = self.runs.checked_add(1).ok_or(BenchmarkCounter::Runs)?;
+        let total = self.total.checked_add(span.delta)?;
+        self.runs = runs;
+        self.total = total;
         self.min.min_assign(span.delta);
         self.max.max_assign(span.delta);
         self.peak_end.max_assign(span.end);
+        Ok(())
     }
 
     fn finish(self) -> BenchmarkAggregateRow {
@@ -862,11 +918,22 @@ fn add_span_to_aggregate(
     scope: AggregateScope,
     span_label: &str,
     span: &BenchmarkSpan,
-) {
+) -> Result<(), BenchmarkAggregateError> {
     match rows.entry((scope.clone(), span_label.to_string())) {
-        Entry::Occupied(mut entry) => entry.get_mut().push(span),
+        Entry::Occupied(mut entry) => {
+            entry
+                .get_mut()
+                .push(span)
+                .map_err(|counter| BenchmarkAggregateError {
+                    suite: scope.label().to_string(),
+                    span_label: span_label.to_string(),
+                    counter,
+                    scope,
+                })
+        }
         Entry::Vacant(entry) => {
             entry.insert(AggregateBuilder::new(scope, span_label, span));
+            Ok(())
         }
     }
 }
@@ -1098,18 +1165,7 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
 }
 
 fn metadata_json(metadata: &BenchmarkRunMetadata) -> String {
-    let value = serde_json::json!({
-        "timestamp": metadata.timestamp,
-        "run_directory_name": metadata.run_directory_name,
-        "run_index": metadata.run_index,
-        "git_commit_hash": metadata.git_commit_hash,
-        "git_commit_short_hash": metadata.git_commit_short_hash,
-        "ic_testkit_version": metadata.ic_testkit_version,
-        "pocket_ic_version": metadata.pocket_ic_version,
-        "rustc_version": metadata.rustc_version,
-        "benchmark_command": metadata.benchmark_command,
-        "selected_previous_run": metadata.selected_previous_run,
-    });
+    let value = serde_json::to_value(metadata).expect("metadata JSON must serialize");
 
     let mut output = serde_json::to_string_pretty(&value).expect("metadata JSON must serialize");
     output.push('\n');
@@ -1157,42 +1213,6 @@ fn run_directory_sort_key(name: &str) -> Option<(&str, u32)> {
 
 fn short_commit_hash(hash: &str) -> String {
     hash.chars().take(7).collect()
-}
-
-fn metadata_required_string(value: &Value, key: &str) -> io::Result<String> {
-    metadata_optional_string(value, key)?.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("missing required metadata string field `{key}`"),
-        )
-    })
-}
-
-fn metadata_required_u32(value: &Value, key: &str) -> io::Result<u32> {
-    let Some(raw) = value.get(key).and_then(Value::as_u64) else {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("missing required metadata integer field `{key}`"),
-        ));
-    };
-
-    u32::try_from(raw).map_err(|err| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("metadata integer field `{key}` is invalid: {err}"),
-        )
-    })
-}
-
-fn metadata_optional_string(value: &Value, key: &str) -> io::Result<Option<String>> {
-    match value.get(key) {
-        None | Some(Value::Null) => Ok(None),
-        Some(Value::String(value)) => Ok(Some(value.clone())),
-        Some(_) => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("metadata string field `{key}` is not a string or null"),
-        )),
-    }
 }
 
 fn metadata_json_error(err: serde_json::Error) -> io::Error {
@@ -1273,4 +1293,33 @@ fn optional_f64_cell(value: Option<f64>) -> String {
 
 fn markdown_cell(value: &str) -> String {
     value.replace('|', "\\|")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AggregateBuilder, AggregateScope, BenchmarkCounter, BenchmarkCounters, BenchmarkSpan,
+    };
+
+    #[test]
+    fn aggregate_run_count_overflow_is_rejected_without_changing_totals() {
+        let span = BenchmarkSpan {
+            suite: "probe".into(),
+            span_label: "probe/run".into(),
+            start_line: 1,
+            end_line: 2,
+            start: BenchmarkCounters::default(),
+            end: BenchmarkCounters::default(),
+            delta: BenchmarkCounters::default(),
+        };
+        let mut builder = AggregateBuilder::new(
+            AggregateScope::Suite(span.suite.clone()),
+            &span.span_label,
+            &span,
+        );
+        builder.runs = u64::MAX;
+        assert_eq!(builder.push(&span), Err(BenchmarkCounter::Runs));
+        assert_eq!(builder.runs, u64::MAX);
+        assert_eq!(builder.total, BenchmarkCounters::default());
+    }
 }

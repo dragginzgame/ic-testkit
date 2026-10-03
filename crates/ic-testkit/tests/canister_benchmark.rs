@@ -13,11 +13,12 @@ use ic_testkit::{
         ArtifactCachePrunePolicy, ArtifactCacheSpec, LabeledWasmBuildSpec,
         SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
         WasmBuildBatchConfig, WasmBuildBatchContractError, WasmBuildBatchMetrics,
-        WasmBuildBatchOutcomeEntry, WasmBuildFailurePhase, WasmBuildInputSnapshot,
-        WasmBuildOutcome, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSession,
-        WasmBuildSpec, build_wasm_canisters_cached, build_wasm_canisters_cached_with_progress,
-        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
-        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
+        WasmBuildBatchOutcomeEntry, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
+        WasmBuildFailurePhase, WasmBuildInputSnapshot, WasmBuildOutcome, WasmBuildProgressConfig,
+        WasmBuildProgressEvent, WasmBuildSession, WasmBuildSpec, build_wasm_canisters_cached,
+        build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
+        prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
+        wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -112,27 +113,24 @@ fn independent_wasm_batch_preserves_standalone_feature_resolution() {
         ),
         specs[1].clone(),
     ];
+    let mut completed = Vec::new();
     let with_failure = session
-        .build_batch(
+        .build_batch_with_progress(
             &with_invalid_middle,
             ic_testkit::artifacts::WasmBuildBatchConfig::new(),
+            WasmBuildProgressConfig::new(),
+            |event| match event {
+                WasmBuildBatchProgressEvent::BuildFinished { index, label } => {
+                    completed.push((index, label, true));
+                }
+                WasmBuildBatchProgressEvent::BuildFailed { index, label } => {
+                    completed.push((index, label, false));
+                }
+                _ => {}
+            },
         )
         .expect("valid leased failure batch");
-    assert!(!with_failure.is_success());
-    assert_reused_batch_metrics_with_failure(with_failure.metrics());
-    assert_eq!(with_failure.outcomes().count(), 2);
-    assert!(
-        with_failure
-            .outcomes()
-            .all(|entry| entry.outcome().is_reused())
-    );
-    assert_eq!(
-        with_failure
-            .failures()
-            .map(|failure| (failure.index(), failure.label()))
-            .collect::<Vec<_>>(),
-        [(1, "invalid")]
-    );
+    assert_reused_batch_with_failure(&with_failure, &completed);
     assert!(
         first_exact_cache.is_dir(),
         "a validated caller-facing hit must recreate its immutable cache directory"
@@ -162,10 +160,8 @@ fn prepared_wasm_inputs_serve_concurrent_warm_readers() {
         WasmBuildSpec::new(&workspace, &root.join("exact-b"), &["feature_b"], "debug")
             .with_shared_incremental_target(root.join("shared-b"));
     for spec in [&first_spec, &second_spec] {
-        assert!(matches!(
-            build_wasm_canisters_cached(spec).expect("warm exact Wasm entry"),
-            WasmBuildOutcome::Built(_)
-        ));
+        let built = build_wasm_canisters_cached(spec).expect("warm exact Wasm entry");
+        assert!(!built.is_reused());
     }
 
     let source_write_exclusion = Mutex::new(());
@@ -193,9 +189,21 @@ fn prepared_wasm_inputs_serve_concurrent_warm_readers() {
         let first_snapshot = &snapshot;
         let first_reader = scope.spawn(move || {
             first_barrier.wait();
-            first_snapshot
-                .build_batch(&first, WasmBuildBatchConfig::new())
-                .expect("read first prepared input")
+            let mut finished = Vec::new();
+            let report = first_snapshot
+                .build_batch_with_progress(
+                    &first,
+                    WasmBuildBatchConfig::new(),
+                    WasmBuildProgressConfig::new(),
+                    |event| {
+                        if let WasmBuildBatchProgressEvent::BuildFinished { index, label } = event {
+                            finished.push((index, label));
+                        }
+                    },
+                )
+                .expect("read first prepared input");
+            assert_eq!(finished, [(0, "local-test".to_owned())]);
+            report
         });
         let second_barrier = Arc::clone(&barrier);
         let second_snapshot = &snapshot;
@@ -212,17 +220,8 @@ fn prepared_wasm_inputs_serve_concurrent_warm_readers() {
         )
     });
     for report in [&first_report, &second_report] {
-        assert!(report.is_success());
         assert!(report.outcomes().all(|entry| entry.outcome().is_reused()));
-        let metrics = report.metrics();
-        assert_eq!(metrics.input_resolution_runs(), 0);
-        assert_eq!(metrics.input_resolution_reuses(), 0);
-        assert_eq!(metrics.input_resolution_session_reuses(), 0);
-        assert_eq!(metrics.input_resolution_prepared_reuses(), 1);
-        assert_eq!(
-            metrics.successful_timings().input_resolution().total(),
-            Duration::ZERO
-        );
+        assert_prepared_batch_metrics(report.metrics());
     }
     assert_eq!(snapshot.metrics().reader_reuses(), 2);
 
@@ -312,7 +311,45 @@ fn assert_cold_batch_metrics(metrics: WasmBuildBatchMetrics) {
     assert!(metrics.successful_timings().cargo_build().is_some());
 }
 
-fn assert_reused_batch_metrics_with_failure(metrics: WasmBuildBatchMetrics) {
+fn assert_prepared_batch_metrics(metrics: WasmBuildBatchMetrics) {
+    assert_eq!(metrics.succeeded(), 1);
+    assert_eq!(metrics.failed(), 0);
+    assert_eq!(metrics.input_resolution_runs(), 0);
+    assert_eq!(metrics.input_resolution_reuses(), 0);
+    assert_eq!(metrics.input_resolution_session_reuses(), 0);
+    assert_eq!(metrics.input_resolution_prepared_reuses(), 1);
+    assert_eq!(
+        metrics.successful_timings().input_resolution().total(),
+        Duration::ZERO
+    );
+}
+
+fn assert_reused_batch_with_failure(
+    report: &WasmBuildBatchReport,
+    completed: &[(usize, String, bool)],
+) {
+    assert!(!report.is_success());
+    assert_eq!(
+        completed
+            .iter()
+            .map(|(index, label, success)| (*index, label.as_str(), *success))
+            .collect::<Vec<_>>(),
+        [
+            (0, "feature-a", true),
+            (1, "invalid", false),
+            (2, "feature-b", true)
+        ],
+    );
+    assert_eq!(report.outcomes().count(), 2);
+    assert!(report.outcomes().all(|entry| entry.outcome().is_reused()));
+    assert_eq!(
+        report
+            .failures()
+            .map(|failure| (failure.index(), failure.label()))
+            .collect::<Vec<_>>(),
+        [(1, "invalid")]
+    );
+    let metrics = report.metrics();
     assert_eq!(metrics.succeeded(), 2);
     assert_eq!(metrics.failed(), 1);
     assert_eq!(metrics.built(), 0);
@@ -676,6 +713,8 @@ fn assert_warm_shared_maintenance_progress(events: &[WasmBuildProgressEvent]) {
     let warm_acquisition_phases = events
         .iter()
         .filter_map(|event| match event {
+            WasmBuildProgressEvent::SharedTargetLockStarted { .. } => Some("shared lock started"),
+            WasmBuildProgressEvent::SharedTargetLockAcquired { .. } => Some("shared lock acquired"),
             WasmBuildProgressEvent::InputsResolved { .. } => Some("inputs resolved"),
             WasmBuildProgressEvent::SharedTargetMaintenanceStarted { .. } => {
                 Some("maintenance started")
@@ -691,6 +730,8 @@ fn assert_warm_shared_maintenance_progress(events: &[WasmBuildProgressEvent]) {
     assert_eq!(
         warm_acquisition_phases,
         [
+            "shared lock started",
+            "shared lock acquired",
             "inputs resolved",
             "maintenance started",
             "maintenance skipped",

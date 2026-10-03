@@ -107,12 +107,9 @@ pub fn icp_artifact_ready_with_snapshot(
 ) -> bool {
     let artifact_path = workspace_root.join(artifact_relative_path);
 
-    match fs::metadata(&artifact_path) {
-        Ok(meta) if meta.is_file() && meta.len() > 0 => watched_inputs
-            .artifact_is_fresh(&artifact_path)
-            .unwrap_or(false),
-        _ => false,
-    }
+    watched_inputs
+        .artifact_is_fresh(&artifact_path)
+        .unwrap_or(false)
 }
 
 fn watched_input_stamp_path(artifact_path: &Path) -> std::path::PathBuf {

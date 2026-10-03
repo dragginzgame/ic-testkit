@@ -74,6 +74,67 @@ fn metadata_receives_only_resolution_arguments() {
 }
 
 #[test]
+fn compact_feature_arguments_watch_enabled_optional_dependencies() {
+    use crate::artifacts::WasmBuildInputSnapshot;
+
+    let root = unique_temp_directory("compact-feature-inputs");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fixture\", \"optional_dep\"]\nresolver = \"2\"\n",
+    )
+    .expect("write optional dependency workspace");
+    write_projection_package(
+        &root,
+        "fixture",
+        "[features]\nextra = [\"dep:optional_dep\"]\n\
+         [dependencies]\noptional_dep = { path = \"../optional_dep\", optional = true }\n",
+    );
+    write_projection_package(&root, "optional_dep", "");
+    let dependency = root.join("optional_dep");
+    let dependency_source = dependency.join("src/lib.rs");
+    let base = WasmBuildSpec::new(&root, &root.join("target"), &["fixture"], "debug");
+
+    for feature in ["-Fextra", "-F=extra"] {
+        fs::write(&dependency_source, "pub fn optional_dep() -> u8 { 1 }\n")
+            .expect("reset optional dependency source");
+        let spec = base.clone().with_cargo_profile_args([feature]);
+        let snapshot = resolve_cargo_build_inputs(&spec).expect("resolve enabled dependency");
+        assert!(
+            snapshot
+                .inputs()
+                .iter()
+                .any(|input| input.path() == dependency),
+            "{feature} must include the enabled optional dependency",
+        );
+        assert!(
+            snapshot
+                .is_content_current()
+                .expect("check unchanged inputs")
+        );
+        {
+            let source_exclusion = std::sync::Mutex::new(());
+            let guard = source_exclusion.lock().expect("lock source fixture");
+            let prepared = WasmBuildInputSnapshot::prepare_assuming_sources_immutable(
+                &guard,
+                &[base.clone(), spec],
+            )
+            .expect("prepare distinct feature graphs");
+            assert_eq!(prepared.metrics().input_resolution_runs(), 2);
+            assert_eq!(prepared.metrics().input_resolution_reuses(), 0);
+        }
+        fs::write(&dependency_source, "pub fn optional_dep() -> u8 { 2 }\n")
+            .expect("change optional dependency source");
+        assert!(
+            !snapshot
+                .is_content_current()
+                .expect("detect dependency change"),
+            "{feature} must watch the enabled optional dependency",
+        );
+    }
+    fs::remove_dir_all(root).expect("remove compact feature fixture");
+}
+
+#[test]
 fn builders_preserve_os_native_values() {
     let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
         .with_cargo_profile_args([OsString::from("--locked")])
@@ -88,6 +149,113 @@ fn builders_preserve_os_native_values() {
     );
     assert!(spec.inherited_env.contains(&OsString::from("RUSTFLAGS")));
     assert_eq!(spec.additional_inputs, [PathBuf::from("schema")]);
+}
+
+#[test]
+fn cargo_target_overrides_are_rejected_before_acquisition() {
+    use super::build_wasm_canisters_cached;
+    let root = unique_temp_directory("cargo-target-overrides");
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug");
+    for override_spec in [
+        spec.clone().with_extra_env([("CARGO_TARGET_DIR", "other")]),
+        spec.clone()
+            .with_cargo_profile_args(["--target-dir", "other"]),
+        spec.with_cargo_profile_args(["--target-dir=other"]),
+    ] {
+        assert!(matches!(
+            build_wasm_canisters_cached(&override_spec),
+            Err(WasmBuildError::InvalidSpec { .. })
+        ));
+    }
+    assert!(!root.join("exact").exists());
+    fs::remove_dir_all(root).expect("remove Cargo target override fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn shared_target_boundaries_preserve_retained_exact_entries() {
+    use super::build_wasm_canisters_cached;
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, base) = fake_wasm_build_spec("shared-exact-boundary");
+    let unsafe_shared = root.join("shared");
+    let mut nested = base.clone();
+    nested.target_dir = unsafe_shared.join("exact");
+    // A retained isolated build already exists before shared maintenance is enabled.
+    let retained = build_wasm_canisters_cached(&nested).expect("build retained exact artifact");
+    let artifact = retained.record().artifacts()[0].clone();
+    nested = nested.with_shared_incremental_target(&unsafe_shared);
+    let policy = SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0);
+    assert!(matches!(
+        build_wasm_canisters_cached(&nested),
+        Err(WasmBuildError::InvalidSpec { .. })
+    ));
+    assert!(matches!(
+        maintain_shared_incremental_target(&nested, policy),
+        Err(WasmBuildError::InvalidSpec { .. })
+    ));
+    assert!(matches!(
+        maintain_shared_incremental_target_at_most_every(&nested, policy, Duration::ZERO),
+        Err(WasmBuildError::InvalidSpec { .. })
+    ));
+    assert!(artifact.is_file());
+
+    let inside_entries = base.clone().with_shared_incremental_target(
+        base.target_dir.join(".ic-testkit/wasm-targets/incremental"),
+    );
+    assert!(matches!(
+        resolve_cargo_build_inputs(&inside_entries),
+        Err(WasmBuildError::InvalidSpec { .. })
+    ));
+
+    // Sharing the exact target container remains safe: its metadata is preserved.
+    let same_root = base
+        .clone()
+        .with_shared_incremental_target(&base.target_dir);
+    let safe = build_wasm_canisters_cached(&same_root).expect("build with common target container");
+    maintain_shared_incremental_target(&same_root, policy)
+        .expect("maintain common target container");
+    assert!(safe.record().artifacts()[0].is_file());
+    let sibling = base.with_shared_incremental_target(root.join("incremental"));
+    resolve_cargo_build_inputs(&sibling).expect("separate target roots remain valid");
+    drop(safe);
+    drop(retained);
+    fs::remove_dir_all(root).expect("remove shared boundary fixture");
+}
+
+#[cfg(unix)]
+#[test]
+fn relative_exact_target_is_shared_by_cargo_and_cache_operations() {
+    use super::build_wasm_canisters_cached;
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, mut spec) = fake_wasm_build_spec("relative-exact-target");
+    let caller_dir = std::env::current_dir().expect("read caller working directory");
+    spec.workspace_root = root.join("nested/workspace/one/two/three/four");
+    fs::create_dir_all(&spec.workspace_root).expect("create separate Cargo working directory");
+    fs::rename(
+        root.join("Cargo.toml"),
+        spec.workspace_root.join("Cargo.toml"),
+    )
+    .expect("move workspace manifest");
+    fs::rename(root.join("fixture"), spec.workspace_root.join("fixture"))
+        .expect("move workspace package");
+    // Reach an owned /tmp target using a relative path without changing the
+    // process-wide working directory or creating test output in the checkout.
+    spec.target_dir = caller_dir
+        .components()
+        .filter(|part| matches!(part, std::path::Component::Normal(_)))
+        .fold(PathBuf::new(), |path, _| path.join(".."))
+        .join(root.strip_prefix("/").unwrap())
+        .join("exact");
+    let cold = build_wasm_canisters_cached(&spec).expect("build relative exact target");
+    assert!(cold.record().artifacts()[0].is_file());
+    assert!(root.join("exact/.ic-testkit/wasm-targets").is_dir());
+    let warm = build_wasm_canisters_cached(&spec).expect("reuse relative exact target");
+    assert!(warm.is_reused());
+    drop(warm);
+    drop(cold);
+    fs::remove_dir_all(root).expect("remove relative exact target fixture");
 }
 
 #[test]
@@ -361,7 +529,7 @@ fn batch_input_snapshot_reuses_compatible_toolchain_and_metadata_resolution() {
         WasmBuildSpec::new(&root, &target, &["fixture_b"], "debug")
             .with_cargo_program(&cargo_wrapper),
     ];
-    let mut resolver = WasmBuildBatchInputResolver::new(&specs);
+    let mut resolver = WasmBuildBatchInputResolver::new(&specs, None);
     let mut progress = ProgressReporter::silent();
 
     let first = resolver
@@ -544,7 +712,6 @@ fn scheduled_shared_target_maintenance_skips_expensive_work_inside_interval() {
     assert!(report.was_cleared());
     assert!(first.lock_wait().is_some());
     assert!(first.schedule_check().is_some());
-    assert!(first.to_string().contains("action=cleared"));
 
     let sentinel = target.join("debug/deps/preserve-on-skip");
     fs::create_dir_all(sentinel.parent().expect("scheduled sentinel parent"))
@@ -561,7 +728,6 @@ fn scheduled_shared_target_maintenance_skips_expensive_work_inside_interval() {
     assert!(!skipped.was_performed());
     assert!(skipped.lock_wait().is_some());
     assert!(skipped.schedule_check().is_some());
-    assert!(skipped.to_string().contains("action=skipped"));
     assert!(sentinel.is_file());
 
     fs::write(
@@ -584,16 +750,33 @@ fn scheduled_shared_target_maintenance_skips_expensive_work_inside_interval() {
 }
 
 #[test]
-fn zero_progress_heartbeat_is_rejected_before_build_validation() {
-    let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &[], "debug");
+fn zero_progress_heartbeat_is_rejected_for_a_valid_build() {
+    let root = unique_temp_directory("zero-progress-heartbeat");
+    fs::create_dir_all(&root).expect("create heartbeat fixture");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+    )
+    .expect("write heartbeat workspace");
+    write_projection_package(&root, "fixture", "[lib]\ncrate-type = [\"cdylib\"]\n");
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug");
+    validate_spec(&spec).expect("valid heartbeat build spec");
     let result = build_wasm_canisters_cached_with_progress(
         &spec,
         WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::ZERO),
         |_| {},
     );
-    assert!(
-        matches!(result, Err(WasmBuildError::InvalidSpec { message }) if message.contains("heartbeat"))
-    );
+    assert!(matches!(result, Err(WasmBuildError::InvalidSpec { .. })));
+    assert!(!root.join("exact").exists());
+    let outcome = build_wasm_canisters_cached_with_progress(
+        &spec,
+        WasmBuildProgressConfig::new().with_heartbeat_interval(Duration::from_secs(1)),
+        |_| {},
+    )
+    .expect("the same build succeeds with a positive heartbeat interval");
+    assert!(outcome.record().artifacts()[0].is_file());
+    drop(outcome);
+    fs::remove_dir_all(root).expect("remove heartbeat fixture");
 }
 
 #[test]
@@ -624,7 +807,7 @@ fn maintenance_configuration_is_readable_and_strict_by_default() {
 }
 
 #[test]
-fn best_effort_integrated_maintenance_retains_a_typed_failure() {
+fn best_effort_integrated_maintenance_retains_a_failure_message() {
     let root = unique_temp_directory("best-effort-shared-maintenance-failure");
     let target = root.join("shared");
     let schedule_root = target.join(".ic-testkit");
@@ -652,12 +835,19 @@ fn best_effort_integrated_maintenance_retains_a_typed_failure() {
     assert_eq!(outcome.lock_wait(), Some(lock_wait));
     assert!(!outcome.was_performed());
     assert!(outcome.schedule_check().is_none());
+    assert!(matches!(
+        &outcome,
+        SharedIncrementalTargetMaintenanceOutcome::Failed { .. }
+    ));
     assert!(
         outcome
             .failure_message()
-            .is_some_and(|message| message.contains("read cache maintenance time"))
+            .is_some_and(|message| !message.is_empty())
     );
-    assert!(outcome.to_string().contains("action=failed"));
+    assert_eq!(
+        fs::read(schedule_root.join(".ic-testkit-last-maintenance")).unwrap(),
+        [0xff]
+    );
     fs::remove_dir_all(root).expect("remove best-effort maintenance fixture");
 }
 

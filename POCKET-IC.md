@@ -25,6 +25,11 @@ the testkit extension traits.
 - Keep entries generic. Application-specific test conventions belong outside
   this repository.
 
+The upstream discussion is tracked in
+[PocketIC issue #67](https://github.com/dfinity/pocketic/issues/67), which links
+this document. As of 2026-10-03 it has no replies; the latest published server
+release is [16.0.0](https://github.com/dfinity/pocketic/releases/tag/16.0.0).
+
 ## High-Value Upstream Improvements
 
 ### Server Binary Resolution
@@ -32,7 +37,9 @@ the testkit extension traits.
 PocketIC owns its default server-binary discovery, downloading, validation,
 and caching. The bounded ic-testkit startup path deliberately bypasses that
 implicit path: the caller supplies one already-resolved compatible executable,
-and ic-testkit owns only that exact child lifecycle. One-shot managed
+and ic-testkit owns that child's lifecycle and, on Unix, its process group.
+Teardown terminates descendants in that group before reaping the child, keeping
+the group identity reserved through cleanup. One-shot managed
 `try_build` keeps a reaper until the child exits; a caller can instead retain
 `PocketIcManagedServer` explicitly and construct several instances through its
 URL. Neither path adds a downloader, resolver, binary cache, or compatibility
@@ -98,6 +105,18 @@ deadline, poll `Child::try_wait`, retain bounded output, and terminate/reap on
 failure. An upstream owned-server handle would additionally remove the need for
 the local serial-suite lifecycle type. Once those cover the same lifecycle,
 ic-testkit should delegate or remove its process-owning extension.
+
+[Upstream PR #10751](https://github.com/dfinity/ic/pull/10751) proposes a Unix
+process-exit registry that kills server process groups and reaps direct
+children. It remains open as of 2026-10-03, and does not provide bounded
+instance deletion. Separately,
+[PocketIC issue #62](https://github.com/dfinity/pocketic/issues/62) reports
+child-process leaks when instance creation panics after partial setup; it also
+remains open. These are upstream lifecycle concerns, not reasons to add another
+local server registry.
+
+[Upstream PR #11167](https://github.com/dfinity/ic/pull/11167) merged the removal
+of the default hard TTL. The local launcher already follows that behavior.
 
 ### Fallible Lifecycle and Transport APIs
 

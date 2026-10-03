@@ -1,15 +1,15 @@
 mod support;
 
 use ic_testkit::benchmark::{
-    BenchmarkAggregateReport, BenchmarkCounters, BenchmarkEventKind, BenchmarkEventSource,
-    BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata, BenchmarkRunReport,
-    BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation, aggregate_benchmark_spans,
-    benchmark_run_directory_name, compare_benchmark_aggregates, find_latest_previous_run,
-    format_marker, next_benchmark_run_directory, pair_benchmark_spans, parse_benchmark_events,
-    parse_benchmark_events_from_captured_output, parse_benchmark_events_from_source,
-    read_benchmark_run_metadata, write_benchmark_report_dir,
+    BenchmarkAggregateReport, BenchmarkCounter, BenchmarkCounters, BenchmarkEventKind,
+    BenchmarkEventSource, BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata,
+    BenchmarkRunReport, BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation,
+    aggregate_benchmark_spans, benchmark_run_directory_name, compare_benchmark_aggregates,
+    find_latest_previous_run, format_marker, next_benchmark_run_directory, pair_benchmark_spans,
+    parse_benchmark_events, parse_benchmark_events_from_captured_output,
+    parse_benchmark_events_from_source, read_benchmark_run_metadata, write_benchmark_report_dir,
 };
-use std::fs;
+use std::{fmt::Write as _, fs};
 use support::unique_temp_directory as unique_temp_dir;
 
 #[test]
@@ -201,7 +201,7 @@ ICTK|app/a:end|300|60|90|120
         &BenchmarkParserConfig::default(),
     );
     let spans = pair_benchmark_spans(&parse.events);
-    let aggregates = aggregate_benchmark_spans(&spans.spans);
+    let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
 
     let app = aggregates
         .rows
@@ -222,6 +222,129 @@ ICTK|app/a:end|300|60|90|120
     assert_eq!(all.runs, 2);
 }
 
+fn boundary_spans(
+    counter_index: usize,
+    values: [u128; 2],
+) -> Vec<ic_testkit::benchmark::BenchmarkSpan> {
+    let mut input = String::new();
+    for value in values {
+        let mut counters = [0_u128; 4];
+        counters[counter_index] = value;
+        writeln!(
+            input,
+            "ICTK|probe/run:start|0|0|0|0\nICTK|probe/run:end|{}|{}|{}|{}",
+            counters[0], counters[1], counters[2], counters[3]
+        )
+        .unwrap();
+    }
+    let parsed = parse_benchmark_events(&input, &BenchmarkParserConfig::default());
+    assert_eq!(
+        parsed.malformed_markers,
+        [] as [ic_testkit::benchmark::MalformedBenchmarkMarker; 0]
+    );
+    let paired = pair_benchmark_spans(&parsed.events);
+    assert_eq!(
+        paired.invalid_spans,
+        [] as [ic_testkit::benchmark::InvalidBenchmarkSpan; 0]
+    );
+    assert_eq!(
+        paired.unpaired_markers,
+        [] as [ic_testkit::benchmark::UnpairedBenchmarkMarker; 0]
+    );
+    assert_eq!(paired.spans.len(), 2);
+    paired.spans
+}
+
+#[test]
+fn aggregate_counter_overflow_is_rejected_for_every_counter_and_scope() {
+    for (index, counter) in [
+        BenchmarkCounter::Instructions,
+        BenchmarkCounter::HeapBytes,
+        BenchmarkCounter::MemoryBytes,
+        BenchmarkCounter::TotalAllocation,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        // Both a minimal overflow and the original two-MAX public reproduction.
+        for values in [[u128::MAX, 1], [u128::MAX, u128::MAX]] {
+            let mut spans = boundary_spans(index, values);
+            // A named ALL suite must remain distinguishable from the global scope.
+            for span in &mut spans {
+                span.suite = "ALL".into();
+            }
+            let error = aggregate_benchmark_spans(&spans).expect_err("reject suite overflow");
+            assert_eq!(error.counter, counter);
+            assert_eq!(error.suite, "ALL");
+            assert_eq!(error.span_label, "probe/run");
+            assert!(!error.is_all_suites());
+
+            spans[1].suite = "other".into();
+            let error = aggregate_benchmark_spans(&spans).expect_err("reject cross-suite overflow");
+            assert_eq!(error.counter, counter);
+            assert_eq!(error.suite, "ALL");
+            assert_eq!(error.span_label, "probe/run");
+            assert!(error.is_all_suites());
+        }
+    }
+}
+
+#[test]
+fn aggregate_totals_at_the_numeric_boundary_remain_exact() {
+    for index in 0..4 {
+        let spans = boundary_spans(index, [u128::MAX - 1, 1]);
+        let report = aggregate_benchmark_spans(&spans).expect("MAX total fits");
+        assert_eq!(report.rows.len(), 2);
+        for row in report.rows {
+            assert_eq!(row.runs, 2);
+            let totals = [
+                row.total.instructions,
+                row.total.heap_bytes,
+                row.total.memory_bytes,
+                row.total.total_allocation,
+            ];
+            assert_eq!(totals[index], u128::MAX);
+            assert!(
+                totals
+                    .into_iter()
+                    .enumerate()
+                    .all(|(i, total)| i == index || total == 0)
+            );
+        }
+    }
+    assert_eq!(
+        aggregate_benchmark_spans(&[]).unwrap().rows,
+        [] as [ic_testkit::benchmark::BenchmarkAggregateRow; 0]
+    );
+}
+
+#[test]
+fn span_subtraction_underflow_is_rejected_for_every_counter() {
+    for index in 0..4 {
+        let mut end = [10_u128; 4];
+        end[index] = 9;
+        let input = format!(
+            "ICTK|probe/run:start|10|10|10|10\nICTK|probe/run:end|{}|{}|{}|{}\n",
+            end[0], end[1], end[2], end[3]
+        );
+        let parsed = parse_benchmark_events(&input, &BenchmarkParserConfig::default());
+        assert_eq!(
+            parsed.malformed_markers,
+            [] as [ic_testkit::benchmark::MalformedBenchmarkMarker; 0]
+        );
+        let paired = pair_benchmark_spans(&parsed.events);
+        assert_eq!(
+            paired.spans,
+            [] as [ic_testkit::benchmark::BenchmarkSpan; 0]
+        );
+        assert_eq!(paired.invalid_spans.len(), 1);
+        assert_eq!(
+            paired.unpaired_markers,
+            [] as [ic_testkit::benchmark::UnpairedBenchmarkMarker; 0]
+        );
+    }
+}
+
 #[test]
 fn authored_all_suite_does_not_collide_with_cross_suite_aggregate() {
     let config = BenchmarkParserConfig {
@@ -235,7 +358,8 @@ ICTK|benchmark:end|100|20|30|40
 ",
         &config,
     );
-    let aggregates = aggregate_benchmark_spans(&pair_benchmark_spans(&parse.events).spans);
+    let aggregates = aggregate_benchmark_spans(&pair_benchmark_spans(&parse.events).spans)
+        .expect("aggregate benchmark spans");
 
     assert_eq!(aggregates.rows.len(), 2);
     let authored = aggregates
@@ -264,7 +388,7 @@ fn comparison_csv_distinguishes_named_all_suite_from_all_suites() {
         },
     );
     let spans = pair_benchmark_spans(&parse.events);
-    let aggregates = aggregate_benchmark_spans(&spans.spans);
+    let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
     let comparison = compare_benchmark_aggregates(&aggregates.rows, &aggregates.rows);
     let root = unique_temp_dir("comparison-all-scope");
     write_metadata(
@@ -322,7 +446,8 @@ ICTK|app/a:end|100|100|100|100
             .events,
         )
         .spans,
-    );
+    )
+    .expect("aggregate benchmark spans");
     let current = aggregate_benchmark_spans(
         &pair_benchmark_spans(
             &parse_benchmark_events(
@@ -335,7 +460,8 @@ ICTK|app/a:end|150|50|100|100
             .events,
         )
         .spans,
-    );
+    )
+    .expect("aggregate benchmark spans");
 
     let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows);
     let app = comparison
@@ -360,7 +486,7 @@ ICTK|app/myfunc/something:end|234_200_000|1|4_194_304|2
         &BenchmarkParserConfig::default(),
     );
     let spans = pair_benchmark_spans(&parse.events);
-    let aggregates = aggregate_benchmark_spans(&spans.spans);
+    let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
     let previous_parse = parse_benchmark_events(
         "\
 ICTK|app/myfunc/something:start|0|0|0|0
@@ -369,7 +495,8 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
         &BenchmarkParserConfig::default(),
     );
     let previous_spans = pair_benchmark_spans(&previous_parse.events);
-    let previous_aggregates = aggregate_benchmark_spans(&previous_spans.spans);
+    let previous_aggregates =
+        aggregate_benchmark_spans(&previous_spans.spans).expect("aggregate benchmark spans");
     let comparison = compare_benchmark_aggregates(&aggregates.rows, &previous_aggregates.rows);
     let report = BenchmarkRunReport {
         parse,
@@ -554,6 +681,86 @@ fn metadata_reader_round_trips_written_metadata() {
     );
 
     fs::remove_dir_all(root).expect("clean temp dir");
+}
+
+#[test]
+fn metadata_reader_enforces_object_schema() {
+    use serde_json::{Value, json};
+
+    let root = unique_temp_dir("ic-testkit-metadata-schema");
+    write_metadata(&root, "timestamp", "run", Some("benchmark"));
+    let path = root.join("metadata.json");
+    let valid: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut invalid = vec![
+        Value::Null,
+        json!([
+            "timestamp",
+            "run",
+            1,
+            null,
+            null,
+            "0.11",
+            "16",
+            "rust",
+            null,
+            null
+        ]),
+    ];
+
+    for field in [
+        "timestamp",
+        "run_directory_name",
+        "ic_testkit_version",
+        "pocket_ic_version",
+        "rustc_version",
+        "run_index",
+    ] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        invalid.push(missing);
+        let mut null = valid.clone();
+        null[field] = Value::Null;
+        invalid.push(null);
+    }
+    for index in [json!(-1), json!(1.0), json!(4_294_967_296_u64), json!("1")] {
+        let mut wrong_index = valid.clone();
+        wrong_index["run_index"] = index;
+        invalid.push(wrong_index);
+    }
+    for field in ["timestamp", "benchmark_command"] {
+        let mut wrong_string = valid.clone();
+        wrong_string[field] = json!(true);
+        invalid.push(wrong_string);
+    }
+    for value in invalid {
+        fs::write(&path, value.to_string()).unwrap();
+        assert_eq!(
+            read_benchmark_run_metadata(&path).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData,
+            "accepted invalid metadata: {value}",
+        );
+    }
+
+    let mut optional = valid;
+    for field in [
+        "git_commit_hash",
+        "git_commit_short_hash",
+        "benchmark_command",
+        "selected_previous_run",
+    ] {
+        optional.as_object_mut().unwrap().remove(field);
+    }
+    optional["run_index"] = json!(u32::MAX);
+    optional["unrecognized_field"] = json!(true);
+    fs::write(&path, optional.to_string()).unwrap();
+    let metadata = read_benchmark_run_metadata(&path).expect("missing optional fields are valid");
+    assert_eq!(metadata.run_index, u32::MAX);
+    assert!(metadata.git_commit_hash.is_none());
+    assert!(metadata.git_commit_short_hash.is_none());
+    assert!(metadata.benchmark_command.is_none());
+    assert!(metadata.selected_previous_run.is_none());
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn write_metadata(

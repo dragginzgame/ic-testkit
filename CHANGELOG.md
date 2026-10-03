@@ -6,7 +6,81 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [Unreleased]
+## [0.12.0] - 2026-10-03 - Artifact correctness and implementation simplification
+
+### Changed
+
+- `aggregate_benchmark_spans` returns `Result<BenchmarkAggregateReport,
+  BenchmarkAggregateError>`. Callers must handle or propagate overflow errors
+  before comparing aggregates or writing reports; this is a source API hard cut.
+- Benchmark metadata reads and writes derive their JSON fields from
+  `BenchmarkRunMetadata`. Existing field names, optional fields and integer
+  bounds are preserved; invalid inputs return `InvalidData` with Serde field
+  diagnostics.
+- Wasm warm hits share validation and retained-record completion. Batch input
+  reuse has one internal representation for sessions and prepared snapshots,
+  and silent and observed entry points call the common runner directly.
+  Maintenance-policy errors use the common report-entry construction while
+  retaining their failure phases and timings. Internal attempts store the phase
+  and timings together, and standalone and batch resolution share toolchain
+  identification.
+- ICP readiness uses the watched-input snapshot's file validation directly.
+- Transport errors and panic payloads use the same message classifier.
+- Background server reaping retains the original managed-server owner, removing
+  the separate child guard and optional startup-file state.
+- Shared-target lock acquisition owns progress events for ordinary builds and
+  scheduled maintenance, preserving event order and reported paths.
+
+### Fixed
+
+- Compact Cargo feature arguments (`-Fextra` and `-F=extra`) reach metadata
+  resolution as well as compilation. Enabled optional dependencies remain
+  watched inputs, and batches keep distinct feature graphs in separate
+  resolution groups.
+- Shared-target maintenance rejects layouts that could remove retained exact
+  Wasm artifacts. Batch maintenance identifies workspace-relative targets and
+  filesystem aliases by their resolved directory.
+- Relative exact Wasm targets use the caller's working directory consistently
+  for Cargo output and cache operations. Conflicting Cargo target-directory
+  overrides through `with_extra_env` (`CARGO_TARGET_DIR`) or
+  `with_cargo_profile_args` (`--target-dir`) return `InvalidSpec` before
+  acquisition; target directories must be selected through `WasmBuildSpec`.
+- Artifact preparation rejects nested output destinations and validates the
+  directory entry atomic publication replaces, including final symlinks.
+  Declared input and tool symlink entries and their referents remain protected.
+- Unix managed-server teardown terminates its owned process group on drop,
+  startup failure, and natural exit before reaping the child, preventing
+  descendant leaks and keeping the process-group identity reserved for cleanup.
+- Benchmark aggregation checks counter and run-count arithmetic. Overflow
+  rejects the complete aggregation with a typed scope/span/counter error;
+  `is_all_suites()` distinguishes cross-suite overflow from a named suite `ALL`.
+
+### Documentation
+
+- Installation examples select the current `0.11` minor release.
+- Documents target-directory and output-boundary rules, Unix process-group
+  cleanup, and recipe-pool timings for profiling long suites. Refreshes upstream
+  PocketIC tracking in `POCKET-IC.md`.
+- Adds the aggregation API migration to the packaged changelog. Repository-owned
+  cache, stamp, protocol and digest identifiers remain `v1`.
+
+### Testing
+
+- Adds regressions for retained exact-cache boundaries, relative exact targets,
+  rejected Cargo overrides, nested output destinations and symlink publication.
+- Verifies compact feature arguments discover and watch enabled optional
+  dependencies and preserve separate prepared-input resolution groups.
+- Covers all four benchmark counters at and beyond `u128::MAX`, suite/global
+  and run-count overflow, per-span subtraction underflow, and metadata schema
+  validation.
+- Verifies observed session and concurrent prepared-snapshot batches retain
+  per-entry results, progress order and reuse metrics. Scheduled maintenance
+  progress checks include shared-target lock acquisition.
+- Exercises descendant cleanup on drop, readiness timeout, natural exit and
+  background reaping, and validates startup/reaping with PocketIC 16.
+- Maintenance behavior tests use outcome/accessor/filesystem assertions instead
+  of diagnostic wording. Zero-heartbeat rejection uses a valid fixture and a
+  successful positive-interval build as its control.
 
 ## [0.11.0] - 2026-10-03 - Cache correctness and harness API consolidation
 

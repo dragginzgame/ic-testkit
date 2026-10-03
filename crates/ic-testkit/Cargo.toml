@@ -15,7 +15,7 @@ categories.workspace = true
 [dependencies]
 candid = { workspace = true }
 ic-cdk = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -23,6 +23,9 @@ fs2 = { workspace = true }
 pocket-ic = { workspace = true }
 sha2 = { workspace = true }
 toml = { workspace = true }
+
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dependencies]
+libc = "0.2"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true }

@@ -12,7 +12,7 @@ impl PocketIcOperationError {
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         let message = message.into();
-        let transport = message_is_dead_instance_transport_error(&message);
+        let transport = is_dead_instance_transport_error(&message);
         Self { message, transport }
     }
 
@@ -60,12 +60,7 @@ pub(super) fn panic_is_dead_instance_transport(payload: &(dyn Any + Send)) -> bo
         .downcast_ref::<String>()
         .map(String::as_str)
         .or_else(|| payload.downcast_ref::<&'static str>().copied())
-        .is_some_and(message_is_dead_instance_transport_error)
-}
-
-// Recognize maintained PocketIC request-error shapes for restore recovery.
-pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
-    message_is_dead_instance_transport_error(message)
+        .is_some_and(is_dead_instance_transport_error)
 }
 
 /// Recognize transport failures in PocketIC's unstructured request errors.
@@ -100,7 +95,7 @@ pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'stati
         {
             return true;
         }
-        if message_is_dead_instance_transport_error(&candidate.to_string()) {
+        if is_dead_instance_transport_error(&candidate.to_string()) {
             return true;
         }
         current = candidate.source();
@@ -108,7 +103,8 @@ pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'stati
     false
 }
 
-fn message_is_dead_instance_transport_error(message: &str) -> bool {
+// Recognize maintained PocketIC request-error shapes for restore recovery.
+pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
     let message = message
         .strip_prefix("HTTP failure: ")
         .or_else(|| message.strip_prefix("called `Result::unwrap()` on an `Err` value: "))
