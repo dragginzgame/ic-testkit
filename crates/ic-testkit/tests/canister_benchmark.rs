@@ -657,19 +657,7 @@ fn scheduled_shared_target_maintenance_participates_in_wasm_acquisition() {
         reused.record().shared_incremental_maintenance(),
         Some(SharedIncrementalTargetMaintenanceOutcome::Skipped { .. })
     ));
-    assert_eq!(
-        reused_events
-            .iter()
-            .filter(|event| matches!(event, WasmBuildProgressEvent::InputsResolved { .. }))
-            .count(),
-        1,
-    );
-    assert!(reused_events.iter().any(|event| matches!(
-        event,
-        WasmBuildProgressEvent::SharedTargetMaintenanceFinished {
-            outcome: SharedIncrementalTargetMaintenanceOutcome::Skipped { .. }
-        }
-    )));
+    assert_warm_shared_maintenance_progress(&reused_events);
 
     fs::remove_dir_all(&shared_target).expect("remove shared target before exact hit");
     let recreated = build_wasm_canisters_cached(&spec)
@@ -682,6 +670,35 @@ fn scheduled_shared_target_maintenance_participates_in_wasm_acquisition() {
     ));
 
     fs::remove_dir_all(root).expect("clean integrated shared maintenance fixture");
+}
+
+fn assert_warm_shared_maintenance_progress(events: &[WasmBuildProgressEvent]) {
+    let warm_acquisition_phases = events
+        .iter()
+        .filter_map(|event| match event {
+            WasmBuildProgressEvent::InputsResolved { .. } => Some("inputs resolved"),
+            WasmBuildProgressEvent::SharedTargetMaintenanceStarted { .. } => {
+                Some("maintenance started")
+            }
+            WasmBuildProgressEvent::SharedTargetMaintenanceFinished {
+                outcome: SharedIncrementalTargetMaintenanceOutcome::Skipped { .. },
+            } => Some("maintenance skipped"),
+            WasmBuildProgressEvent::CargoStarted { .. } => Some("Cargo build"),
+            WasmBuildProgressEvent::CacheHit { .. } => Some("cache hit"),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        warm_acquisition_phases,
+        [
+            "inputs resolved",
+            "maintenance started",
+            "maintenance skipped",
+            "inputs resolved",
+            "cache hit",
+        ],
+        "maintenance reuses initial resolution; warm validation precedes the cache hit without building",
+    );
 }
 
 #[test]
