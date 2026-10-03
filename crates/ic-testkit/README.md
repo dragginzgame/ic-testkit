@@ -4,7 +4,7 @@ PocketIC-oriented test utilities for Internet Computer canister tests.
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.11"
+ic-testkit = "0.12"
 ```
 
 The published MSRV is Rust 1.88, and the selected PocketIC line is 16.
@@ -53,3 +53,10 @@ The repository also includes a complete
 and a
 [transactional external-artifact example](https://github.com/dragginzgame/ic-testkit/blob/main/crates/ic-testkit/examples/transactional_artifact_cache.rs)
 that are compiled by the crate's normal all-target checks.
+
+Benchmark aggregate/comparison rows and aggregate errors use `suite()` for their
+label; aggregate rows use `average()` for averages derived from totals and run
+count. Baseline recipes construct reset requirements with
+`ResetRequirements::try_new(cycle_policy, non_snapshot_requirements)`. The pool
+verifies snapshots and cycle policy through `CanisterRestoreReceipt`, while
+`ResetReceipt` covers non-snapshot guarantees. These are source API hard cuts.

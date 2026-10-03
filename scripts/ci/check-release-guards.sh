@@ -318,31 +318,53 @@ expected_push_block="$(printf '\tgit push --follow-tags')"
 [[ "${release_push_block}" == "${expected_push_block}" ]] \
   || fail "release-push repeats fallible validation after the release commit and tag"
 
-release_block="$(awk '
-  $0 == "release-patch:" { found = 1; next }
-  found && /^[^[:space:]].*:/ { exit }
-  found { print }
-' "${repo_root}/Makefile")"
-expected_block="$(printf '\t+$(MAKE) --no-print-directory patch\n\t+$(MAKE) --no-print-directory release-stage\n\t+$(MAKE) --no-print-directory release-commit\n\t+$(MAKE) --no-print-directory release-push')"
-[[ "${release_block}" == "${expected_block}" ]] \
-  || fail "release-patch is not a sequential fail-closed recipe"
+sequence_case="${work_dir}/sequence"
+mkdir -p "${sequence_case}/bin"
+cat >"${sequence_case}/bin/make" <<'EOF'
+#!/usr/bin/env bash
+stage="${*: -1}"
+printf '%s\n' "${stage}" >>"${TRACE_FILE}"
+[[ "${stage}" != "${FAIL_STAGE:-}" ]] || exit 23
+EOF
+cat >"${sequence_case}/bin/git" <<'EOF'
+#!/usr/bin/env bash
+exit 97
+EOF
+chmod +x "${sequence_case}/bin/make" "${sequence_case}/bin/git"
 
-release_minor_block="$(awk '
-  $0 == "release-minor:" { found = 1; next }
-  found && /^[^[:space:]].*:/ { exit }
-  found { print }
-' "${repo_root}/Makefile")"
-expected_minor_block="$(printf '\t+$(MAKE) --no-print-directory minor\n\t+$(MAKE) --no-print-directory release-stage\n\t+$(MAKE) --no-print-directory release-commit\n\t+$(MAKE) --no-print-directory release-push')"
-[[ "${release_minor_block}" == "${expected_minor_block}" ]] \
-  || fail "release-minor is not a sequential fail-closed recipe"
+# Execute the real outer recipes; recursive stages are harmless recorded commands.
+# Inject failure at every stage to prove ordering and fail-closed execution.
+check_make_sequence() {
+  local target="$1" stages="$2" failed_stage stage status expected
+  local -a ordered_stages
+  read -r -a ordered_stages <<<"${stages}"
+  for failed_stage in "" "${ordered_stages[@]}"; do
+    : >"${sequence_case}/trace"
+    status=0
+    (
+      cd "${sequence_case}"
+      PATH="${sequence_case}/bin:${PATH}" TRACE_FILE="${sequence_case}/trace" \
+        FAIL_STAGE="${failed_stage}" \
+        "${make_bin}" --no-print-directory --jobs=4 -f "${repo_root}/Makefile" \
+        MAKE="${sequence_case}/bin/make" CI_TARGETS="${stages}" "${target}"
+    ) >/dev/null 2>&1 || status="$?"
+    if [[ -z "${failed_stage}" ]]; then
+      [[ "${status}" -eq 0 ]] || fail "${target} failed with successful stages"
+    else
+      [[ "${status}" -ne 0 ]] || fail "${target} hid failure in ${failed_stage}"
+    fi
+    expected=""
+    for stage in "${ordered_stages[@]}"; do
+      expected+="${stage}"$'\n'
+      [[ "${stage}" != "${failed_stage}" ]] || break
+    done
+    [[ "$(<"${sequence_case}/trace")" == "${expected%$'\n'}" ]] \
+      || fail "${target} reordered stages or continued after ${failed_stage:-success}"
+  done
+}
 
-ci_block="$(awk '
-  $0 == "ci:" { found = 1; next }
-  found && /^[^[:space:]].*:/ { exit }
-  found { print }
-' "${repo_root}/Makefile")"
-expected_ci_block="$(printf '\t+@set -e; for target in $(CI_TARGETS); do \\\n\t\t$(MAKE) --no-print-directory "$$target"; \\\n\tdone')"
-[[ "${ci_block}" == "${expected_ci_block}" ]] \
-  || fail "ci is not the guarded CI_TARGETS-only recipe"
+check_make_sequence release-patch "patch release-stage release-commit release-push"
+check_make_sequence release-minor "minor release-stage release-commit release-push"
+check_make_sequence ci "check-first check-second check-third"
 
 PYTHONDONTWRITEBYTECODE=1 python3 "${repo_root}/scripts/ci/test-release-pocketic-cleanup.py"

@@ -219,13 +219,11 @@ pub struct BenchmarkSpanReport {
     pub invalid_spans: Vec<InvalidBenchmarkSpan>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BenchmarkAggregateRow {
-    pub suite: String,
     pub span_label: String,
     pub runs: u64,
     pub total: BenchmarkCounters,
-    pub average: BenchmarkAverages,
     pub min: BenchmarkCounters,
     pub max: BenchmarkCounters,
     pub peak_end: BenchmarkCounters,
@@ -240,7 +238,7 @@ pub struct BenchmarkAverages {
     pub total_allocation: f64,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BenchmarkAggregateReport {
     pub rows: Vec<BenchmarkAggregateRow>,
 }
@@ -258,13 +256,18 @@ pub enum BenchmarkCounter {
 /// Overflow rejects the complete aggregation, without returning partial totals.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BenchmarkAggregateError {
-    pub suite: String,
     pub span_label: String,
     pub counter: BenchmarkCounter,
     scope: AggregateScope,
 }
 
 impl BenchmarkAggregateError {
+    /// Suite label, or `ALL` for the cross-suite aggregate.
+    #[must_use]
+    pub fn suite(&self) -> &str {
+        self.scope.label()
+    }
+
     /// Whether the overflow belongs to the cross-suite aggregate.
     #[must_use]
     pub const fn is_all_suites(&self) -> bool {
@@ -286,7 +289,6 @@ impl std::error::Error for BenchmarkAggregateError {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct BenchmarkComparisonRow {
-    pub suite: String,
     pub span_label: String,
     pub current_runs: Option<u64>,
     pub previous_runs: Option<u64>,
@@ -298,6 +300,18 @@ pub struct BenchmarkComparisonRow {
 }
 
 impl BenchmarkAggregateRow {
+    /// Averages derived from the current totals and run count.
+    #[must_use]
+    pub fn average(&self) -> BenchmarkAverages {
+        averages(self.total, self.runs)
+    }
+
+    /// Suite label, or `ALL` for the cross-suite aggregate.
+    #[must_use]
+    pub fn suite(&self) -> &str {
+        self.scope.label()
+    }
+
     /// Report whether this row aggregates matching spans across every suite.
     #[must_use]
     pub const fn is_all_suites(&self) -> bool {
@@ -306,6 +320,12 @@ impl BenchmarkAggregateRow {
 }
 
 impl BenchmarkComparisonRow {
+    /// Suite label, or `ALL` for the cross-suite aggregate.
+    #[must_use]
+    pub fn suite(&self) -> &str {
+        self.scope.label()
+    }
+
     /// Report whether this row compares the aggregate across every suite.
     #[must_use]
     pub const fn is_all_suites(&self) -> bool {
@@ -628,26 +648,27 @@ pub fn compare_benchmark_aggregates(
             .map(|(scope, span_label)| {
                 let current_row = current_by_key.get(&(scope.clone(), span_label.clone()));
                 let previous_row = previous_by_key.get(&(scope.clone(), span_label.clone()));
+                let current_average = current_row.map(|row| row.average());
+                let previous_average = previous_row.map(|row| row.average());
                 BenchmarkComparisonRow {
-                    suite: scope.label().to_string(),
                     span_label,
                     current_runs: current_row.map(|row| row.runs),
                     previous_runs: previous_row.map(|row| row.runs),
                     instructions_avg_change_percent: compare_average(
-                        current_row.map(|row| row.average.instructions),
-                        previous_row.map(|row| row.average.instructions),
+                        current_average.map(|average| average.instructions),
+                        previous_average.map(|average| average.instructions),
                     ),
                     heap_bytes_avg_change_percent: compare_average(
-                        current_row.map(|row| row.average.heap_bytes),
-                        previous_row.map(|row| row.average.heap_bytes),
+                        current_average.map(|average| average.heap_bytes),
+                        previous_average.map(|average| average.heap_bytes),
                     ),
                     memory_bytes_avg_change_percent: compare_average(
-                        current_row.map(|row| row.average.memory_bytes),
-                        previous_row.map(|row| row.average.memory_bytes),
+                        current_average.map(|average| average.memory_bytes),
+                        previous_average.map(|average| average.memory_bytes),
                     ),
                     total_allocation_avg_change_percent: compare_average(
-                        current_row.map(|row| row.average.total_allocation),
-                        previous_row.map(|row| row.average.total_allocation),
+                        current_average.map(|average| average.total_allocation),
+                        previous_average.map(|average| average.total_allocation),
                     ),
                     scope,
                 }
@@ -900,11 +921,9 @@ impl AggregateBuilder {
 
     fn finish(self) -> BenchmarkAggregateRow {
         BenchmarkAggregateRow {
-            suite: self.scope.label().to_string(),
             span_label: self.span_label,
             runs: self.runs,
             total: self.total,
-            average: averages(self.total, self.runs),
             min: self.min,
             max: self.max,
             peak_end: self.peak_end,
@@ -925,7 +944,6 @@ fn add_span_to_aggregate(
                 .get_mut()
                 .push(span)
                 .map_err(|counter| BenchmarkAggregateError {
-                    suite: scope.label().to_string(),
                     span_label: span_label.to_string(),
                     counter,
                     scope,
@@ -1068,20 +1086,21 @@ fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> 
         "suite,span_label,runs,instructions_total,instructions_avg,heap_bytes_total,heap_bytes_avg,memory_bytes_total,memory_bytes_avg,total_allocation_total,total_allocation_avg\n",
     );
     for row in rows {
+        let average = row.average();
         let _ = writeln!(
             out,
             "{},{},{},{},{:.4},{},{:.4},{},{:.4},{},{:.4}",
-            csv_cell(&row.suite),
+            csv_cell(row.suite()),
             csv_cell(&row.span_label),
             row.runs,
             row.total.instructions,
-            row.average.instructions,
+            average.instructions,
             row.total.heap_bytes,
-            row.average.heap_bytes,
+            average.heap_bytes,
             row.total.memory_bytes,
-            row.average.memory_bytes,
+            average.memory_bytes,
             row.total.total_allocation,
-            row.average.total_allocation
+            average.total_allocation
         );
     }
     out
@@ -1101,7 +1120,7 @@ fn comparison_csv(comparison: Option<&BenchmarkComparisonReport>) -> String {
             out,
             "{},{},{},{},{},{},{},{},{}",
             if row.is_all_suites() { "all" } else { "suite" },
-            csv_cell(&row.suite),
+            csv_cell(row.suite()),
             csv_cell(&row.span_label),
             optional_u64_cell(row.current_runs),
             optional_u64_cell(row.previous_runs),
@@ -1133,6 +1152,7 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
         .iter()
         .filter(|row| !row.is_all_suites())
     {
+        let average = row.average();
         let comparison = comparison_by_key.as_ref().and_then(|rows| {
             rows.get(&(row.scope.clone(), row.span_label.clone()))
                 .copied()
@@ -1143,19 +1163,19 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
             markdown_cell(&row.span_label),
             row.runs,
             format_instructions(
-                row.average.instructions,
+                average.instructions,
                 change_suffix(comparison, |c| { c.instructions_avg_change_percent })
             ),
             format_bytes(
-                row.average.heap_bytes,
+                average.heap_bytes,
                 change_suffix(comparison, |c| c.heap_bytes_avg_change_percent)
             ),
             format_bytes(
-                row.average.memory_bytes,
+                average.memory_bytes,
                 change_suffix(comparison, |c| c.memory_bytes_avg_change_percent)
             ),
             format_bytes(
-                row.average.total_allocation,
+                average.total_allocation,
                 change_suffix(comparison, |c| c.total_allocation_avg_change_percent)
             )
         );

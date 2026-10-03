@@ -206,7 +206,7 @@ ICTK|app/a:end|300|60|90|120
     let app = aggregates
         .rows
         .iter()
-        .find(|row| !row.is_all_suites() && row.suite == "app" && row.span_label == "app/a")
+        .find(|row| !row.is_all_suites() && row.suite() == "app" && row.span_label == "app/a")
         .expect("app aggregate");
     let all = aggregates
         .rows
@@ -216,10 +216,32 @@ ICTK|app/a:end|300|60|90|120
 
     assert_eq!(app.runs, 2);
     assert_eq!(app.total.instructions, 300);
-    assert!((app.average.instructions - 150.0).abs() < f64::EPSILON);
+    assert!((app.average().instructions - 150.0).abs() < f64::EPSILON);
     assert_eq!(app.min.instructions, 100);
     assert_eq!(app.max.instructions, 200);
     assert_eq!(all.runs, 2);
+}
+
+#[test]
+fn updated_aggregate_totals_and_runs_drive_averages_and_comparisons() {
+    let parse = parse_benchmark_events(
+        "ICTK|app/a:start|0|0|0|0\nICTK|app/a:end|100|20|30|40\n",
+        &BenchmarkParserConfig::default(),
+    );
+    let previous = aggregate_benchmark_spans(&pair_benchmark_spans(&parse.events).spans).unwrap();
+    let mut current = previous.clone();
+    for row in &mut current.rows {
+        row.total.instructions = 300;
+        row.runs = 2;
+        assert_eq!(row.average().instructions, 150.0);
+    }
+    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows);
+    assert!(
+        comparison
+            .rows
+            .iter()
+            .all(|row| row.instructions_avg_change_percent == Some(50.0))
+    );
 }
 
 fn boundary_spans(
@@ -275,14 +297,14 @@ fn aggregate_counter_overflow_is_rejected_for_every_counter_and_scope() {
             }
             let error = aggregate_benchmark_spans(&spans).expect_err("reject suite overflow");
             assert_eq!(error.counter, counter);
-            assert_eq!(error.suite, "ALL");
+            assert_eq!(error.suite(), "ALL");
             assert_eq!(error.span_label, "probe/run");
             assert!(!error.is_all_suites());
 
             spans[1].suite = "other".into();
             let error = aggregate_benchmark_spans(&spans).expect_err("reject cross-suite overflow");
             assert_eq!(error.counter, counter);
-            assert_eq!(error.suite, "ALL");
+            assert_eq!(error.suite(), "ALL");
             assert_eq!(error.span_label, "probe/run");
             assert!(error.is_all_suites());
         }
@@ -372,8 +394,8 @@ ICTK|benchmark:end|100|20|30|40
         .iter()
         .find(|row| row.is_all_suites())
         .expect("cross-suite ALL aggregate");
-    assert_eq!(authored.suite, "ALL");
-    assert_eq!(all.suite, "ALL");
+    assert_eq!(authored.suite(), "ALL");
+    assert_eq!(all.suite(), "ALL");
     assert_eq!(authored.runs, 1);
     assert_eq!(all.runs, 1);
 }
@@ -467,7 +489,7 @@ ICTK|app/a:end|150|50|100|100
     let app = comparison
         .rows
         .iter()
-        .find(|row| row.suite == "app" && row.span_label == "app/a")
+        .find(|row| row.suite() == "app" && row.span_label == "app/a")
         .expect("comparison row");
 
     assert_eq!(app.instructions_avg_change_percent, Some(50.0));

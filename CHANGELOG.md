@@ -6,6 +6,58 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.13.0] - 2026-10-03 - Authoritative benchmark and baseline state
+
+### Changed
+
+- Benchmark aggregate rows, comparison rows, and aggregate errors expose
+  `suite()` instead of a separate writable `suite` field. Labels and comparison
+  keys derive from the same scope; an authored suite named `ALL` remains
+  distinct from the cross-suite aggregate.
+- `BenchmarkAggregateRow::average()` replaces the stored `average` field.
+  Comparisons and report writers derive averages from the current totals and
+  run count, avoiding stale values after those fields change. CSV and metadata
+  schemas remain unchanged.
+- Baseline recipes construct reset requirements with
+  `ResetRequirements::try_new(cycle_policy, non_snapshot_requirements)`.
+  Snapshot restoration is an unconditional pool invariant, and the pool checks
+  the captured canister set and cycle policy directly against
+  `CanisterRestoreReceipt`. `ResetReceipt` carries only non-snapshot guarantees.
+- Removes snapshot and cycle variants from `ResetDomainKind`, `ResetRequirement`,
+  and `ResetAchievement`, along with `UndeclaredRequiredResetDomain`.
+  `CyclePolicyMismatch { required, achieved }` reports cycle-policy failures;
+  they retain the existing `ResetCoverageMismatch` recovery classification.
+- Wasm batch failures own their errors, phases, and partial timings together.
+  Acquisition and reporting share `WasmBuildFailureDetails`, removing parallel
+  optional failure state, an internal consistency assertion, and an intermediate
+  diagnostics conversion. Public batch result/accessor signatures are preserved.
+- Release guards execute the patch, minor, and CI recipes with recorded recursive
+  stages and injected failures, including parallel Make invocation. These checks
+  replace exact recipe-text assertions while retaining cleanup and publication
+  safeguards.
+
+### Documentation
+
+- Updates README guidance and the multi-canister recipe example for the source
+  API hard cuts; the packaged migration guide covers field, constructor, variant,
+  and receipt changes.
+- Installation examples select `0.12`. Repository-owned cache, stamp, protocol,
+  and digest identifiers remain `v1`; this release changes no persisted layout.
+
+### Testing
+
+- Verifies updated aggregate totals and run counts drive averages and comparisons,
+  retaining named-`ALL` scope, arithmetic-overflow, and report-schema coverage.
+- Covers canister-set and cycle-policy restore mismatches with safe slot rebuilds
+  before final restored-baseline validation. Retains non-snapshot policy mismatch,
+  recovery, panic invalidation, and 100-consecutive-restore checks.
+- Verifies batch result, failure-details, and owned-parts views for mixed success
+  and failure, captured Cargo diagnostics, retained successful outputs, and
+  concurrent prepared-input readers.
+- Targeted checks pass for PocketIC 16 baseline reuse and isolated dead-server
+  recovery, release guards and cleanup fixtures, Clippy, rustdoc, formatting,
+  and Wasm compilation. Full pre-push validation remains maintainer-owned.
+
 ## [0.12.0] - 2026-10-03 - Artifact correctness and implementation simplification
 
 ### Changed

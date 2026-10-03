@@ -191,6 +191,13 @@ pub struct WasmBuildFailureTimings {
     total: Duration,
 }
 
+/// Structured phase and partial timings for one failed Wasm entry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WasmBuildFailureDetails {
+    phase: WasmBuildFailurePhase,
+    timings: WasmBuildFailureTimings,
+}
+
 /// One exact local Cargo source or configuration input under a stable logical label.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CargoBuildInput {
@@ -242,24 +249,9 @@ pub(super) struct WasmBuildInputSnapshotState {
     invalidation: Arc<RwLock<bool>>,
 }
 
+// Keep the large failure-timing payload inline at this internal return boundary.
 pub(super) struct WasmBuildBatchAttempt {
-    pub(super) result: Result<WasmBuildOutcome, WasmBuildError>,
-    pub(super) failure: Option<(WasmBuildFailurePhase, WasmBuildFailureTimings)>,
-}
-
-impl WasmBuildBatchAttempt {
-    pub(super) fn invalid_spec(error: WasmBuildError, total: Duration) -> Self {
-        Self {
-            result: Err(error),
-            failure: Some((
-                WasmBuildFailurePhase::Specification,
-                WasmBuildFailureTimings {
-                    total,
-                    ..WasmBuildFailureTimings::default()
-                },
-            )),
-        }
-    }
+    pub(super) result: Result<WasmBuildOutcome, (WasmBuildError, WasmBuildFailureDetails)>,
 }
 
 struct BatchResolutionGroup {
@@ -750,17 +742,13 @@ impl ProgressReporter<'_> {
         }
     }
 
-    fn failure_details(
-        &self,
-        error: &WasmBuildError,
-        total: Duration,
-    ) -> (WasmBuildFailurePhase, WasmBuildFailureTimings) {
+    fn failure_details(&self, error: &WasmBuildError, total: Duration) -> WasmBuildFailureDetails {
         let phase = self
             .failure_phase
             .unwrap_or_else(|| classify_unobserved_failure(error));
         let mut timings = self.failure_timings;
         timings.total = total;
-        (phase, timings)
+        WasmBuildFailureDetails { phase, timings }
     }
 }
 
@@ -1278,6 +1266,30 @@ impl WasmInputResolutionTimings {
         self.input_discovery = self.input_discovery.saturating_add(other.input_discovery);
         self.content_hashing = self.content_hashing.saturating_add(other.content_hashing);
         self.total = self.total.saturating_add(other.total);
+    }
+}
+
+impl WasmBuildFailureDetails {
+    pub(super) fn specification(total: Duration) -> Self {
+        Self {
+            phase: WasmBuildFailurePhase::Specification,
+            timings: WasmBuildFailureTimings {
+                total,
+                ..WasmBuildFailureTimings::default()
+            },
+        }
+    }
+
+    /// Primary acquisition phase that returned the failure.
+    #[must_use]
+    pub const fn phase(self) -> WasmBuildFailurePhase {
+        self.phase
+    }
+
+    /// Partial phase timings retained before the failure returned.
+    #[must_use]
+    pub const fn timings(self) -> WasmBuildFailureTimings {
+        self.timings
     }
 }
 
@@ -2460,7 +2472,7 @@ pub(super) fn build_wasm_canisters_cached_in_batch(
     {
         resolver.invalidate_source_lease();
     }
-    batch_attempt(result, &progress, started.elapsed())
+    batch_result(result, &progress, started.elapsed())
 }
 
 /// Build or reuse one exact Wasm set while streaming structured progress.
@@ -2502,13 +2514,15 @@ where
     F: FnMut(WasmBuildProgressEvent),
 {
     if config.heartbeat_interval == Some(Duration::ZERO) {
-        return WasmBuildBatchAttempt::invalid_spec(
-            WasmBuildError::InvalidSpec {
-                message: "Wasm build progress heartbeat interval must be greater than zero"
-                    .to_owned(),
-            },
-            Duration::ZERO,
-        );
+        return WasmBuildBatchAttempt {
+            result: Err((
+                WasmBuildError::InvalidSpec {
+                    message: "Wasm build progress heartbeat interval must be greater than zero"
+                        .to_owned(),
+                },
+                WasmBuildFailureDetails::specification(Duration::ZERO),
+            )),
+        };
     }
     let started = Instant::now();
     let mut progress = ProgressReporter::observed(config, &mut observer);
@@ -2519,19 +2533,20 @@ where
     {
         resolver.invalidate_source_lease();
     }
-    batch_attempt(result, &progress, started.elapsed())
+    batch_result(result, &progress, started.elapsed())
 }
 
-fn batch_attempt(
+fn batch_result(
     result: Result<WasmBuildOutcome, WasmBuildError>,
     progress: &ProgressReporter<'_>,
     total: Duration,
 ) -> WasmBuildBatchAttempt {
-    let failure = result
-        .as_ref()
-        .err()
-        .map(|error| progress.failure_details(error, total));
-    WasmBuildBatchAttempt { result, failure }
+    WasmBuildBatchAttempt {
+        result: result.map_err(|error| {
+            let details = progress.failure_details(&error, total);
+            (error, details)
+        }),
+    }
 }
 
 fn batch_source_assumptions(

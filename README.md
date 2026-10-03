@@ -42,7 +42,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.11"
+ic-testkit = "0.12"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -527,10 +527,12 @@ validation, dead-transport classification, and cold/warm acquisition.
 
 The recipe declares typed reset requirements and implements the exact reuse
 sequence: restore every captured canister, reset non-snapshot state, drive the
-topology to readiness, then validate final invariants. Snapshot and cycle
-domains are mandatory. The pool checks that the restore receipt names the
-complete captured set and that every required reset policy has an exact
-matching achievement before returning a warm lease. Built and restored slots
+topology to readiness, then validate final invariants. Construct requirements
+with `ResetRequirements::try_new(cycle_policy, non_snapshot_requirements)`.
+The pool checks the complete captured set and cycle policy directly against
+`CanisterRestoreReceipt`; `ResetReceipt` reports only non-snapshot guarantees.
+Every required policy must have an exact matching achievement before a warm
+lease is returned. Built and restored slots
 run the same validation hook. After a successful baseline restore, prefer
 `CanisterRestoreReceipt::try_from_baseline` so receipt membership is derived
 from the captured set rather than duplicated in recipe metadata.
@@ -1333,6 +1335,10 @@ path.
 
 An authored suite named `ALL` remains distinct from the internal cross-suite
 aggregate. Use `BenchmarkAggregateRow::is_all_suites()` to distinguish them.
+Aggregate and comparison rows, and aggregate errors, expose their authoritative
+label through `suite()`. Read aggregate averages with `average()`; they are
+derived from the row's totals and run count rather than stored separately.
+These accessors replace the former `suite` and `average` fields.
 
 ## Deterministic principals
 

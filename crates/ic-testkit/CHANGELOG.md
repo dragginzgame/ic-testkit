@@ -4,6 +4,62 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.13.0
+
+This release gives benchmark identity and averages one authoritative
+representation and verifies canister restore evidence without copying it into
+non-snapshot reset receipts. The source API changes are hard cuts. Report schemas
+and persisted cache layouts are unchanged; cache, stamp, protocol, and digest
+identifiers remain `v1`.
+
+### Migration
+
+| Previous usage | Replacement |
+| --- | --- |
+| `BenchmarkAggregateRow::suite`, `BenchmarkComparisonRow::suite`, or `BenchmarkAggregateError::suite` field | Call `suite()`. The label derives from the private scope; use `is_all_suites()` to distinguish an authored `ALL` suite from the cross-suite aggregate. |
+| Read or assign `BenchmarkAggregateRow::average` | Read `average()`. Averages derive from `total` and `runs`; there is no separately writable average. |
+| `ResetRequirements::try_new([CanisterSnapshots, CanisterCycles(policy), ...])` | `ResetRequirements::try_new(policy, [...])`, passing only non-snapshot requirements in the collection. Read the explicit cycle policy with `cycle_policy()`; `get()` and `iter()` cover non-snapshot domains. |
+| Snapshot/cycle variants of `ResetDomainKind`, `ResetRequirement`, or `ResetAchievement` | Snapshot restoration is unconditional. Report restored canisters and achieved cycle policy in `CanisterRestoreReceipt`; report other guarantees in `ResetReceipt`. |
+| Inspect snapshot/cycle achievements in `PreparedBaseline::Restored::reset` | Inspect its `canisters` receipt with `canister_ids()` and `cycle_policy()`. The `reset` receipt contains only non-snapshot achievements. |
+| Match cycle failures through `ResetPolicyMismatch` | Match `CyclePolicyMismatch { required, achieved }`. `ResetPolicyMismatch` still reports non-snapshot policy mismatches. |
+| Match `UndeclaredRequiredResetDomain` | Remove this constructor-error branch. The required cycle policy is a constructor argument, and complete snapshot restoration is enforced during preparation. |
+
+For example:
+
+```rust
+use ic_testkit::pic::{
+    CycleResetPolicy, ResetRequirement, ResetRequirements, TimeResetPolicy,
+};
+
+let requirements = ResetRequirements::try_new(
+    CycleResetPolicy::PreserveCurrent,
+    [ResetRequirement::PocketIcTime(TimeResetPolicy::PreserveCurrent)],
+)?;
+```
+
+Update downstream recipes when adopting this release. Restore, non-snapshot
+reset, readiness, and final validation keep their ordering. Canister-set and
+cycle-policy mismatches retain the `ResetCoverageMismatch` rebuild reason;
+recoverable preparation failures still permit one rebuild, and failed recovery
+retains both failures.
+
+### Simplification and verification
+
+Benchmark labels and comparison keys derive from one scope. Report writers and
+comparisons calculate averages from totals and runs, preserving CSV columns and
+named-`ALL` identity. Arithmetic overflow checks remain in place.
+
+Wasm batch acquisition and reporting use one failure-details representation,
+owned alongside each error. Existing public result/accessor and `into_parts()`
+signatures, partial timings, captured output, entry order, and retained successful
+records are preserved.
+
+Targeted checks cover benchmark updates and report schemas, restored canister-set
+and cycle-policy mismatches, recovery and panic invalidation, 100 consecutive
+restores, mixed Wasm batch results, captured Cargo diagnostics, retained-output
+handoff, and concurrent prepared readers. PocketIC 16 baseline reuse and isolated
+dead-server recovery, Clippy, rustdoc, formatting, and Wasm compilation pass.
+
 ## 0.12.0
 
 This update tightens artifact path boundaries, fixes Unix managed-server

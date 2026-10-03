@@ -14,7 +14,7 @@ use ic_testkit::pic::{
     CachedPocketIcBaseline, CachedPocketIcBaselinePool, CanisterRestoreReceipt,
     ControllerSnapshotError, CycleResetPolicy, FailureDisposition, FixtureRecipeId, PocketIc,
     PocketIcBaselineRecipe, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt,
-    ResetRequirement, ResetRequirements, ValidationReceipt, is_dead_pocket_ic_transport_error,
+    ResetRequirements, ValidationReceipt, is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -39,10 +39,7 @@ impl TwoCanisterRecipe {
     fn new() -> Result<Self, BaselinePoolContractError> {
         Ok(Self {
             id: FixtureRecipeId::try_new("example/two-empty-canisters/v1")?,
-            requirements: ResetRequirements::try_new([
-                ResetRequirement::CanisterSnapshots,
-                ResetRequirement::CanisterCycles(CycleResetPolicy::PreserveCurrent),
-            ])?,
+            requirements: ResetRequirements::try_new(CycleResetPolicy::PreserveCurrent, [])?,
         })
     }
 }

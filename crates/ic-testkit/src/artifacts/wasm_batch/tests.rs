@@ -288,7 +288,14 @@ fn a_missing_input_does_not_fail_other_compatible_batch_entries() {
             assert_eq!(failures.len(), 1);
             assert_eq!(failures[0].label(), "bad");
             assert_eq!(failures[0].phase(), WasmBuildFailurePhase::ContentHashing);
-            drop(report);
+            for entry in report.into_entries() {
+                let failed = entry.label() == "bad";
+                assert_eq!(entry.result().is_err(), failed);
+                assert_eq!(entry.failure_details().is_some(), failed);
+                let (_, label, result, details, _) = entry.into_parts();
+                assert_eq!(result.is_err(), label == "bad");
+                assert_eq!(details.is_some(), result.is_err());
+            }
             std::fs::remove_dir_all(root).expect("remove batch hashing fixture");
         }
     }

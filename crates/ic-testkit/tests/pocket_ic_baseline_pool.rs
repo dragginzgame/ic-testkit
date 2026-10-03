@@ -37,6 +37,7 @@ struct RecipeControls {
     fail_next_validation: Arc<AtomicBool>,
     panic_next_restore: Arc<AtomicBool>,
     report_incomplete_restore: Arc<AtomicBool>,
+    report_wrong_cycle_policy: Arc<AtomicBool>,
     report_wrong_validation_recipe: Arc<AtomicBool>,
     tracked_extra_canister: Arc<Mutex<Option<Principal>>>,
     first_server_url: Arc<Mutex<Option<String>>>,
@@ -75,45 +76,38 @@ impl TwoCanisterRecipe {
     fn new(controls: RecipeControls) -> Self {
         Self {
             id: FixtureRecipeId::try_new("ic-testkit/two-empty-canisters/v1").unwrap(),
-            requirements: ResetRequirements::try_new([
-                ResetRequirement::CanisterSnapshots,
-                ResetRequirement::CanisterCycles(CycleResetPolicy::PreserveCurrent),
-            ])
-            .unwrap(),
+            requirements: ResetRequirements::try_new(CycleResetPolicy::PreserveCurrent, [])
+                .unwrap(),
             controls,
             guarded_domain: None,
         }
     }
 
     fn guarding_domain(controls: RecipeControls, domain: GuardedDomain) -> Self {
-        let (identity, requirements) = match domain {
+        let (identity, cycle_policy, requirements) = match domain {
             GuardedDomain::Time => (
                 "ic-testkit/two-empty-canisters-time-guarded/v1",
-                vec![
-                    ResetRequirement::CanisterSnapshots,
-                    ResetRequirement::CanisterCycles(CycleResetPolicy::PreserveCurrent),
-                    ResetRequirement::PocketIcTime(TimeResetPolicy::RebuildOnMutation),
-                ],
+                CycleResetPolicy::PreserveCurrent,
+                vec![ResetRequirement::PocketIcTime(
+                    TimeResetPolicy::RebuildOnMutation,
+                )],
             ),
             GuardedDomain::Cycles => (
                 "ic-testkit/two-empty-canisters-cycle-guarded/v1",
-                vec![
-                    ResetRequirement::CanisterSnapshots,
-                    ResetRequirement::CanisterCycles(CycleResetPolicy::RebuildOnMutation),
-                ],
+                CycleResetPolicy::RebuildOnMutation,
+                vec![],
             ),
             GuardedDomain::ExtraCanisters => (
                 "ic-testkit/two-empty-canisters-extra-guarded/v1",
-                vec![
-                    ResetRequirement::CanisterSnapshots,
-                    ResetRequirement::CanisterCycles(CycleResetPolicy::PreserveCurrent),
-                    ResetRequirement::ExtraCanisters(ExtraCanisterPolicy::RebuildOnChange),
-                ],
+                CycleResetPolicy::PreserveCurrent,
+                vec![ResetRequirement::ExtraCanisters(
+                    ExtraCanisterPolicy::RebuildOnChange,
+                )],
             ),
         };
         Self {
             id: FixtureRecipeId::try_new(identity).unwrap(),
-            requirements: ResetRequirements::try_new(requirements).unwrap(),
+            requirements: ResetRequirements::try_new(cycle_policy, requirements).unwrap(),
             controls,
             guarded_domain: Some(domain),
         }
@@ -224,7 +218,13 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
             )
             .map_err(Into::into);
         }
-        let cycle_policy = if self.guarded_domain == Some(GuardedDomain::Cycles) {
+        let cycle_policy = if self
+            .controls
+            .report_wrong_cycle_policy
+            .swap(false, Ordering::SeqCst)
+        {
+            CycleResetPolicy::RestoreExactBaseline
+        } else if self.guarded_domain == Some(GuardedDomain::Cycles) {
             CycleResetPolicy::RebuildOnMutation
         } else {
             CycleResetPolicy::PreserveCurrent
@@ -665,29 +665,38 @@ fn guarded_recipe_rebuilds_after_time_cycle_and_extra_canister_mutations() {
 }
 
 #[test]
-fn incomplete_restore_receipt_forces_a_fresh_baseline() {
-    let controls = RecipeControls::default();
-    let pool = CachedPocketIcBaselinePool::new(
-        NonZeroUsize::new(1).unwrap(),
-        TwoCanisterRecipe::new(controls.clone()),
-    );
-    drop(pool.acquire().expect("first baseline should build").0);
+fn restore_receipt_mismatches_force_a_fresh_baseline() {
+    for incomplete_canister_set in [true, false] {
+        let controls = RecipeControls::default();
+        let pool = CachedPocketIcBaselinePool::new(
+            NonZeroUsize::new(1).unwrap(),
+            TwoCanisterRecipe::new(controls.clone()),
+        );
+        drop(pool.acquire().expect("first baseline should build").0);
 
-    controls
-        .report_incomplete_restore
-        .store(true, Ordering::SeqCst);
-    let (baseline, outcome) = pool
-        .acquire()
-        .expect("incomplete restore evidence should rebuild safely");
-    assert!(matches!(
-        outcome,
-        BaselinePoolOutcome::Rebuilt {
-            reason: RebuildReason::ResetCoverageMismatch,
-            ..
+        if incomplete_canister_set {
+            controls
+                .report_incomplete_restore
+                .store(true, Ordering::SeqCst);
+        } else {
+            controls
+                .report_wrong_cycle_policy
+                .store(true, Ordering::SeqCst);
         }
-    ));
-    assert_eq!(controls.builds.load(Ordering::SeqCst), 2);
-    drop(baseline);
+        let (baseline, outcome) = pool
+            .acquire()
+            .expect("mismatched restore evidence should rebuild safely");
+        assert!(matches!(
+            outcome,
+            BaselinePoolOutcome::Rebuilt {
+                reason: RebuildReason::ResetCoverageMismatch,
+                ..
+            }
+        ));
+        assert_eq!(controls.builds.load(Ordering::SeqCst), 2);
+        assert_eq!(controls.restored_validations.load(Ordering::SeqCst), 0);
+        drop(baseline);
+    }
 }
 
 #[test]
@@ -730,18 +739,6 @@ fn validation_recipe_mismatch_is_fatal_and_not_retried_as_a_rebuild() {
     assert!(matches!(outcome, BaselinePoolOutcome::Built { .. }));
     assert_eq!(controls.builds.load(Ordering::SeqCst), 2);
     drop(baseline);
-}
-
-#[test]
-fn every_recipe_must_declare_snapshot_and_cycle_reset_domains() {
-    let error = ResetRequirements::try_new([ResetRequirement::CanisterSnapshots])
-        .expect_err("an incomplete reset contract must fail during construction");
-    assert!(matches!(
-        error,
-        BaselinePoolContractError::UndeclaredRequiredResetDomain {
-            domain: ic_testkit::pic::ResetDomainKind::CanisterCycles,
-        }
-    ));
 }
 
 #[test]

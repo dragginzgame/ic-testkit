@@ -11,10 +11,10 @@ use std::{
 use super::wasm_cache::{
     SharedIncrementalTargetMaintenanceConfig, SharedIncrementalTargetMaintenanceOutcome,
     SharedIncrementalTargetPrunePolicy, WasmBuildBatchAttempt, WasmBuildBatchInputMetrics,
-    WasmBuildBatchInputResolver, WasmBuildError, WasmBuildFailurePhase, WasmBuildFailureTimings,
-    WasmBuildInputReuse, WasmBuildInputSnapshotState, WasmBuildOutcome, WasmBuildProgressConfig,
-    WasmBuildProgressEvent, WasmBuildSessionState, WasmBuildSpec, WasmBuildTimings,
-    WasmInputResolutionTimings, build_wasm_canisters_cached_in_batch,
+    WasmBuildBatchInputResolver, WasmBuildError, WasmBuildFailureDetails, WasmBuildFailurePhase,
+    WasmBuildFailureTimings, WasmBuildInputReuse, WasmBuildInputSnapshotState, WasmBuildOutcome,
+    WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSessionState, WasmBuildSpec,
+    WasmBuildTimings, WasmInputResolutionTimings, build_wasm_canisters_cached_in_batch,
     build_wasm_canisters_cached_in_batch_with_progress, shared_incremental_target,
 };
 
@@ -87,16 +87,8 @@ pub struct WasmBuildInputSnapshotMetrics {
 pub struct WasmBuildBatchEntry {
     index: usize,
     label: String,
-    result: Result<WasmBuildOutcome, WasmBuildError>,
-    failure: Option<WasmBuildFailureDetails>,
+    result: Result<WasmBuildOutcome, (WasmBuildError, WasmBuildFailureDetails)>,
     entry_elapsed: Duration,
-}
-
-/// Structured phase and partial timings for one failed Wasm entry.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct WasmBuildFailureDetails {
-    phase: WasmBuildFailurePhase,
-    timings: WasmBuildFailureTimings,
 }
 
 /// One successful Wasm batch entry.
@@ -388,7 +380,10 @@ impl WasmBuildBatchEntry {
 
     /// Structured success or failure for this entry.
     pub const fn result(&self) -> Result<&WasmBuildOutcome, &WasmBuildError> {
-        self.result.as_ref()
+        match &self.result {
+            Ok(outcome) => Ok(outcome),
+            Err((error, _)) => Err(error),
+        }
     }
 
     /// Successful Wasm outcome, when this entry succeeded.
@@ -400,13 +395,16 @@ impl WasmBuildBatchEntry {
     /// Structured build failure, when this entry failed.
     #[must_use]
     pub fn error(&self) -> Option<&WasmBuildError> {
-        self.result.as_ref().err()
+        self.result().err()
     }
 
     /// Structured phase and partial timings when this entry failed.
     #[must_use]
     pub const fn failure_details(&self) -> Option<WasmBuildFailureDetails> {
-        self.failure
+        match &self.result {
+            Ok(_) => None,
+            Err((_, details)) => Some(*details),
+        }
     }
 
     /// Complete wall-clock time retained for this entry.
@@ -431,27 +429,11 @@ impl WasmBuildBatchEntry {
         Option<WasmBuildFailureDetails>,
         Duration,
     ) {
-        (
-            self.index,
-            self.label,
-            self.result,
-            self.failure,
-            self.entry_elapsed,
-        )
-    }
-}
-
-impl WasmBuildFailureDetails {
-    /// Primary acquisition phase that returned the failure.
-    #[must_use]
-    pub const fn phase(self) -> WasmBuildFailurePhase {
-        self.phase
-    }
-
-    /// Partial phase timings retained before the failure returned.
-    #[must_use]
-    pub const fn timings(self) -> WasmBuildFailureTimings {
-        self.timings
+        let (result, failure) = match self.result {
+            Ok(outcome) => (Ok(outcome), None),
+            Err((error, details)) => (Err(error), Some(details)),
+        };
+        (self.index, self.label, result, failure, self.entry_elapsed)
     }
 }
 
@@ -503,13 +485,13 @@ impl<'a> WasmBuildBatchFailure<'a> {
     /// Primary acquisition phase that returned the failure.
     #[must_use]
     pub const fn phase(self) -> WasmBuildFailurePhase {
-        self.details.phase
+        self.details.phase()
     }
 
     /// Partial phase timings retained before the failure returned.
     #[must_use]
     pub const fn timings(self) -> WasmBuildFailureTimings {
-        self.details.timings
+        self.details.timings()
     }
 
     /// Complete wall-clock time retained for this failed entry.
@@ -621,15 +603,17 @@ impl WasmBuildBatchReport {
     /// Structured failed entries with labels and wall-clock times.
     pub fn failures(&self) -> impl Iterator<Item = WasmBuildBatchFailure<'_>> {
         self.entries.iter().filter_map(|entry| {
-            entry.error().map(|error| WasmBuildBatchFailure {
-                index: entry.index,
-                label: &entry.label,
-                error,
-                details: entry
-                    .failure
-                    .expect("failed Wasm batch entry must retain failure details"),
-                entry_elapsed: entry.entry_elapsed,
-            })
+            entry
+                .result
+                .as_ref()
+                .err()
+                .map(|(error, details)| WasmBuildBatchFailure {
+                    index: entry.index,
+                    label: &entry.label,
+                    error,
+                    details: *details,
+                    entry_elapsed: entry.entry_elapsed,
+                })
         })
     }
 
@@ -954,27 +938,26 @@ where
     for (index, labeled) in specs.iter().enumerate() {
         let entry_started = Instant::now();
         let spec = &labeled.spec;
-        let attempt = if config.shared_incremental_maintenance.is_some()
+        let result = if config.shared_incremental_maintenance.is_some()
             && spec.shared_incremental_target_maintenance().is_some()
         {
-            WasmBuildBatchAttempt::invalid_spec(
+            Err((
                 batch_maintenance_ownership_error(),
-                entry_started.elapsed(),
-            )
+                WasmBuildFailureDetails::specification(entry_started.elapsed()),
+            ))
         } else {
             match maintenance.prepare_spec(spec) {
-                Ok(configured) => build(configured.as_ref().unwrap_or(spec), index),
-                Err(error) => WasmBuildBatchAttempt::invalid_spec(error, entry_started.elapsed()),
+                Ok(configured) => build(configured.as_ref().unwrap_or(spec), index).result,
+                Err(error) => Err((
+                    error,
+                    WasmBuildFailureDetails::specification(entry_started.elapsed()),
+                )),
             }
         };
-        let failure = attempt
-            .failure
-            .map(|(phase, timings)| WasmBuildFailureDetails { phase, timings });
         entries.push(WasmBuildBatchEntry {
             index,
             label: labeled.label.clone(),
-            result: attempt.result,
-            failure,
+            result,
             entry_elapsed: entry_started.elapsed(),
         });
     }
