@@ -1049,6 +1049,60 @@ fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
 }
 
 #[test]
+fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
+    use std::io;
+
+    struct InterruptedReader {
+        contents: &'static [u8],
+        attempts: usize,
+    }
+
+    impl io::Read for InterruptedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.attempts += 1;
+            if matches!(self.attempts, 1 | 3) {
+                return Err(io::ErrorKind::Interrupted.into());
+            }
+            let limit = buffer.len().min(3);
+            self.contents.read(&mut buffer[..limit])
+        }
+    }
+
+    let reader = InterruptedReader {
+        contents: b"failure-stdout",
+        attempts: 0,
+    };
+    let (sender, chunks) = mpsc::channel();
+    super::read_process_output(reader, WasmBuildOutputStream::Stdout, sender)
+        .expect("interrupted output reads must retry");
+    let captured = super::capture_observed_cargo_output(
+        chunks,
+        &mut ProgressReporter::silent(),
+        std::time::Instant::now(),
+    );
+    assert_eq!(captured.stdout, b"failure-stdout");
+    assert_eq!(captured.stderr, [] as [u8; 0]);
+}
+
+#[test]
+fn observed_output_reader_propagates_permanent_errors() {
+    use std::io;
+
+    struct FailedReader;
+
+    impl io::Read for FailedReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::PermissionDenied.into())
+        }
+    }
+
+    let (sender, _chunks) = mpsc::channel();
+    let error = super::read_process_output(FailedReader, WasmBuildOutputStream::Stderr, sender)
+        .expect_err("permanent output errors must propagate");
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+}
+
+#[test]
 #[cfg(unix)]
 fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     let root = unique_temp_directory("observed-cargo-failure");
@@ -1071,17 +1125,20 @@ fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
             .expect_err("Cargo fixture must fail")
     };
 
-    assert!(matches!(
-        error,
-        WasmBuildError::CommandFailed {
-            status,
-            stdout,
-            stderr,
-            ..
-        } if status.code() == Some(23)
-            && stdout == "failure-stdout"
-            && stderr == "failure-stderr"
-    ));
+    assert!(
+        matches!(
+            &error,
+            WasmBuildError::CommandFailed {
+                status,
+                stdout,
+                stderr,
+                ..
+            } if status.code() == Some(23)
+                && stdout == "failure-stdout"
+                && stderr == "failure-stderr"
+        ),
+        "unexpected Cargo fixture failure: {error:?}"
+    );
     assert!(events.iter().any(|event| matches!(
         event,
         WasmBuildProgressEvent::CargoFinished {

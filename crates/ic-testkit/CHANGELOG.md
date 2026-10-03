@@ -22,6 +22,9 @@ These source API and validation changes are hard cuts:
 
 ### Fixes and simplification
 
+Observed Cargo output capture retries interrupted pipe reads, preserving captured
+bytes while propagating permanent read errors.
+
 Compact Cargo feature arguments (`-Fextra` and `-F=extra`) now reach metadata
 resolution as well as compilation. Optional dependencies enabled by these
 arguments are watched inputs, and batches resolve distinct feature graphs

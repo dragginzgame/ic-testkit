@@ -4674,7 +4674,11 @@ fn read_process_output<R: io::Read>(
 ) -> io::Result<()> {
     let mut buffer = [0_u8; 8 * 1024];
     loop {
-        let count = reader.read(&mut buffer)?;
+        let count = match reader.read(&mut buffer) {
+            Ok(count) => count,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
         if count == 0 {
             return Ok(());
         }

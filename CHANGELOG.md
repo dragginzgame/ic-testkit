@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Observed Cargo output capture retries interrupted pipe reads while preserving
+  captured bytes and propagating permanent read errors.
 - Compact Cargo feature arguments (`-Fextra` and `-F=extra`) reach metadata
   resolution as well as compilation. Enabled optional dependencies remain
   watched inputs, and batches keep distinct feature graphs in separate
