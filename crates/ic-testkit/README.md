@@ -4,7 +4,7 @@ PocketIC-oriented test utilities for Internet Computer canister tests.
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.12"
+ic-testkit = "0.13"
 ```
 
 The published MSRV is Rust 1.88, and the selected PocketIC line is 16.
@@ -45,6 +45,7 @@ The [documentation index](https://github.com/dragginzgame/ic-testkit/blob/main/d
 links current usage guidance and historical design records.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
+the [0.13.0 benchmark and reset-requirement migration](CHANGELOG.md#0130),
 the `0.11.0` API and report-schema cuts, the `0.10` retained-artifact migration,
 the `0.9` managed-server lifetime migration, and earlier hard-cut tables.
 

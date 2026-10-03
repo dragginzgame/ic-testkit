@@ -42,7 +42,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.12"
+ic-testkit = "0.13"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -51,6 +51,10 @@ Canister crates that emit benchmark markers can add the same version under
 The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic`, `pic`, and
 `artifacts` modules are host-only. `benchmark`, `performance`, and `Fake` are
 also available when compiling for `wasm32`.
+
+The `0.13.0` release simplifies benchmark rows and baseline reset requirements.
+See the packaged [0.13.0 migration guide](crates/ic-testkit/CHANGELOG.md#0130)
+for the source API changes.
 
 The `0.11.0` release consolidates baseline reuse on recipe pools and
 installation on `InstallSpec`. Its API and report-schema changes are covered
