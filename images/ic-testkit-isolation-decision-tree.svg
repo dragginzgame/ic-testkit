@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1210" viewBox="0 0 1400 1210" role="img" aria-labelledby="title desc">
+<title id="title">IC Testkit isolation-level decision tree</title>
+<desc id="desc">Need pristine simulator state? Choose Fresh PocketIC. Otherwise, one canister with no reuse leads to Standalone fixture; one reusable canister leads to Standalone pool; a reusable multi-canister system leads to Baseline pool. The latter three branches represent the listed scenarios.</desc>
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#71859A"/></marker>
+  <marker id="cyan-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#009DBD"/></marker>
+</defs>
+<rect width="1400" height="1210" fill="#F7FAFD"/>
+<g font-family="Inter, Arial, sans-serif" fill="#102B50">
+  <text x="56" y="57" font-size="14" font-weight="700" letter-spacing="2" fill="#53718F">IC TESTKIT · ISOLATION LEVELS</text>
+  <text x="56" y="107" font-size="34" font-weight="700">Choose your test environment</text>
+  <text x="56" y="143" font-size="19" fill="#53718F">Start with simulator isolation, then consider system size and reuse.</text>
+
+  <rect x="56" y="182" width="1288" height="972" rx="22" fill="white" stroke="#D7E3EF" stroke-width="1.5"/>
+
+  <rect x="140" y="220" width="610" height="96" rx="16" fill="#EDF3F9" stroke="#B8CBDF" stroke-width="1.5"/>
+  <text x="445" y="261" text-anchor="middle" font-size="23" font-weight="700">Need pristine</text>
+  <text x="445" y="291" text-anchor="middle" font-size="23" font-weight="700">simulator state?</text>
+  <path d="M752 268H923" fill="none" stroke="#009DBD" stroke-width="2.5" marker-end="url(#cyan-arrow)"/>
+  <rect x="800" y="250" width="58" height="32" rx="16" fill="white"/>
+  <text x="829" y="272" text-anchor="middle" font-size="17" font-weight="700" fill="#087C94">Yes</text>
+  <rect x="940" y="228" width="328" height="80" rx="15" fill="#DDF6FA" stroke="#009DBD" stroke-width="1.5"/>
+  <text x="1104" y="277" text-anchor="middle" font-size="25" font-weight="700" fill="#087C94">Fresh PocketIC</text>
+
+  <path d="M445 318V389" fill="none" stroke="#71859A" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <rect x="460" y="336" width="49" height="30" rx="15" fill="white"/>
+  <text x="484" y="357" text-anchor="middle" font-size="17" fill="#53718F">No</text>
+
+  <rect x="140" y="406" width="610" height="88" rx="16" fill="#EDF3F9" stroke="#B8CBDF" stroke-width="1.5"/>
+  <text x="445" y="459" text-anchor="middle" font-size="24" font-weight="700">How many canisters?</text>
+
+  <path d="M445 496V545H276V598M445 545H1020V598" fill="none" stroke="#71859A" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+  <rect x="245" y="529" width="62" height="32" rx="16" fill="white"/>
+  <text x="276" y="551" text-anchor="middle" font-size="17" font-weight="600" fill="#53718F">One</text>
+  <rect x="972" y="529" width="96" height="32" rx="16" fill="white"/>
+  <text x="1020" y="551" text-anchor="middle" font-size="17" font-weight="600" fill="#53718F">Several</text>
+
+  <rect x="140" y="615" width="450" height="90" rx="16" fill="#EDF3F9" stroke="#B8CBDF" stroke-width="1.5"/>
+  <text x="365" y="670" text-anchor="middle" font-size="23" font-weight="700">Reuse the canister?</text>
+
+  <rect x="810" y="615" width="420" height="90" rx="16" fill="#F5F1FD" stroke="#7354C6" stroke-width="1.5"/>
+  <text x="1020" y="654" text-anchor="middle" font-size="23" font-weight="700">Reusable</text>
+  <text x="1020" y="684" text-anchor="middle" font-size="23" font-weight="700">multi-canister system</text>
+
+  <path d="M365 707V757H242V839M365 757H601V839" fill="none" stroke="#71859A" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+  <rect x="218" y="741" width="48" height="32" rx="16" fill="white"/>
+  <text x="242" y="763" text-anchor="middle" font-size="17" font-weight="600" fill="#53718F">No</text>
+  <rect x="574" y="741" width="54" height="32" rx="16" fill="white"/>
+  <text x="601" y="763" text-anchor="middle" font-size="17" font-weight="600" fill="#53718F">Yes</text>
+  <path d="M1020 707V839" fill="none" stroke="#71859A" stroke-width="2.5" marker-end="url(#arrow)"/>
+
+  <rect x="90" y="856" width="304" height="104" rx="16" fill="#DDF6FA" stroke="#009DBD" stroke-width="1.5"/>
+  <text x="242" y="900" text-anchor="middle" font-size="24" font-weight="700" fill="#087C94">Standalone</text>
+  <text x="242" y="932" text-anchor="middle" font-size="24" font-weight="700" fill="#087C94">fixture</text>
+
+  <rect x="449" y="856" width="304" height="104" rx="16" fill="#EAF7F1" stroke="#9BD3BD" stroke-width="1.5"/>
+  <text x="601" y="900" text-anchor="middle" font-size="24" font-weight="700" fill="#20765E">Standalone</text>
+  <text x="601" y="932" text-anchor="middle" font-size="24" font-weight="700" fill="#20765E">pool</text>
+
+  <rect x="868" y="856" width="304" height="104" rx="16" fill="#EEE8FB" stroke="#7354C6" stroke-width="1.5"/>
+  <text x="1020" y="918" text-anchor="middle" font-size="24" font-weight="700" fill="#7354C6">Baseline pool</text>
+
+  <text x="700" y="1050" text-anchor="middle" font-size="18" fill="#53718F">The multi-canister branch shown here assumes the system is reusable.</text>
+</g>
+</svg>

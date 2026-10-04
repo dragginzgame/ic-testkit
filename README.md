@@ -16,25 +16,72 @@
   <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/cave.png" alt="ic-testkit banner" width="640">
 </p>
 
-`ic-testkit` is test infrastructure for Internet Computer applications that
-have outgrown one-off PocketIC scripts. It keeps
-[`pocket-ic`](https://crates.io/crates/pocket-ic) visible while adding reusable
-building blocks for typed calls, multi-canister fixtures, safe baseline reuse,
-reproducible Wasm pipelines, diagnostics, and performance reports.
+`ic-testkit` helps teams check that an Internet Computer application works as a
+complete system before they deploy it. It runs the application in PocketIC, a
+local simulation of the Internet Computer, and adds a repeatable way to build
+the application, prepare test data, run scenarios, reset state, diagnose
+failures, and track performance.
 
-Native consumers can import the complete selected upstream crate through
-`ic_testkit::pocket_ic`, while `ic_testkit::pic` keeps the focused convenience
-exports and extension traits:
+In short: **PocketIC provides the simulated network; ic-testkit helps turn it
+into a reliable test environment for a real application.**
 
-```rust,no_run
-use ic_testkit::pocket_ic::{
-    CanisterSettings, CreateCanisterParams, PocketIc,
-    common::rest::{BlobCompression, IcpFeatures, IcpFeaturesConfig},
-};
+## What does that mean?
+
+Internet Computer applications are made from **canisters**: independently
+deployed services that contain code and data. Their compiled code is stored in
+**Wasm** files. A production application may use several canisters for jobs
+such as identity, payments, game state, governance, or asset storage.
+
+Testing that whole system repeatedly is harder than testing one function:
+
+- every canister must be built and installed with the right configuration;
+- the application often needs accounts, permissions, balances, or other
+  starting data before a test can begin;
+- one test must not accidentally inherit changes made by another;
+- a failure needs enough context to explain what happened in the automated
+  build-and-test system (CI); and
+- slow setup can make a large test suite impractical to run often.
+
+ic-testkit provides reusable pieces for that work. It can save a known-good
+starting point, restore it between eligible tests, rebuild it when it is no
+longer safe to reuse, and report where time was spent. The application still
+owns its test scenario and decides what “clean,” “ready,” and “correct” mean.
+
+### A concrete example
+
+Imagine a game with separate canisters for player accounts, inventories, and
+payments. A test for buying an item needs all three canisters installed, a
+player with funds, and an item for sale. After the purchase, balances and
+inventory have changed.
+
+Without a reusable fixture, every test may rebuild and prepare the entire game.
+With ic-testkit, the team can describe the prepared game once, capture that
+known-good state, and safely restore it for the next compatible test. Tests
+that change something outside that reset contract can use a fresh environment
+instead. If a run fails, structured diagnostics help distinguish an application
+rejection from a broken simulator connection or setup failure.
+
+The core lifecycle is:
+
+```text
+Build exact Wasm files
+        ↓
+Start PocketIC and install the application
+        ↓
+Seed and verify a known-good starting point
+        ↓
+Run a test → collect diagnostics and performance data
+        ↓
+Restore and verify the starting point, or rebuild when reuse is unsafe
 ```
 
-It does not wrap the simulator, mirror PocketIC's API, manage a second server
-binary cache, or serialize independent PocketIC instances.
+This is most useful for applications with multiple canisters, expensive setup,
+many integration tests, intermittent CI failures, or performance budgets. A
+small project with a few independent tests may only need PocketIC directly.
+
+ic-testkit builds on PocketIC rather than replacing or hiding it. Developers
+can use the complete upstream API through `ic_testkit::pocket_ic` and add only
+the testkit helpers they need.
 
 ## Install
 
@@ -52,63 +99,41 @@ The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic`, `pic`, and
 `artifacts` modules are host-only. `benchmark`, `performance`, and `Fake` are
 also available when compiling for `wasm32`.
 
-The `0.14.0` release makes standalone fixture pools own their fixture builder.
-See the packaged [0.14.0 migration guide](crates/ic-testkit/CHANGELOG.md#0140)
-for the constructor and acquisition API changes.
+## What ic-testkit provides
 
-The `0.13.0` release simplifies benchmark rows and baseline reset requirements;
-its [migration guide](crates/ic-testkit/CHANGELOG.md#0130) records those source
-API changes.
+The pieces can be used separately or combined into a complete test workflow:
 
-The `0.11.0` release consolidates baseline reuse on recipe pools and
-installation on `InstallSpec`. Its API and report-schema changes are covered
-in the packaged [0.11.0 migration guide](crates/ic-testkit/CHANGELOG.md#0110).
-
-Upgrading to `0.10` changes artifact consumption to retained, read-only
-exact-cache paths. Keep the build outcome or record alive while reading or
-staging those artifacts. See the packaged
-[`0.10` migration guide](crates/ic-testkit/CHANGELOG.md#0100) for the complete
-API mapping and earlier pre-1.0 hard cuts, including `0.9`'s opt-in managed-server
-hard lifetime.
-
-## Features for application-scale test suites
-
-Complex applications tend to make test infrastructure expensive in several
-dimensions at once: many Wasm variants must be built, a topology must be
-installed and seeded, state must be reset honestly between tests, and failures
-must retain enough context to diagnose in CI. The main features are designed to
-compose across that complete loop:
-
-| Test-suite need | What ic-testkit provides | Why it matters |
+| Test-suite need | What ic-testkit does | Practical benefit |
 | --- | --- | --- |
-| Exercise the real topology | Direct `PocketIc` access, generic installation, caller-owned multi-canister recipes | Tests can model their actual canister graph without fitting it into a framework-owned abstraction |
-| Reuse expensive setup safely | Transactional snapshots, bounded fixture pools, typed reset requirements, readiness and invariant receipts | Warm tests are fast, while every reusable state domain has an explicit application-owned policy |
-| Build reproducible inputs | Content-addressed Wasm builds, transactional external artifact sets, exact freshness checks, batching and retention | Concurrent processes reuse complete artifacts and reject source, toolchain, or publication races |
-| Make failures actionable | Typed startup, Candid, install, snapshot, pool, and artifact errors with preserved causes and partial timings | A rejection stays distinct from transport failure, and recovery failures keep both the original and rebuild context |
-| Observe long and parallel suites | Structured build progress, cache/pool outcomes, phase timings, and best-effort canister diagnostics | CI logs can show whether time was spent waiting, building, restoring, validating, or recovering |
-| Catch performance regressions | Canister-side instruction and memory markers plus host-side parsing, aggregation, comparison, and report writing | Functional and performance coverage can exercise the same application workflows |
+| Test the real application shape | Runs the caller's actual set of canisters in PocketIC | A test can exercise interactions between services, not just isolated functions |
+| Reuse slow setup safely | Captures prepared state and restores it only under an explicit reset policy | Compatible tests start quickly without silently sharing dirty state |
+| Build the right code | Reuses Wasm only when its source, settings, tools, and other declared inputs still match | Local and CI runs test the intended binaries and avoid unnecessary rebuilds |
+| Understand failures | Preserves setup, call, installation, snapshot, and simulator errors with useful context | A product rejection is not confused with a disconnected test environment |
+| See where time goes | Reports build, queue, restore, validation, and recovery timings | Teams can improve the slow part instead of guessing |
+| Watch performance over time | Records instruction and memory measurements and writes comparison reports | Functional tests can also reveal performance regressions |
 
 ### A typical complex-suite workflow
 
-1. Describe each Wasm variant with `WasmBuildSpec`; exact hits reuse immutable
-   outputs, while independent batch entries keep Cargo feature resolution
-   separate.
-2. Install and seed the application topology in a `PocketIcBaselineRecipe`,
-   including every canister and external resource relevant to the baseline.
-3. Acquire a bounded pool lease. A cold slot builds once; a warm slot restores
-   snapshots, resets non-snapshot state, drives the topology to readiness, and
-   validates final invariants before the test receives it.
-4. Drive the application through typed Candid calls. Emit structured outcomes
-   and timings, dump canister diagnostics on failure, and invalidate the lease
-   after any mutation outside the recipe's reset contract.
-5. Parse performance markers into spans, aggregates, comparisons, and reports
-   when the same scenario also has instruction or memory budgets.
+1. Describe which application binaries and build inputs the test needs.
+2. Start PocketIC, install the canisters, and prepare the application's starting
+   data.
+3. Record what must be restored or checked before that environment can be used
+   again.
+4. Acquire a prepared environment, run the scenario, and collect structured
+   results and diagnostics.
+5. Restore and validate the environment for another compatible test, or discard
+   and rebuild it when safe reuse cannot be proven.
+6. Optionally turn instruction and memory markers into performance reports.
 
 See the compile-checked
 [`multi_canister_baseline_pool`](crates/ic-testkit/examples/multi_canister_baseline_pool.rs)
 and
 [`transactional_artifact_cache`](crates/ic-testkit/examples/transactional_artifact_cache.rs)
-examples for complete reusable recipes.
+examples for complete developer-facing recipes.
+
+> The rest of this README is a developer reference. If you only needed the
+> product-level explanation, the sections above describe the purpose and value
+> of ic-testkit.
 
 ### Choose the right isolation level
 
@@ -1435,6 +1460,21 @@ IC_TESTKIT_POCKET_IC_SERVER=/path/to/pocket-ic \
 ```
 
 ## Releases
+
+### Upgrading from an earlier release
+
+The `0.14.0` release makes standalone fixture pools own their fixture builder.
+See the packaged [0.14.0 migration guide](crates/ic-testkit/CHANGELOG.md#0140)
+for the constructor and acquisition API changes.
+
+The `0.13.0` release simplifies benchmark rows and baseline reset requirements;
+its [migration guide](crates/ic-testkit/CHANGELOG.md#0130) records those source
+API changes. The packaged changelog also covers the
+[0.11.0 API and report-schema changes](crates/ic-testkit/CHANGELOG.md#0110) and
+the [0.10 retained-artifact migration](crates/ic-testkit/CHANGELOG.md#0100),
+including earlier pre-1.0 hard cuts.
+
+### Publishing a release
 
 Commit the changelog entry for the target version and start from a clean
 worktree, then run:
