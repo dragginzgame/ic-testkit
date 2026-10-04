@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use super::digest::write_atomic;
+use super::digest::{read_stamp_with_limit, write_atomic};
 
 /// Resolve existing components through symlinks and normalize a missing suffix.
 /// Parent traversal can return from a missing suffix to existing components.
@@ -57,6 +57,8 @@ pub(super) const CACHE_DIRECTORY_TAG_SIGNATURE: &str =
     "Signature: 8a477f597d28d172789f06886806bc55";
 pub(super) const LAST_USED_FILE: &str = ".ic-testkit-last-used";
 const LAST_MAINTENANCE_FILE: &str = ".ic-testkit-last-maintenance";
+// Nanoseconds are written as decimal u128 values, which need at most 39 bytes.
+const MAX_TIMESTAMP_BYTES: usize = 39;
 pub(super) const RETENTION_LOCK_FILE: &str = ".ic-testkit-retention-v1";
 
 /// Acquired under the producer/namespace lock before handing an entry to a
@@ -398,8 +400,11 @@ pub(super) fn cache_maintenance_due(
         return Ok(true);
     };
     let marker = path.join(LAST_MAINTENANCE_FILE);
-    let contents = match fs::read_to_string(&marker) {
-        Ok(contents) => contents,
+    // Allow both LF and CRLF for the timestamp and policy-identity lines.
+    let maximum_len = MAX_TIMESTAMP_BYTES + maintenance_identity.len() + 4;
+    let contents = match read_stamp_with_limit(&marker, maximum_len) {
+        Ok(Some(contents)) => contents,
+        Ok(None) => return Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
         Err(source) => {
             return Err(CacheFsError {
@@ -677,7 +682,7 @@ fn cache_entries(
 
 pub(super) fn cache_entry_last_used(path: &Path) -> io::Result<SystemTime> {
     let marker = path.join(LAST_USED_FILE);
-    if let Ok(contents) = fs::read_to_string(&marker)
+    if let Ok(Some(contents)) = read_stamp_with_limit(&marker, MAX_TIMESTAMP_BYTES)
         && let Some(timestamp) = decode_system_time(&contents)
     {
         return Ok(timestamp);
@@ -713,6 +718,90 @@ mod tests {
     use super::directory_logical_size;
     use crate::artifacts::test_support::unique_temp_directory;
     use std::fs;
+
+    #[test]
+    fn last_use_markers_preserve_timestamps_and_bounded_fallbacks() {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        let root = unique_temp_directory("bounded-last-use-marker");
+        let marker = root.join(super::LAST_USED_FILE);
+        let modified = || fs::metadata(&root).unwrap().modified().unwrap();
+        assert_eq!(super::cache_entry_last_used(&root).unwrap(), modified());
+        for timestamp in [
+            UNIX_EPOCH + Duration::from_nanos(123),
+            SystemTime::now() + Duration::from_secs(3600),
+        ] {
+            super::write_last_used(&root, timestamp).unwrap();
+            assert_eq!(super::cache_entry_last_used(&root).unwrap(), timestamp);
+        }
+        let overflowing_timestamp = u128::MAX.to_string();
+        for invalid in [
+            b"invalid".as_slice(),
+            overflowing_timestamp.as_bytes(),
+            &[0xff],
+        ] {
+            fs::write(&marker, invalid).unwrap();
+            assert_eq!(super::cache_entry_last_used(&root).unwrap(), modified());
+        }
+        fs::File::create(&marker)
+            .unwrap()
+            .set_len(1024 * 1024 * 1024)
+            .unwrap();
+        assert_eq!(super::cache_entry_last_used(&root).unwrap(), modified());
+        fs::remove_file(&marker).unwrap();
+        fs::create_dir(&marker).unwrap();
+        assert_eq!(super::cache_entry_last_used(&root).unwrap(), modified());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn maintenance_markers_preserve_policy_intervals_and_read_errors() {
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+        let root = unique_temp_directory("bounded-maintenance-marker");
+        let marker = root.join(super::LAST_MAINTENANCE_FILE);
+        let identity = super::ArtifactCachePrunePolicy::new().maintenance_identity();
+        let interval = Some(Duration::from_secs(3600));
+        let due = || super::cache_maintenance_due(&root, interval, &identity).unwrap();
+        assert!(due());
+        super::record_cache_maintenance(&root, &identity).unwrap();
+        assert!(!due());
+        assert!(super::cache_maintenance_due(&root, interval, "other-policy").unwrap());
+        assert!(super::cache_maintenance_due(&root, Some(Duration::ZERO), &identity).unwrap());
+
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        for suffix in ["", "\r\n"] {
+            fs::write(&marker, format!("{}\r\n{identity}{suffix}", now.as_nanos())).unwrap();
+            assert!(!due());
+        }
+        for timestamp in [
+            "invalid".to_owned(),
+            "0".to_owned(),
+            (now + Duration::from_secs(3600)).as_nanos().to_string(),
+        ] {
+            fs::write(&marker, format!("{timestamp}\n{identity}\n")).unwrap();
+            assert!(due());
+        }
+        super::record_cache_maintenance(&root, &identity).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&marker)
+            .unwrap()
+            .set_len(1024 * 1024 * 1024)
+            .unwrap();
+        assert!(due());
+
+        fs::write(&marker, [0xff]).unwrap();
+        let error = super::cache_maintenance_due(&root, interval, &identity).unwrap_err();
+        assert_eq!(error.operation, "read cache maintenance time");
+        assert_eq!(error.path, marker);
+        assert_eq!(error.source.kind(), std::io::ErrorKind::InvalidData);
+        fs::remove_file(&marker).unwrap();
+        fs::create_dir(&marker).unwrap();
+        assert!(super::cache_maintenance_due(&root, interval, &identity).is_err());
+        assert!(super::cache_maintenance_due(&root, None, &identity).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn cache_directory_tags_preserve_valid_standard_signatures() {

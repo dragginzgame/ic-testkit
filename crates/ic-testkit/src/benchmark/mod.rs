@@ -752,17 +752,28 @@ fn parse_marker_line(
     source: BenchmarkEventSource,
     config: &BenchmarkParserConfig,
 ) -> Result<RawBenchmarkEvent, MalformedBenchmarkMarker> {
-    let parts = line.split('|').collect::<Vec<_>>();
-    if parts.len() != 6 {
+    let mut parts = line.split('|');
+    // Six fields and an absent seventh establish the complete marker shape
+    // without collecting an arbitrary number of columns from malformed logs.
+    let columns: [Option<&str>; 7] = std::array::from_fn(|_| parts.next());
+    let [
+        Some(prefix),
+        Some(label),
+        Some(instructions),
+        Some(heap_bytes),
+        Some(memory_bytes),
+        Some(total_allocation),
+        None,
+    ] = columns
+    else {
         return Err(malformed(
             source_line,
             source,
             line,
             "expected six pipe-separated columns",
         ));
-    }
+    };
 
-    let prefix = parts[0];
     if !config.prefixes.iter().any(|known| known == prefix) {
         return Err(malformed(
             source_line,
@@ -772,7 +783,6 @@ fn parse_marker_line(
         ));
     }
 
-    let label = parts[1];
     if label.is_empty() {
         return Err(malformed(source_line, source, line, "label is empty"));
     }
@@ -787,10 +797,16 @@ fn parse_marker_line(
     })?;
 
     let counters = BenchmarkCounters {
-        instructions: parse_counter(parts[2], source_line, source, line, "instructions")?,
-        heap_bytes: parse_counter(parts[3], source_line, source, line, "heap_bytes")?,
-        memory_bytes: parse_counter(parts[4], source_line, source, line, "memory_bytes")?,
-        total_allocation: parse_counter(parts[5], source_line, source, line, "total_allocation")?,
+        instructions: parse_counter(instructions, source_line, source, line, "instructions")?,
+        heap_bytes: parse_counter(heap_bytes, source_line, source, line, "heap_bytes")?,
+        memory_bytes: parse_counter(memory_bytes, source_line, source, line, "memory_bytes")?,
+        total_allocation: parse_counter(
+            total_allocation,
+            source_line,
+            source,
+            line,
+            "total_allocation",
+        )?,
     };
     let suite = config.suite_derivation.derive_suite(span_label);
 

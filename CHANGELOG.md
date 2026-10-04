@@ -6,6 +6,48 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.2] - 2026-10-04 - Bounded cache metadata and marker parsing
+
+### Fixed
+
+- Transactional artifact-cache manifests use the shared bounded file reader.
+  Their size limit comes from the existing manifest writer and declared output
+  set, retaining one authoritative layout. Oversized manifests are rejected
+  before scanning output contents, without reading or allocating the entire file.
+- Corrupt manifests still take the normal rebuild path. Entries retained by live
+  consumers continue to fail closed until released; output-content verification,
+  undeclared-output rejection, and atomic publication are preserved.
+- The shared byte reader preserves malformed-manifest recovery, while UTF-8
+  stamp readers retain their decoding errors. Public APIs, dependencies, and
+  persisted layouts are unchanged; repository-owned formats remain `v1`.
+- Last-use and maintenance markers also use bounded reads. Oversized last-use
+  markers fall back to directory modification time; oversized maintenance markers
+  make maintenance due. Normal timestamps, changed-policy scheduling, LF/CRLF
+  handling, future-time behavior, and each caller's I/O error policy are preserved.
+
+### Changed
+
+- Benchmark markers validate their six fields with a fixed array instead of
+  collecting a dynamic list of every column. Extra columns are rejected without
+  collecting the remainder; counter parsing, diagnostic text, original malformed
+  lines, source positions, and continued parsing of later markers are preserved.
+- Destination-stamp comparison uses the shared bounded file reader. Independent
+  writable-file, ownership, permission, and link checks remain in place; matching
+  stamps are still preserved during warm publication.
+
+### Testing
+
+- Focused checks cover oversized manifests, retained-entry protection, malformed
+  recovery, multi-output publication, empty-file policy, watched-input stamps,
+  Wasm stamp validation, and reconstruction from verified public outputs.
+- Marker checks cover bounded fallback, valid and malformed timestamps,
+  maintenance intervals, policy changes, CRLF, future timestamps, and read errors.
+- Benchmark checks cover malformed column counts, source diagnostics, valid
+  markers after malformed input, captured streams, and strict parsing. Warm Wasm
+  checks cover file preservation and replacement of linked or restricted files.
+- Rust 1.88 compilation, Clippy, documentation, formatting, and diff checks pass.
+  Full pre-push validation remains maintainer-owned.
+
 ## [0.15.1] - 2026-10-04 - Transport recovery and bounded freshness checks
 
 ### Fixed

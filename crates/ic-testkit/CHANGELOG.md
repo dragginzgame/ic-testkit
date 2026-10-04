@@ -4,6 +4,41 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.2
+
+This patch bounds cache metadata reads and simplifies benchmark marker parsing.
+Public APIs, dependencies, and persisted layouts are unchanged. Repository-owned
+formats remain `v1`; no consumer migration is required.
+
+- The shared bounded file reader rejects oversized manifests before inspecting
+  output contents. The existing writer and declared output set determine the
+  limit, retaining one authoritative manifest layout.
+- Malformed manifests still trigger rebuilding. A corrupt entry retained by a
+  live consumer cannot be replaced until released. Content verification,
+  undeclared-output rejection, and atomic publication remain intact.
+- Manifest byte comparison keeps its existing malformed-data behavior. UTF-8
+  stamp readers retain their decoding errors through the shared read helper.
+- Last-use and maintenance markers share the bounded stamp reader. Oversized
+  last-use markers fall back to directory modification time; oversized maintenance
+  markers make maintenance due. Normal timestamps, changed-policy scheduling,
+  LF/CRLF handling, future-time behavior, and I/O error policies remain intact.
+- Benchmark marker parsing uses a fixed array for six fields and the absence of
+  a seventh, removing the dynamic column list. Extra columns still report the
+  same error, preserve the original line and source position, and do not prevent
+  later valid markers from being parsed.
+- Destination-stamp comparison also uses the bounded file reader, preserving
+  writable-file, ownership, permission, and link checks and keeping matching
+  stamps during warm publication.
+
+Focused checks cover oversized and malformed manifests, retained-entry protection,
+multiple outputs, empty-file validation, watched-input and Wasm stamps, and
+Wasm-cache reconstruction. Marker checks cover timestamps, bounded fallback,
+policy intervals, CRLF, and read errors. Benchmark checks cover malformed and
+valid markers, source diagnostics, and strict parsing; warm Wasm checks cover
+file preservation and linked or restricted file replacement.
+Rust 1.88 compilation, Clippy, documentation, formatting, and diff checks pass.
+Full pre-push validation remains maintainer-owned.
+
 ## 0.15.1
 
 This patch fixes transport recovery classification without changing public APIs,

@@ -118,6 +118,41 @@ ICTK||1|2|3|4
 }
 
 #[test]
+fn malformed_extra_columns_preserve_diagnostics_and_following_markers() {
+    let valid = "ICTK|app/a:start|1|2|3|4";
+    let malformed = [
+        format!("{valid}|"),
+        format!("{valid}|extra|tail"),
+        format!("{valid}{}", "|".repeat(65_536)),
+    ];
+    let input = format!("{}\n{valid}\n", malformed.join("\n"));
+    let report = parse_benchmark_events_from_source(
+        &input,
+        &BenchmarkParserConfig::default(),
+        BenchmarkEventSource::FetchedLog,
+    );
+    assert_eq!(report.malformed_markers.len(), malformed.len());
+    for (index, (marker, line)) in report.malformed_markers.iter().zip(&malformed).enumerate() {
+        assert_eq!(marker.source_line, index + 1);
+        assert_eq!(marker.source, BenchmarkEventSource::FetchedLog);
+        assert_eq!(&marker.line, line);
+        assert_eq!(marker.reason, "expected six pipe-separated columns");
+    }
+    assert_eq!(report.events.len(), 1);
+    assert_eq!(report.events[0].source_line, 4);
+    assert_eq!(report.events[0].source, BenchmarkEventSource::FetchedLog);
+    assert_eq!(
+        report.events[0].counters,
+        BenchmarkCounters {
+            instructions: 1,
+            heap_bytes: 2,
+            memory_bytes: 3,
+            total_allocation: 4,
+        },
+    );
+}
+
+#[test]
 fn strict_parser_reports_non_marker_log_lines() {
     let config = BenchmarkParserConfig {
         strict: true,
