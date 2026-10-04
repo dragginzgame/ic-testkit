@@ -4,6 +4,47 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.5
+
+This patch release consolidates Cargo input safety checks and simplifies warm
+baseline reuse, temporary Wasm specification ownership, diagnostic state, and
+benchmark discovery. Public APIs and persisted layouts are unchanged; existing
+`0.14` callers need no source migration. Repository-owned format identifiers
+remain `v1`.
+
+- Wasm batches borrow caller specifications and grouping paths instead of
+  copying them for input resolution. Sessions and prepared snapshots still own
+  identities retained across calls. Feature isolation, metadata/environment
+  grouping, concurrent prepared readers, and source-lease invalidation retain
+  their existing behavior.
+- Standalone builds and batches share input discovery, shared-target boundary
+  validation, and generated-directory exclusions. Checks still precede hashing,
+  maintenance, and builds; unsafe entries preserve their input-discovery errors
+  without blocking compatible batch entries or deleting source files.
+- Warm baseline reuse compares captured canister IDs directly with restore
+  receipts, allocating complete diagnostic ID lists only on mismatch.
+  Successful preparation leaves lifecycle metadata unchanged instead of
+  clearing an already-empty invalidation reason. Reset coverage, readiness,
+  validation, explicit invalidation, and unwind recovery retain their behavior.
+- Diagnostic log rendering derives omitted-record counts and accumulates raw
+  byte totals in one traversal. Empty records, independent record/byte bounds,
+  lossy UTF-8 handling, compact truncation text, and failure reporting are
+  preserved.
+- Previous benchmark-run discovery selects the latest eligible match without
+  collecting and sorting all candidates. Metadata timestamp priority, numeric
+  indices, command filtering, and skipping unreadable or malformed metadata
+  remain unchanged.
+
+Sixteen batch/input-resolution unit checks, four real Wasm build checks, five
+diagnostics unit checks, three benchmark checks, and nine live PocketIC 16
+checks pass. Baseline-pool coverage includes 100 consecutive restores without
+reconstruction, receipt
+mismatch recovery, explicit invalidation, failed recovery diagnostics, and
+caller and recipe-hook panics. Benchmark coverage includes metadata schema,
+timestamp priority, numeric indices, command filtering, and missing or malformed
+candidates. Targeted Clippy, formatting, and diff checks also pass. No downstream
+suite speedup is claimed; full pre-push validation remains maintainer-owned.
+
 ## 0.14.4
 
 This patch release consolidates snapshot preparation and removes duplicated Wasm

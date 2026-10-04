@@ -256,7 +256,6 @@ pub struct CanisterDiagnosticLogs {
     records: Vec<CanisterDiagnosticLogRecord>,
     total_records: usize,
     total_content_bytes: usize,
-    omitted_records: usize,
     omitted_content_bytes: usize,
 }
 
@@ -282,7 +281,7 @@ impl CanisterDiagnosticLogs {
     /// Number of whole records omitted by the configured bounds.
     #[must_use]
     pub const fn omitted_records(&self) -> usize {
-        self.omitted_records
+        self.total_records - self.records.len()
     }
 
     /// Aggregate raw content bytes omitted across retained and omitted records.
@@ -294,7 +293,7 @@ impl CanisterDiagnosticLogs {
     /// Whether either whole records or record content were truncated.
     #[must_use]
     pub const fn was_truncated(&self) -> bool {
-        self.omitted_records != 0 || self.omitted_content_bytes != 0
+        self.omitted_records() != 0 || self.omitted_content_bytes != 0
     }
 }
 
@@ -329,7 +328,8 @@ impl fmt::Display for CanisterDiagnosticLogs {
             write!(
                 formatter,
                 "; truncated omitted_records={} omitted_content_bytes={}",
-                self.omitted_records, self.omitted_content_bytes
+                self.omitted_records(),
+                self.omitted_content_bytes
             )?;
         }
         Ok(())
@@ -662,17 +662,14 @@ fn render_log_records(
     limits: CanisterLogRenderLimits,
 ) -> CanisterDiagnosticLogs {
     let total_records = records.len();
-    let total_content_bytes = records.iter().fold(0usize, |total, record| {
-        total.saturating_add(record.content.len())
-    });
+    let mut total_content_bytes = 0usize;
     let mut rendered = Vec::with_capacity(total_records.min(limits.record_limit));
     let mut retained_bytes = 0usize;
-    let mut omitted_records = 0usize;
     let mut omitted_content_bytes = 0usize;
 
     for record in records {
+        total_content_bytes = total_content_bytes.saturating_add(record.content.len());
         if rendered.len() == limits.record_limit || retained_bytes == limits.byte_limit {
-            omitted_records = omitted_records.saturating_add(1);
             omitted_content_bytes = omitted_content_bytes.saturating_add(record.content.len());
             continue;
         }
@@ -696,7 +693,6 @@ fn render_log_records(
         records: rendered,
         total_records,
         total_content_bytes,
-        omitted_records,
         omitted_content_bytes,
     }
 }
@@ -853,22 +849,68 @@ mod tests {
 
     #[test]
     fn zero_log_bounds_retain_only_aggregate_truncation() {
-        let logs = render_log_records(
-            vec![CanisterLogRecord {
-                idx: 1,
-                timestamp_nanos: 2,
-                content: b"hello".to_vec(),
-            }],
-            CanisterLogRenderLimits::new(0, 0),
-        );
+        for (record_limit, byte_limit) in [(0, 0), (0, 16), (16, 0)] {
+            let logs = render_log_records(
+                vec![CanisterLogRecord {
+                    idx: 1,
+                    timestamp_nanos: 2,
+                    content: b"hello".to_vec(),
+                }],
+                CanisterLogRenderLimits::new(record_limit, byte_limit),
+            );
 
-        assert_eq!(logs.records(), []);
-        assert_eq!(logs.omitted_records(), 1);
-        assert_eq!(logs.omitted_content_bytes(), 5);
-        assert!(logs.was_truncated());
-        assert_eq!(
-            logs.to_string(),
-            "<no retained records>; truncated omitted_records=1 omitted_content_bytes=5"
+            assert_eq!(logs.records(), []);
+            assert_eq!(logs.total_records(), 1);
+            assert_eq!(logs.total_content_bytes(), 5);
+            assert_eq!(logs.omitted_records(), 1);
+            assert_eq!(logs.omitted_content_bytes(), 5);
+            assert!(logs.was_truncated());
+            assert_eq!(
+                logs.to_string(),
+                "<no retained records>; truncated omitted_records=1 omitted_content_bytes=5"
+            );
+        }
+    }
+
+    #[test]
+    fn logs_within_bounds_preserve_empty_records_and_raw_byte_totals() {
+        let limits = CanisterLogRenderLimits::new(3, 3);
+        let empty = render_log_records(vec![], limits);
+        assert_eq!(empty.total_records(), 0);
+        assert_eq!(empty.total_content_bytes(), 0);
+        assert_eq!(empty.omitted_records(), 0);
+        assert_eq!(empty.omitted_content_bytes(), 0);
+        assert!(!empty.was_truncated());
+        assert_eq!(empty.to_string(), "<empty>");
+
+        let logs = render_log_records(
+            vec![
+                CanisterLogRecord {
+                    idx: 1,
+                    timestamp_nanos: 2,
+                    content: vec![],
+                },
+                CanisterLogRecord {
+                    idx: 3,
+                    timestamp_nanos: 4,
+                    content: vec![0x80, b'a'],
+                },
+                CanisterLogRecord {
+                    idx: 5,
+                    timestamp_nanos: 6,
+                    content: vec![],
+                },
+            ],
+            limits,
         );
+        assert_eq!(logs.total_records(), 3);
+        assert_eq!(logs.records().len(), 3);
+        assert_eq!(logs.total_content_bytes(), 2);
+        assert_eq!(logs.records()[0].content(), "");
+        assert_eq!(logs.records()[1].content(), "�a");
+        assert_eq!(logs.records()[2].content(), "");
+        assert_eq!(logs.omitted_records(), 0);
+        assert_eq!(logs.omitted_content_bytes(), 0);
+        assert!(!logs.was_truncated());
     }
 }

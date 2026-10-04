@@ -224,7 +224,7 @@ pub(super) enum WasmBuildInputReuse<'reuse> {
 }
 
 pub(super) struct WasmBuildBatchInputResolver<'a, 'session> {
-    specs: &'a [WasmBuildSpec],
+    specs: Vec<&'a WasmBuildSpec>,
     groups: Vec<BatchResolutionGroup>,
     group_by_index: Vec<usize>,
     resolved:
@@ -271,10 +271,10 @@ pub(super) struct WasmBuildBatchInputMetrics {
 }
 
 #[derive(Eq, PartialEq)]
-struct BatchResolutionKey {
-    workspace_root: PathBuf,
-    cargo_program: OsString,
-    rustc_program: OsString,
+struct BatchResolutionKey<'a> {
+    workspace_root: &'a Path,
+    cargo_program: &'a OsStr,
+    rustc_program: &'a OsStr,
     metadata_arguments: Vec<OsString>,
     environment: BTreeMap<OsString, Option<OsString>>,
 }
@@ -1576,13 +1576,14 @@ impl WasmBuildInputSnapshotState {
 
 impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
     pub(super) fn new(
-        specs: &'a [WasmBuildSpec],
+        specs: impl IntoIterator<Item = &'a WasmBuildSpec>,
         mut reuse: Option<WasmBuildInputReuse<'session>>,
     ) -> Self {
+        let specs = specs.into_iter().collect::<Vec<_>>();
         let mut keys = Vec::<BatchResolutionKey>::new();
         let mut groups = Vec::<BatchResolutionGroup>::new();
         let mut group_by_index = Vec::with_capacity(specs.len());
-        for (index, spec) in specs.iter().enumerate() {
+        for (index, spec) in specs.iter().copied().enumerate() {
             let key = BatchResolutionKey::for_spec(spec);
             let group = keys
                 .iter()
@@ -1686,7 +1687,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         let indexes = self.groups[self.group_by_index[active_index]]
             .indexes
             .clone();
-        let active = &self.specs[active_index];
+        let active = self.specs[active_index];
 
         let (cargo_identity, rustc_identity, tool_identity) =
             resolve_tool_identity(active, progress)?;
@@ -1759,7 +1760,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
                     continue;
                 }
             };
-            let spec = &self.specs[index];
+            let spec = self.specs[index];
             let resolved = ResolvedCargoBuildInputs {
                 fingerprint: finish_build_fingerprint(
                     spec,
@@ -1798,7 +1799,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         let pending = indexes
             .into_iter()
             .filter(|index| {
-                self.resolved[*index].is_none() && validate_spec(&self.specs[*index]).is_ok()
+                self.resolved[*index].is_none() && validate_spec(self.specs[*index]).is_ok()
             })
             .collect::<Vec<_>>();
         let results = progress.run_phase(WasmBuildProgressPhase::InputDiscovery, || {
@@ -1806,18 +1807,12 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             pending
                 .into_iter()
                 .map(|index| {
-                    let spec = &self.specs[index];
+                    let spec = self.specs[index];
                     let result = (|| {
                         let parsed = parsed
                             .as_ref()
                             .map_err(|message| invalid_metadata(message))?;
-                        let inputs = resolve_local_inputs(spec, parsed)?;
-                        validate_shared_incremental_target_boundary(
-                            spec,
-                            &inputs.validation_inputs,
-                        )?;
-                        let exclusions = source_exclusions(spec, &inputs.validation_inputs);
-                        Ok::<_, WasmBuildError>((inputs, exclusions))
+                        resolve_local_inputs(spec, parsed)
                     })();
                     (index, result)
                 })
@@ -1860,16 +1855,15 @@ fn resolve_tool_identity(
     Ok((cargo_identity, rustc_identity, started.elapsed()))
 }
 
-impl BatchResolutionKey {
-    fn for_spec(spec: &WasmBuildSpec) -> Self {
+impl<'a> BatchResolutionKey<'a> {
+    fn for_spec(spec: &'a WasmBuildSpec) -> Self {
         Self {
-            workspace_root: spec.workspace_root.clone(),
-            cargo_program: spec.cargo_program.clone(),
+            workspace_root: &spec.workspace_root,
+            cargo_program: &spec.cargo_program,
             rustc_program: spec
                 .extra_env
                 .get(OsStr::new("RUSTC"))
-                .unwrap_or(&spec.rustc_program)
-                .clone(),
+                .unwrap_or(&spec.rustc_program),
             metadata_arguments: metadata_arguments(&spec.cargo_profile_args),
             environment: effective_environment(spec),
         }
@@ -3421,10 +3415,7 @@ fn build_fingerprint_with_progress(
         progress.run_phase(WasmBuildProgressPhase::InputDiscovery, || {
             let parsed = ParsedCargoMetadata::parse(&metadata)
                 .map_err(|message| invalid_metadata(&message))?;
-            let inputs = resolve_local_inputs(spec, &parsed)?;
-            validate_shared_incremental_target_boundary(spec, &inputs.validation_inputs)?;
-            let exclusions = source_exclusions(spec, &inputs.validation_inputs);
-            Ok::<_, WasmBuildError>((inputs, exclusions))
+            resolve_local_inputs(spec, &parsed)
         })?;
     let input_discovery = discovery_started.elapsed();
 
@@ -3663,7 +3654,7 @@ struct LockedPackageIdentity {
 fn resolve_local_inputs(
     spec: &WasmBuildSpec,
     metadata: &ParsedCargoMetadata<'_>,
-) -> Result<ResolvedLocalInputs, WasmBuildError> {
+) -> Result<(ResolvedLocalInputs, Vec<PathBuf>), WasmBuildError> {
     let mut selected_ids = selected_package_ids(spec, metadata)?;
     let mut closure = BTreeSet::new();
     while let Some(id) = selected_ids.pop_front() {
@@ -3687,10 +3678,15 @@ fn resolve_local_inputs(
         &workspace_root,
     )?;
     append_additional_inputs(&mut validation_inputs, spec, &workspace_root);
-    Ok(ResolvedLocalInputs {
-        validation_inputs,
-        workspace_projection,
-    })
+    validate_shared_incremental_target_boundary(spec, &validation_inputs)?;
+    let exclusions = source_exclusions(spec, &validation_inputs);
+    Ok((
+        ResolvedLocalInputs {
+            validation_inputs,
+            workspace_projection,
+        },
+        exclusions,
+    ))
 }
 
 fn metadata_packages(metadata: &Value) -> Result<HashMap<String, MetadataPackage>, String> {

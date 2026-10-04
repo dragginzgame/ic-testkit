@@ -886,11 +886,8 @@ fn run_wasm_batch(
     validate_batch_labels(specs)?;
     validate_input_reuse(specs, reuse.as_ref())?;
     let count = specs.len();
-    let build_specs = specs
-        .iter()
-        .map(|labeled| labeled.spec.clone())
-        .collect::<Vec<_>>();
-    let mut resolver = WasmBuildBatchInputResolver::new(&build_specs, reuse);
+    let mut resolver =
+        WasmBuildBatchInputResolver::new(specs.iter().map(LabeledWasmBuildSpec::spec), reuse);
     let mut report = build_wasm_batch(specs, batch_config, |spec, index| {
         let Some((progress_config, observer)) = observation.as_mut() else {
             return build_wasm_canisters_cached_in_batch(spec, index, &mut resolver);

@@ -862,7 +862,7 @@ where
         let slot_index = slot.slot_index();
 
         if slot.is_reusable() {
-            match self.prepare_reused(&mut slot, &mut timings) {
+            match self.prepare_reused(&slot, &mut timings) {
                 Ok(()) => {
                     timings.total = total_started.elapsed();
                     return Ok((
@@ -950,7 +950,7 @@ where
 
     fn prepare_reused(
         &self,
-        slot: &mut BoundedSlotLease<'_, BaselineSlot<R::Metadata>>,
+        slot: &BoundedSlotLease<'_, BaselineSlot<R::Metadata>>,
         timings: &mut BaselinePoolTimings,
     ) -> Result<(), BaselinePoolPreparationError<R::Error>> {
         let baseline = &slot
@@ -965,11 +965,13 @@ where
             stage: BaselinePreparationStage::RestoreCanisters,
             source,
         })?;
-        let expected_canisters = baseline.snapshot_canister_ids().collect::<Vec<_>>();
-        if canisters.canister_ids() != expected_canisters {
+        if !baseline
+            .snapshot_canister_ids()
+            .eq(canisters.canister_ids().iter().copied())
+        {
             return Err(BaselinePoolPreparationError::Contract(
                 BaselinePoolContractError::RestoreCanisterSetMismatch {
-                    expected: expected_canisters,
+                    expected: baseline.snapshot_canister_ids().collect(),
                     actual: canisters.canister_ids().to_vec(),
                 },
             ));
@@ -1007,9 +1009,6 @@ where
             BaselinePreparationStage::ValidateRestored,
             timings,
         )?;
-        slot.get_mut()
-            .expect("validated baseline slot must remain populated")
-            .invalidation_reason = None;
         Ok(())
     }
 

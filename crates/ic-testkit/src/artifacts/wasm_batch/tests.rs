@@ -298,6 +298,50 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
 
 #[cfg(unix)]
 #[test]
+fn unsafe_shared_target_does_not_fail_other_compatible_batch_entries() {
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+    use std::fs;
+
+    let (root, spec) = fake_wasm_build_spec("batch-source-boundary");
+    let unsafe_target = root.join("fixture/src/generated-target");
+    fs::create_dir_all(&unsafe_target).expect("create unsafe shared target");
+    let sentinel = unsafe_target.join("source-sentinel");
+    fs::write(&sentinel, b"preserve").expect("write source sentinel");
+    let specs = [
+        LabeledWasmBuildSpec::new(
+            "unsafe",
+            spec.clone().with_shared_incremental_target(&unsafe_target),
+        ),
+        LabeledWasmBuildSpec::new("safe", spec),
+    ];
+    let config = WasmBuildBatchConfig::new()
+        .with_shared_incremental_target_maintenance_at_most_every(
+            SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0),
+            Duration::ZERO,
+        );
+
+    let report =
+        build_wasm_canisters_cached_batch_with_config(&specs, config).expect("valid labeled batch");
+    assert_eq!(report.outcomes().count(), 1);
+    let failures = report.failures().collect::<Vec<_>>();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].label(), "unsafe");
+    assert_eq!(failures[0].phase(), WasmBuildFailurePhase::InputDiscovery);
+    assert!(matches!(
+        failures[0].error(),
+        WasmBuildError::InvalidSpec { .. }
+    ));
+    assert_eq!(failures[0].timings().cargo_build(), None);
+    assert_eq!(
+        fs::read(&sentinel).expect("read preserved source"),
+        b"preserve"
+    );
+    drop(report);
+    fs::remove_dir_all(root).expect("remove batch source boundary fixture");
+}
+
+#[cfg(unix)]
+#[test]
 fn a_missing_input_does_not_fail_other_compatible_batch_entries() {
     use crate::artifacts::test_support::fake_wasm_build_spec;
     for invalid_first in [true, false] {

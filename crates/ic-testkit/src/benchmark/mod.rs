@@ -429,9 +429,10 @@ pub fn next_benchmark_run_directory(
 /// Find the latest earlier run with readable metadata and a matching command.
 ///
 /// Names must follow [`benchmark_run_directory_name`]; indices are ordered
-/// numerically even when they exceed four digits. An invalid current name
-/// returns [`io::ErrorKind::InvalidInput`]. Unreadable or malformed candidates
-/// are skipped.
+/// numerically even when they exceed four digits. Eligible runs are ranked by
+/// metadata timestamp, directory prefix, then numeric index. An invalid current
+/// name returns [`io::ErrorKind::InvalidInput`]. Unreadable or malformed
+/// candidates are skipped.
 pub fn find_latest_previous_run(
     runs_root: impl AsRef<Path>,
     current_run_directory_name: &str,
@@ -444,7 +445,7 @@ pub fn find_latest_previous_run(
             "invalid benchmark run directory name",
         )
     })?;
-    let mut candidates = Vec::new();
+    let mut latest: Option<((String, String, u32), PathBuf)> = None;
 
     if !runs_root.exists() {
         return Ok(None);
@@ -475,11 +476,16 @@ pub fn find_latest_previous_run(
             continue;
         }
 
-        candidates.push((metadata.timestamp, prefix.to_owned(), index, entry.path()));
+        let key = (metadata.timestamp, prefix.to_owned(), index);
+        if latest
+            .as_ref()
+            .is_none_or(|(latest_key, _)| key >= *latest_key)
+        {
+            latest = Some((key, entry.path()));
+        }
     }
 
-    candidates.sort_by(|a, b| (&a.0, &a.1, a.2).cmp(&(&b.0, &b.1, b.2)));
-    Ok(candidates.pop().map(|(_, _, _, path)| path))
+    Ok(latest.map(|(_, path)| path))
 }
 
 pub fn read_benchmark_run_metadata(path: impl AsRef<Path>) -> io::Result<BenchmarkRunMetadata> {

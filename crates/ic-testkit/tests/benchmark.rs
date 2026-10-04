@@ -790,6 +790,10 @@ fn previous_run_discovery_selects_latest_matching_metadata() {
         "2026-05-24T120000Z-a1b2c3d-0001",
         Some("suite-b"),
     );
+    let malformed = root.join("2026-05-24T123000Z-a1b2c3d-0001");
+    fs::create_dir_all(&malformed).expect("malformed metadata dir");
+    fs::write(malformed.join("metadata.json"), b"{}").expect("write malformed metadata");
+    fs::create_dir_all(root.join("2026-05-24T124000Z-a1b2c3d-0001")).expect("missing metadata dir");
 
     let previous =
         find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", Some("suite-a"))
@@ -797,6 +801,29 @@ fn previous_run_discovery_selects_latest_matching_metadata() {
             .expect("previous run");
 
     assert_eq!(previous, latest);
+    assert_eq!(
+        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", None)
+            .expect("find previous without command filtering"),
+        Some(other_command),
+    );
+    assert_eq!(
+        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", Some("absent"))
+            .expect("find unmatched command"),
+        None,
+    );
+
+    // Metadata timestamps take precedence over the directory-name ordering.
+    write_metadata(
+        &older,
+        "2026-05-24T125000Z",
+        "2026-05-24T100000Z-a1b2c3d-0001",
+        Some("suite-a"),
+    );
+    assert_eq!(
+        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", Some("suite-a"))
+            .expect("order eligible runs by metadata"),
+        Some(older),
+    );
 
     fs::remove_dir_all(root).expect("clean temp dir");
 }

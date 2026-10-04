@@ -6,6 +6,61 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.5] - 2026-10-04 - Simpler build inputs, fixture reuse, and reporting
+
+### Changed
+
+- Wasm batch resolution borrows caller-owned build specifications instead of
+  cloning every specification into a temporary input list. Grouping keys also
+  borrow workspace paths and Cargo/rustc executable names. Sessions and prepared
+  snapshots retain the owned identities needed across calls; metadata argument
+  filtering, environment capture, independent feature resolution, and source
+  lease invalidation are unchanged.
+- Cargo input discovery owns shared-target boundary validation and generated
+  directory exclusions for both standalone builds and batches. Callers no
+  longer repeat this safety sequence; validation still precedes hashing,
+  maintenance, and builds. Unsafe batch entries retain their input-discovery
+  failures without preventing compatible entries from succeeding.
+- Warm baseline-pool acquisition compares restore receipts directly against
+  captured canister IDs instead of allocating an expected-ID list on every
+  successful restore. Mismatch diagnostics still retain both complete ID lists.
+  Successful preparation also stops clearing an already-empty invalidation
+  reason; lifecycle metadata is only changed when building or invalidating a
+  slot. Reset checks, readiness, final validation, and recovery are unchanged.
+- Canister diagnostics derive the omitted-record count from total and retained
+  records instead of storing and updating a second count. Raw byte totals are
+  accumulated during rendering, removing a separate traversal. Record and byte
+  bounds, zero limits, upstream ordering, lossy UTF-8 conversion, and compact
+  truncation text retain their existing behavior.
+- Previous benchmark-run discovery retains only the latest eligible match
+  instead of collecting and sorting every candidate. Metadata timestamp
+  priority, numeric run-index ordering, command filtering, and skipping
+  unreadable or malformed metadata retain their existing behavior.
+- Public APIs and persisted layouts are unchanged. Repository-owned format
+  identifiers remain `v1`; existing `0.14` callers need no migration. No
+  downstream suite speedup has been measured for these changes.
+
+### Testing
+
+- Sixteen focused batch/input-resolution unit checks and four real Wasm build
+  checks pass, covering indexed failures, progress labels, maintenance ownership,
+  compatible metadata reuse, source and retained-cache boundaries, relative
+  target paths, feature isolation, session reuse, concurrent prepared readers,
+  and source-race rejection and invalidation.
+- Five diagnostics unit checks and three live PocketIC 16 checks pass, covering
+  empty records, independent zero bounds, raw-byte accounting with lossy UTF-8,
+  truncation output, exact senders, and preservation of original install failures
+  and caller-owned instances.
+- Six focused live PocketIC 16 baseline-pool checks pass, including 100
+  consecutive restores without reconstruction, exact receipt coverage,
+  explicit invalidation, failed recovery diagnostics, and propagation of caller
+  and recipe-hook panics before a later rebuild.
+- Three focused benchmark checks pass, covering prior-run discovery, numeric
+  indices beyond four digits, command filtering, metadata timestamp priority,
+  missing and malformed candidates, and the metadata object schema.
+- Targeted Clippy, formatting, and diff checks pass; full pre-push validation
+  remains maintainer-owned.
+
 ## [0.14.4] - 2026-10-04 - Simpler snapshot capture and artifact input ownership
 
 ### Changed
