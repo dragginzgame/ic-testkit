@@ -4,6 +4,32 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.4
+
+This patch release consolidates snapshot preparation and removes duplicated Wasm
+input state. Public APIs and persisted layouts are unchanged; existing `0.14`
+callers need no source migration. Repository-owned format identifiers remain
+`v1`.
+
+- Both snapshot capture APIs share complete duplicate validation and
+  deterministic ordering before issuing management calls. Temporary sender
+  vectors are removed while preserving explicit-sender and controller-fallback
+  contracts.
+- Partial-capture rollback consumes its snapshot set instead of copying IDs.
+  Cleanup continues across failures and retains rejection and panic diagnostics.
+- Wasm semantic hashing derives its path subset from the authoritative
+  validation list. A duplicated path list and fingerprint-mode wrapper are
+  removed; conservative fallback and workspace projection semantics remain.
+- Cargo input revalidation borrows existing labels and paths rather than
+  reconstructing owned copies. Raw-source mutation guards, exclusions, native
+  path ordering, semantic digests, and exact cache identities are unchanged.
+
+Seven focused live PocketIC 16 checks, one funding-policy unit check, six digest
+checks, and seven artifact-input checks pass. Public snapshot behavior tests
+replace private validation-helper tests. Targeted Clippy, formatting, and diff
+checks also pass. No downstream suite speedup is claimed; full pre-push
+validation remains maintainer-owned.
+
 ## 0.14.3
 
 This patch release simplifies benchmark processing and Wasm cache finalization.

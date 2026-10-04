@@ -187,13 +187,13 @@ struct HashPathTrace {
     traversed_external_path: bool,
 }
 
-pub(super) fn digest_labeled_paths_composable(
+pub(super) fn digest_labeled_paths_composable<'a>(
     domain: &str,
-    paths: &[(PathBuf, PathBuf)],
+    paths: impl IntoIterator<Item = (&'a Path, &'a Path)>,
     excluded_roots: &[PathBuf],
     cache: &mut LabeledPathDigestCache,
 ) -> io::Result<InputDigest> {
-    let mut paths = paths.iter().collect::<Vec<_>>();
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
     paths.sort_by(|(left, _), (right, _)| {
         os_bytes(left.as_os_str()).cmp(&os_bytes(right.as_os_str()))
     });
@@ -505,7 +505,9 @@ mod tests {
             assert_eq!(
                 digest_labeled_paths_composable(
                     "native-path-test-v1",
-                    &paths,
+                    paths
+                        .iter()
+                        .map(|(label, path)| (label.as_path(), path.as_path())),
                     &[],
                     &mut LabeledPathDigestCache::default(),
                 )
@@ -574,14 +576,18 @@ mod tests {
 
         let first = digest_labeled_paths_composable(
             "composable-test-v1",
-            &paths,
+            paths
+                .iter()
+                .map(|(label, path)| (label.as_path(), path.as_path())),
             &[root.join("generated-a")],
             &mut cache,
         )
         .expect("hash first composable input");
         let second = digest_labeled_paths_composable(
             "composable-test-v1",
-            &paths,
+            paths
+                .iter()
+                .map(|(label, path)| (label.as_path(), path.as_path())),
             &[root.join("generated-b")],
             &mut cache,
         )
@@ -602,7 +608,14 @@ mod tests {
         fs::write(generated.join("artifact"), b"generated").unwrap();
         let paths = [(PathBuf::from("input"), input.clone())];
         let digest = |exclusions: &[PathBuf], cache: &mut LabeledPathDigestCache| {
-            digest_labeled_paths_composable("exclusions-test-v1", &paths, exclusions, cache)
+            digest_labeled_paths_composable(
+                "exclusions-test-v1",
+                paths
+                    .iter()
+                    .map(|(label, path)| (label.as_path(), path.as_path())),
+                exclusions,
+                cache,
+            )
         };
         let mut cache = LabeledPathDigestCache::default();
         let excluded = digest(std::slice::from_ref(&generated), &mut cache).unwrap();
@@ -644,7 +657,9 @@ mod tests {
         let digest = |exclusion: &PathBuf, cache: &mut LabeledPathDigestCache| {
             digest_labeled_paths_composable(
                 "external-exclusions-test-v1",
-                &paths,
+                paths
+                    .iter()
+                    .map(|(label, path)| (label.as_path(), path.as_path())),
                 std::slice::from_ref(exclusion),
                 cache,
             )

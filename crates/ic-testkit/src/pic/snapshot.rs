@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
@@ -176,15 +176,11 @@ impl PocketIcSnapshotExt for PocketIc {
     where
         I: IntoIterator<Item = CanisterSnapshotTarget>,
     {
-        let targets = ordered_unique_snapshot_targets(targets)?;
         capture_snapshot_set(
             self,
-            targets.into_iter().map(|target| {
-                (
-                    target.canister_id,
-                    std::iter::once(target.sender).collect::<Vec<_>>(),
-                )
-            }),
+            targets
+                .into_iter()
+                .map(|target| (target.canister_id, std::iter::once(target.sender))),
         )
     }
 
@@ -196,13 +192,12 @@ impl PocketIcSnapshotExt for PocketIc {
     where
         I: IntoIterator<Item = Principal>,
     {
-        let canister_ids = ordered_unique_canister_ids(canister_ids)?;
         capture_snapshot_set(
             self,
             canister_ids.into_iter().map(|canister_id| {
                 (
                     canister_id,
-                    controller_sender_candidates(controller_id, canister_id).to_vec(),
+                    controller_sender_candidates(controller_id, canister_id),
                 )
             }),
         )
@@ -296,21 +291,30 @@ impl CanisterSnapshotTarget {
     }
 }
 
-fn capture_snapshot_set<I>(
+fn capture_snapshot_set<I, S>(
     pocket_ic: &PocketIc,
     targets: I,
 ) -> Result<ControllerSnapshots, ControllerSnapshotError>
 where
-    I: IntoIterator<Item = (Principal, Vec<Option<Principal>>)>,
+    I: IntoIterator<Item = (Principal, S)>,
+    S: IntoIterator<Item = Option<Principal>>,
 {
-    let mut snapshots = BTreeMap::new();
+    // Validate the entire input before issuing any management calls. The map
+    // also owns the deterministic canister order for both capture entry points.
+    let mut ordered_targets = BTreeMap::new();
     for (canister_id, senders) in targets {
+        if ordered_targets.insert(canister_id, senders).is_some() {
+            return Err(ControllerSnapshotError::DuplicateCanisterId { canister_id });
+        }
+    }
+    let mut snapshots = BTreeMap::new();
+    for (canister_id, senders) in ordered_targets {
         match try_take_snapshot(pocket_ic, canister_id, senders) {
             Ok(snapshot) => {
                 snapshots.insert(canister_id, snapshot);
             }
             Err(SnapshotCaptureFailure::Rejected(attempts)) => {
-                let cleanup_failures = cleanup_captured_snapshots(pocket_ic, &snapshots);
+                let cleanup_failures = cleanup_captured_snapshots(pocket_ic, snapshots);
                 return Err(ControllerSnapshotError::CaptureFailed {
                     canister_id,
                     attempts,
@@ -318,7 +322,7 @@ where
                 });
             }
             Err(SnapshotCaptureFailure::Panicked(source)) => {
-                let cleanup_failures = cleanup_captured_snapshots(pocket_ic, &snapshots);
+                let cleanup_failures = cleanup_captured_snapshots(pocket_ic, snapshots);
                 return Err(ControllerSnapshotError::CapturePanicked {
                     canister_id,
                     source,
@@ -451,38 +455,6 @@ impl std::error::Error for ControllerSnapshotError {
     }
 }
 
-fn ordered_unique_canister_ids<I>(
-    canister_ids: I,
-) -> Result<Vec<Principal>, ControllerSnapshotError>
-where
-    I: IntoIterator<Item = Principal>,
-{
-    let mut unique = BTreeSet::new();
-    for canister_id in canister_ids {
-        if !unique.insert(canister_id) {
-            return Err(ControllerSnapshotError::DuplicateCanisterId { canister_id });
-        }
-    }
-    Ok(unique.into_iter().collect())
-}
-
-fn ordered_unique_snapshot_targets<I>(
-    targets: I,
-) -> Result<Vec<CanisterSnapshotTarget>, ControllerSnapshotError>
-where
-    I: IntoIterator<Item = CanisterSnapshotTarget>,
-{
-    let mut unique = BTreeMap::new();
-    for target in targets {
-        if unique.insert(target.canister_id, target).is_some() {
-            return Err(ControllerSnapshotError::DuplicateCanisterId {
-                canister_id: target.canister_id,
-            });
-        }
-    }
-    Ok(unique.into_values().collect())
-}
-
 fn try_take_snapshot(
     pocket_ic: &PocketIc,
     canister_id: Principal,
@@ -517,27 +489,23 @@ fn try_take_snapshot(
 
 fn cleanup_captured_snapshots(
     pocket_ic: &PocketIc,
-    snapshots: &BTreeMap<Principal, ControllerSnapshot>,
+    snapshots: BTreeMap<Principal, ControllerSnapshot>,
 ) -> Vec<SnapshotCleanupFailure> {
     let mut failures = Vec::new();
     for (canister_id, snapshot) in snapshots {
         let cleanup = catch_unwind(AssertUnwindSafe(|| {
-            pocket_ic.delete_canister_snapshot(
-                *canister_id,
-                snapshot.sender,
-                snapshot.snapshot_id.clone(),
-            )
+            pocket_ic.delete_canister_snapshot(canister_id, snapshot.sender, snapshot.snapshot_id)
         }));
         match cleanup {
             Ok(Ok(())) => {}
             Ok(Err(response)) => failures.push(SnapshotCleanupFailure {
-                canister_id: *canister_id,
+                canister_id,
                 sender: snapshot.sender,
                 response: Some(Box::new(response)),
                 panic_message: None,
             }),
             Err(payload) => failures.push(SnapshotCleanupFailure {
-                canister_id: *canister_id,
+                canister_id,
                 sender: snapshot.sender,
                 response: None,
                 panic_message: Some(transport::panic_payload_to_string(payload.as_ref())),
@@ -617,34 +585,7 @@ fn controller_sender_candidates(
 
 #[cfg(test)]
 mod tests {
-    use candid::Principal;
-
-    use super::{
-        ControllerSnapshotError, SnapshotRestoreFunding, ordered_unique_canister_ids,
-        snapshot_restore_top_up,
-    };
-
-    #[test]
-    fn duplicate_canister_ids_are_rejected_before_capture() {
-        let canister_id = Principal::from_slice(&[1]);
-        let error = ordered_unique_canister_ids([canister_id, canister_id]).unwrap_err();
-
-        assert_eq!(
-            error,
-            ControllerSnapshotError::DuplicateCanisterId { canister_id }
-        );
-    }
-
-    #[test]
-    fn canister_ids_are_sorted_deterministically() {
-        let first = Principal::from_slice(&[1]);
-        let second = Principal::from_slice(&[2]);
-
-        assert_eq!(
-            ordered_unique_canister_ids([second, first]).unwrap(),
-            vec![first, second]
-        );
-    }
+    use super::{SnapshotRestoreFunding, snapshot_restore_top_up};
 
     #[test]
     fn snapshot_restore_funding_is_explicit() {

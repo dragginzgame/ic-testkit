@@ -259,15 +259,7 @@ struct BatchResolutionGroup {
 
 struct ResolvedLocalInputs {
     validation_inputs: Vec<(PathBuf, PathBuf)>,
-    fingerprint: LocalInputFingerprint,
-}
-
-enum LocalInputFingerprint {
-    Conservative,
-    Projected {
-        inputs: Vec<(PathBuf, PathBuf)>,
-        workspace: InputDigest,
-    },
+    workspace_projection: Option<InputDigest>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -1425,14 +1417,11 @@ impl ResolvedCargoBuildInputs {
     }
 
     pub(super) fn current_validation_digest(&self) -> Result<InputDigest, WasmBuildError> {
-        let inputs = self
-            .inputs
-            .iter()
-            .map(|input| (input.label.clone(), input.path.clone()))
-            .collect::<Vec<_>>();
         digest_labeled_paths_composable(
             "wasm-source-inputs-v1",
-            &inputs,
+            self.inputs
+                .iter()
+                .map(|input| (input.label.as_path(), input.path.as_path())),
             &self.exclusions,
             &mut LabeledPathDigestCache::default(),
         )
@@ -3689,7 +3678,7 @@ fn resolve_local_inputs(
     let workspace_root = metadata
         .workspace_root
         .map_or_else(|| spec.workspace_root.clone(), PathBuf::from);
-    let projection = semantic_workspace_projection(metadata, &closure, &workspace_root)?;
+    let workspace_projection = semantic_workspace_projection(metadata, &closure, &workspace_root)?;
     let mut validation_inputs = workspace_configuration_inputs(spec, &workspace_root)?;
     append_package_inputs(
         &mut validation_inputs,
@@ -3698,19 +3687,9 @@ fn resolve_local_inputs(
         &workspace_root,
     )?;
     append_additional_inputs(&mut validation_inputs, spec, &workspace_root);
-    let fingerprint = projection.map_or(LocalInputFingerprint::Conservative, |workspace| {
-        LocalInputFingerprint::Projected {
-            inputs: validation_inputs
-                .iter()
-                .filter(|(label, _)| !is_broad_workspace_input(label))
-                .cloned()
-                .collect(),
-            workspace,
-        }
-    });
     Ok(ResolvedLocalInputs {
         validation_inputs,
-        fingerprint,
+        workspace_projection,
     })
 }
 
@@ -4053,7 +4032,10 @@ fn digest_resolved_local_inputs(
 ) -> Result<(InputDigest, InputDigest), WasmBuildError> {
     let validation_digest = digest_labeled_paths_composable(
         "wasm-source-inputs-v1",
-        &inputs.validation_inputs,
+        inputs
+            .validation_inputs
+            .iter()
+            .map(|(label, path)| (label.as_path(), path.as_path())),
         exclusions,
         cache,
     )
@@ -4077,16 +4059,16 @@ fn semantic_input_digest(
     exclusions: &[PathBuf],
     cache: &mut LabeledPathDigestCache,
 ) -> io::Result<InputDigest> {
-    let LocalInputFingerprint::Projected {
-        inputs: fingerprint_inputs,
-        workspace,
-    } = &inputs.fingerprint
-    else {
+    let Some(workspace) = inputs.workspace_projection else {
         return Ok(validation_digest);
     };
     let path_digest = digest_labeled_paths_composable(
         "wasm-source-inputs-v1",
-        fingerprint_inputs,
+        inputs
+            .validation_inputs
+            .iter()
+            .filter(|(label, _)| !is_broad_workspace_input(label))
+            .map(|(label, path)| (label.as_path(), path.as_path())),
         exclusions,
         cache,
     )?;

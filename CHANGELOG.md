@@ -6,6 +6,45 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.4] - 2026-10-04 - Simpler snapshot capture and artifact input ownership
+
+### Changed
+
+- Snapshot capture owns duplicate validation and deterministic canister ordering
+  in one shared preflight step. Both capture APIs validate the complete input
+  before making management calls, without separate validation helpers or
+  temporary sender vectors. Explicit senders still receive exactly one attempt;
+  controller capture retains its ordered fallback attempts.
+- Failed snapshot capture transfers its partial snapshot set to rollback,
+  avoiding snapshot-ID copies that had no remaining consumer. Cleanup still
+  attempts every captured snapshot and retains rejection and panic diagnostics.
+- Wasm input discovery keeps one authoritative path list. Semantic hashing
+  filters a borrowed view of that list instead of storing a copied subset and
+  a separate fingerprint-mode wrapper. Conservative fallback for workspace-root
+  and unsupported package projections is preserved.
+- Resolved Cargo input revalidation hashes borrowed labels and paths directly,
+  removing another temporary list of owned copies. Full raw-input mutation
+  guards, native path ordering, exclusions, semantic digests, and exact cache
+  identities retain their existing behavior.
+- Public APIs and persisted layouts are unchanged. Repository-owned format
+  identifiers remain `v1`; existing `0.14` callers need no migration. No
+  downstream suite speedup has been measured for these changes.
+
+### Testing
+
+- Seven focused live PocketIC 16 checks and one funding-policy unit check pass.
+  Coverage includes duplicate rejection before capture, deterministic first
+  failure, explicit-sender rejection without fallback, controller fallback
+  order, partial-capture rollback, explicit restore funding, and reuse through
+  both multi-canister and standalone pools. Public behavior checks replace the
+  removed private validation-helper tests.
+- Six digest checks and seven artifact-input checks pass, covering exact native
+  digest semantics, relevant exclusions, semantic workspace projection and
+  conservative fallback, source revalidation, warm-hit source races, batched
+  resolution, and transactional raw-input guards.
+- Targeted Clippy, formatting, and diff checks pass; full pre-push validation
+  remains maintainer-owned.
+
 ## [0.14.3] - 2026-10-04 - Leaner benchmark processing and cache finalization
 
 ### Changed
