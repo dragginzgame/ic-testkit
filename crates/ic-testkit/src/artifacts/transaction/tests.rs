@@ -751,26 +751,56 @@ fn import_helper_and_debug_output_do_not_expose_identity_values() {
 }
 
 #[test]
-fn undeclared_staging_output_rejects_the_transaction() {
+fn undeclared_output_names_reject_staging_and_cached_entries() {
     let root = unique_temp_directory("undeclared-output");
     let input = root.join("input");
     fs::write(&input, b"input").expect("write input");
     let spec = ArtifactCacheSpec::new(&root.join("cache"), "extra", "recipe/v1")
         .with_input("input", &input)
         .with_output("output", &root.join("output"));
-    let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());
-    fs::write(transaction.output_path("output").unwrap(), b"declared")
-        .expect("write declared output");
-    fs::write(
-        transaction.staging_directory().join("outputs/extra"),
-        b"undeclared",
-    )
-    .expect("write undeclared output");
+    let names = [
+        "extra",
+        "0001.artifact",
+        "+0000.artifact",
+        "00000.artifact",
+        "0.artifact",
+        "184467440737095516160.artifact",
+    ]
+    .into_iter()
+    .map(OsString::from);
+    #[cfg(unix)]
+    let names = {
+        use std::os::unix::ffi::OsStringExt as _;
+        names.chain([OsString::from_vec(b"0000.artifact\xff".to_vec())])
+    };
+    for name in names {
+        let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());
+        fs::write(transaction.output_path("output").unwrap(), b"declared")
+            .expect("write declared output");
+        let extra = transaction.staging_directory().join("outputs").join(&name);
+        fs::write(&extra, b"undeclared").expect("write undeclared staged output");
+        let staging = transaction.staging_directory().to_owned();
+        let error = transaction
+            .commit()
+            .expect_err("reject undeclared staged output");
+        assert!(
+            matches!(error, ArtifactCacheError::InvalidOutputs { outputs }
+            if outputs == [("<undeclared>".to_owned(), extra)])
+        );
+        assert!(!staging.exists());
 
-    assert!(matches!(
-        transaction.commit(),
-        Err(ArtifactCacheError::InvalidOutputs { .. })
-    ));
+        let outcome = build_output(&spec, b"declared");
+        let entry = entry_directory(&namespace_directory(&spec), outcome.record().key());
+        drop(outcome);
+        fs::write(entry.join("outputs").join(&name), b"undeclared")
+            .expect("write undeclared cached output");
+        let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());
+        assert!(
+            !entry.exists(),
+            "invalid cached name {name:?} must force rebuilding"
+        );
+        transaction.abort().unwrap();
+    }
     fs::remove_dir_all(root).expect("remove undeclared-output test directory");
 }
 

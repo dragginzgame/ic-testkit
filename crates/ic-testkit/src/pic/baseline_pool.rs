@@ -619,7 +619,15 @@ impl CanisterRestoreReceipt {
         baseline: &CachedPocketIcBaseline<M>,
         cycle_policy: CycleResetPolicy,
     ) -> Result<Self, BaselinePoolContractError> {
-        Self::try_new(baseline.snapshot_canister_ids(), cycle_policy)
+        if baseline.snapshot_count() == 0 {
+            return Err(BaselinePoolContractError::EmptyCanisterSet);
+        }
+        // Capture owns duplicate validation and deterministic ordering. The
+        // immutable baseline can supply that checked set without rebuilding it.
+        Ok(Self {
+            canister_ids: baseline.snapshot_canister_ids().collect(),
+            cycle_policy,
+        })
     }
 
     /// Restored canister ids in deterministic order.
@@ -1297,6 +1305,26 @@ mod tests {
             FixtureRecipeId::try_new("  "),
             Err(BaselinePoolContractError::EmptyRecipeIdentity)
         ));
+    }
+
+    #[test]
+    fn caller_restore_receipts_validate_and_order_canister_ids() {
+        let first = Principal::from_slice(&[1]);
+        let second = Principal::from_slice(&[2]);
+        let policy = CycleResetPolicy::TopUpTo(123);
+        let receipt = CanisterRestoreReceipt::try_new([second, first], policy).unwrap();
+        assert_eq!(receipt.canister_ids(), [first, second]);
+        assert_eq!(receipt.cycle_policy(), policy);
+        assert_eq!(
+            CanisterRestoreReceipt::try_new([], policy),
+            Err(BaselinePoolContractError::EmptyCanisterSet),
+        );
+        assert_eq!(
+            CanisterRestoreReceipt::try_new([second, first, second], policy),
+            Err(BaselinePoolContractError::DuplicateCanisterId {
+                canister_id: second,
+            }),
+        );
     }
 
     #[test]

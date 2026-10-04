@@ -473,13 +473,14 @@ fn semantic_workspace_projection_tracks_selected_dependencies_and_profiles() {
 fn semantic_package_identity_uses_selected_registry_lock_checksum() {
     let root = unique_temp_directory("semantic-registry-lock-identity");
     let source = "registry+https://example.invalid/index";
+    let package_id = format!("{source}#dependency@1.2.3");
     let package = MetadataPackage {
-        id: format!("{source}#dependency@1.2.3"),
-        name: "dependency".to_owned(),
-        version: "1.2.3".to_owned(),
+        id: &package_id,
+        name: "dependency",
+        version: "1.2.3",
         manifest_path: root.join("registry/dependency/Cargo.toml"),
         is_local: false,
-        source: Some(source.to_owned()),
+        source: Some(source),
         semantic_fields: Vec::new(),
     };
     let write_lock = |checksum: Option<&str>| {

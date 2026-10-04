@@ -6,6 +6,56 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.7] - 2026-10-04 - Borrowed Cargo metadata and leaner artifact validation
+
+### Changed
+
+- Cargo metadata parsing, package selection, dependency traversal, and semantic
+  projection borrow identifiers and strings from the authoritative metadata
+  document instead of copying them into each intermediate collection. Package
+  selection checks for zero, one, or multiple matches without collecting a
+  temporary match list. Dependency closure, feature isolation, malformed-input
+  errors, conservative fallback, and exact fingerprints retain their behavior.
+- Baseline-derived canister restore receipts collect the already sorted,
+  duplicate-checked snapshot IDs directly instead of rebuilding a set on every
+  restoration. Empty receipt sets are still rejected, and caller-supplied
+  receipts retain complete duplicate validation and deterministic ordering.
+- Artifact schema validation checks output names directly against the declared
+  output count and canonical filename formatter instead of rebuilding expected
+  filename sets during commit and cache lookup. Root-entry checks use borrowed
+  names. Strict filename spelling, undeclared-file rejection, regular-file
+  checks, complete failure diagnostics, and filesystem errors are preserved.
+- Unit and integration tests share one executable-fixture writer. Integration
+  fixtures now receive the same child-process writing and launch coordination
+  that prevents inherited writable script handles from causing intermittent
+  Linux "Text file busy" failures. The duplicate writer is removed; real Cargo
+  wrapper coverage and production command execution are preserved.
+- Public APIs and persisted layouts are unchanged. Repository-owned format
+  identifiers remain `v1`; existing `0.14` callers need no migration. No
+  downstream suite speedup has been measured for these changes.
+
+### Testing
+
+- Twelve targeted unit checks pass, covering metadata reuse, semantic workspace
+  projection and fallback, registry checksum identity, optional dependencies,
+  source mutation guards, indexed batch failures, executable resolution, and
+  caller-supplied receipt ordering and validation.
+- Ten artifact-validation unit checks pass, covering staged and cached
+  undeclared names, signed and noncanonical indices, integer overflow, native
+  non-UTF-8 names on Unix, complete output sets, malformed manifests, retention,
+  source mutation rejection, cleanup, and explicit empty-file validation.
+- Ten artifact/Wasm integration checks pass, covering feature isolation,
+  concurrent prepared readers, source-race rejection and invalidation,
+  transactional Cargo input guards, cold and warm artifact retention,
+  cross-process pruning and exact-build coordination, terminated consumers, and
+  partial batch success.
+- Six live PocketIC 16 baseline-pool checks pass, including exact derived
+  receipt equivalence, empty-set rejection, receipt mismatch recovery, capacity
+  overlap, explicit invalidation, failed recovery diagnostics, and 100
+  consecutive restores without reconstruction.
+- Targeted Clippy, formatting, diff, and source-package inclusion checks pass;
+  full pre-push validation remains maintainer-owned.
+
 ## [0.14.6] - 2026-10-04 - Shared build inputs and explicit pool state
 
 ### Changed

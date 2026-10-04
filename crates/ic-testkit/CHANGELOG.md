@@ -4,6 +4,41 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.7
+
+This patch release avoids Cargo metadata copies and repeated validation of
+baseline receipt IDs, simplifies artifact schema checks, and gives executable
+test fixtures one shared owner. Public APIs and persisted layouts are unchanged;
+existing `0.14` callers need no source migration. Repository-owned format
+identifiers remain `v1`.
+
+- Cargo metadata indexes, dependency traversal, and semantic projection borrow
+  identifiers and strings from the parsed document. Package selection no
+  longer collects a temporary match list. Feature isolation, malformed-input
+  diagnostics, conservative projection fallback, source guards, and exact
+  fingerprints are preserved.
+- Baseline-derived restore receipts reuse snapshot capture's deterministic
+  ordering and duplicate validation without rebuilding a set. Empty receipt
+  sets remain invalid; caller-supplied IDs still receive full validation.
+- Artifact validation checks canonical output names against the declared count
+  without rebuilding expected filename sets. Root-entry checks borrow allowed
+  names. Strict schema and filename rejection, regular-file checks, failure
+  diagnostics, filesystem errors, and persisted filenames are preserved.
+- Unit and integration tests use one executable-fixture writer. Child-process
+  writing and waiting prevent inherited writable script handles from causing
+  intermittent Linux "Text file busy" launches in integration fixtures too.
+  Real Cargo wrapper coverage and production command execution are unchanged.
+
+Twenty-two targeted unit checks, ten artifact/Wasm integration checks, and six
+live PocketIC 16 baseline-pool checks pass. Coverage includes concurrent prepared
+readers, source-race invalidation, cross-process artifact retention and exact
+build coordination, staged and cached schema rejection, native non-UTF-8 names
+on Unix, receipt validation and recovery, and 100 consecutive restores without
+reconstruction.
+Targeted Clippy, formatting, diff, and source-package inclusion checks also pass.
+No downstream suite speedup is claimed; full pre-push validation remains
+maintainer-owned.
+
 ## 0.14.6
 
 This patch release shares immutable Cargo input lists, simplifies batch and

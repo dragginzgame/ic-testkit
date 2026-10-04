@@ -30,6 +30,7 @@ use super::{
 
 const ARTIFACT_CACHE_FORMAT: &str = "ic-testkit-artifact-set-v1";
 const MANIFEST_FILE: &str = "manifest.ic-testkit";
+const OUTPUT_FILE_SUFFIX: &str = ".artifact";
 const MAX_PREPARATION_RETRIES: usize = 3;
 static STAGING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1443,7 +1444,7 @@ fn inspect_complete_output_set(
     invalid.extend(
         undeclared_child_paths(
             root,
-            &BTreeSet::from([OsString::from("outputs")]),
+            |name| name == "outputs",
             "read artifact staging directory",
         )?
         .into_iter()
@@ -1487,20 +1488,23 @@ fn undeclared_output_paths(
     output_count: usize,
 ) -> Result<Vec<PathBuf>, ArtifactCacheError> {
     let output_directory = root.join("outputs");
-    let expected = (0..output_count)
-        .map(format_output_index)
-        .map(OsString::from)
-        .collect::<BTreeSet<_>>();
     undeclared_child_paths(
         &output_directory,
-        &expected,
+        |name| {
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            name.strip_suffix(OUTPUT_FILE_SUFFIX)
+                .and_then(|index| index.parse::<usize>().ok())
+                .is_some_and(|index| index < output_count && name == format_output_index(index))
+        },
         "read artifact output directory",
     )
 }
 
 fn undeclared_child_paths(
     directory: &Path,
-    expected: &BTreeSet<OsString>,
+    is_expected: impl Fn(&OsStr) -> bool,
     operation: &'static str,
 ) -> Result<Vec<PathBuf>, ArtifactCacheError> {
     let entries = fs::read_dir(directory).map_err(|source| ArtifactCacheError::Io {
@@ -1515,7 +1519,7 @@ fn undeclared_child_paths(
             path: directory.to_owned(),
             source,
         })?;
-        if !expected.contains(&entry.file_name()) {
+        if !is_expected(&entry.file_name()) {
             undeclared.push(entry.path());
         }
     }
@@ -1523,13 +1527,19 @@ fn undeclared_child_paths(
 }
 
 fn cache_entry_root_is_valid(root: &Path) -> Result<bool, ArtifactCacheError> {
-    let expected = BTreeSet::from([
-        OsString::from("outputs"),
-        OsString::from(MANIFEST_FILE),
-        OsString::from(LAST_USED_FILE),
-        OsString::from(super::cache_fs::RETENTION_LOCK_FILE),
-    ]);
-    if !undeclared_child_paths(root, &expected, "read artifact cache entry")?.is_empty() {
+    let expected = [
+        "outputs",
+        MANIFEST_FILE,
+        LAST_USED_FILE,
+        super::cache_fs::RETENTION_LOCK_FILE,
+    ];
+    if !undeclared_child_paths(
+        root,
+        |name| expected.iter().any(|expected| name == *expected),
+        "read artifact cache entry",
+    )?
+    .is_empty()
+    {
         return Ok(false);
     }
     if !is_plain_directory(
@@ -1796,7 +1806,7 @@ fn staged_output_path(root: &Path, index: usize) -> PathBuf {
 }
 
 fn format_output_index(index: usize) -> String {
-    format!("{index:04}.artifact")
+    format!("{index:04}{OUTPUT_FILE_SUFFIX}")
 }
 
 fn namespace_directory(spec: &ArtifactCacheSpec) -> PathBuf {

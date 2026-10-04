@@ -404,6 +404,13 @@ fn multi_canister_pool_restores_and_explicitly_rebuilds_one_slot() {
     assert!(timings.restore().is_none());
     assert!(timings.validation().is_some());
     assert!(matches!(outcome, BaselinePoolOutcome::Built { .. }));
+    let policy = CycleResetPolicy::TopUpTo(123);
+    let receipt = CanisterRestoreReceipt::try_from_baseline(&baseline, policy)
+        .expect("derive checked baseline receipt");
+    let expected =
+        CanisterRestoreReceipt::try_new(baseline.metadata().canister_ids.into_iter().rev(), policy)
+            .unwrap();
+    assert_eq!(receipt, expected);
     let first_instance = baseline.pocket_ic().instance_id();
     let canister_ids = baseline.metadata().canister_ids;
     baseline
@@ -448,6 +455,17 @@ fn multi_canister_pool_restores_and_explicitly_rebuilds_one_slot() {
     assert_ne!(baseline.pocket_ic().instance_id(), first_instance);
     assert_eq!(controls.builds.load(Ordering::SeqCst), 2);
     assert_eq!(controls.built_validations.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn restore_receipt_rejects_an_empty_captured_baseline() {
+    let baseline = CachedPocketIcBaseline::capture(PocketIc::new(), Principal::anonymous(), [], ())
+        .expect("empty snapshot capture remains valid");
+    assert_eq!(baseline.snapshot_count(), 0);
+    assert_eq!(
+        CanisterRestoreReceipt::try_from_baseline(&baseline, CycleResetPolicy::PreserveCurrent),
+        Err(BaselinePoolContractError::EmptyCanisterSet),
+    );
 }
 
 #[test]
