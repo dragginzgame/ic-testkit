@@ -24,12 +24,19 @@ format identifiers remain `v1`.
   measured capacity tradeoffs are documented in the repository's
   [fixture benchmark guide](https://github.com/dragginzgame/ic-testkit/blob/main/docs/fixture-reuse-benchmark.md).
   This tooling is outside ordinary tests/CI.
+- Observed Cargo subprocess tests read their fixtures through the existing
+  system shell, avoiding intermittent Linux "Text file busy" launch failures
+  under parallel load. Output forwarding, captured diagnostics, exit events,
+  and host build-progress notifications retain real subprocess coverage;
+  production Cargo execution is unchanged.
 
 Seven targeted PocketIC checks and four artifact handoff checks pass, covering
 reuse, capacity, restore failures, panic recovery, cloned records, cross-process
 retention, pruning, and terminated consumers. Two Python sampler checks,
 targeted Clippy, and formatting also pass. The measurements compare fixture
 strategies; they do not establish a library-version or downstream suite speedup.
+Five focused output/progress checks pass, along with 500 parallel repetitions
+of the two affected subprocess tests (1,000 test executions).
 
 ## 0.14.1
 

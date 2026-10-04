@@ -1048,14 +1048,15 @@ fn exact_cache_lock_wait_emits_phase_aware_heartbeats() {
 #[cfg(unix)]
 fn observed_cargo_build_forwards_raw_output_and_quiet_heartbeats() {
     let root = unique_temp_directory("observed-cargo-progress");
-    let cargo = root.join("observed-cargo.sh");
+    // Cargo's first argument is `build`; let an existing shell read that fixture
+    // instead of executing a freshly written file, which can fail with ETXTBSY.
+    let script = root.join("build");
     let release = root.join("release-cargo");
     // Keep the producer alive until the observer actually sees a quiet interval.
     // A fixed sleep can finish before output readers are scheduled under load.
-    write_executable_script(
-        &cargo,
-        r#"#!/bin/sh
-set -eu
+    fs::write(
+        &script,
+        r#"set -eu
 printf 'observed-stdout'
 printf 'observed-stderr' >&2
 attempts=0
@@ -1068,9 +1069,10 @@ while [ ! -f "$IC_TESTKIT_OBSERVED_CARGO_RELEASE" ]; do
     sleep 0.01
 done
 "#,
-    );
+    )
+    .expect("write observed Cargo fixture");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
-        .with_cargo_program(&cargo)
+        .with_cargo_program("/bin/sh")
         .with_extra_env([("IC_TESTKIT_OBSERVED_CARGO_RELEASE", release.as_os_str())]);
     let mut events = Vec::new();
     {
@@ -1179,13 +1181,14 @@ fn observed_output_reader_propagates_permanent_errors() {
 #[cfg(unix)]
 fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     let root = unique_temp_directory("observed-cargo-failure");
-    let cargo = root.join("failing-cargo.sh");
-    write_executable_script(
-        &cargo,
-        "#!/bin/sh\nprintf 'failure-stdout'\nprintf 'failure-stderr' >&2\nexit 23\n",
-    );
+    // `sh build` reads the fixture without executing the freshly written file.
+    fs::write(
+        root.join("build"),
+        "printf 'failure-stdout'\nprintf 'failure-stderr' >&2\nexit 23\n",
+    )
+    .expect("write failing observed Cargo fixture");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
-        .with_cargo_program(&cargo);
+        .with_cargo_program("/bin/sh");
     let mut events = Vec::new();
     let error = {
         let mut observer = |event| events.push(event);

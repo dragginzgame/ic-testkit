@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Public library APIs and persisted layouts are unchanged. Repository-owned
   format identifiers remain `v1`; existing `0.14` callers need no migration.
 
+### Fixed
+
+- Observed Cargo output tests use the existing system shell to read their
+  fixture scripts, avoiding intermittent Linux `ExecutableFileBusy` / "Text
+  file busy" errors when launching freshly written executables under parallel
+  test load. Raw output, failure diagnostics, exit events, and quiet build
+  progress notifications remain tested through real subprocesses; production
+  Cargo execution is unchanged.
+
 ### Documentation
 
 - Documents the benchmark workload, measurement boundaries, memory tradeoffs,
@@ -48,6 +57,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   Two focused Python checks verify process-tree RSS boundaries and kernel stat
   parsing. Targeted Clippy and formatting checks pass; full pre-push validation
   remains maintainer-owned.
+- Five focused output/progress checks pass. The two affected subprocess tests
+  also pass 500 repeated runs with eight concurrent runners (1,000 test
+  executions), after reproducing the executable-file race before the fix.
 
 ## [0.14.1] - 2026-10-03 - Leaner artifact validation and pool acquisition
 
