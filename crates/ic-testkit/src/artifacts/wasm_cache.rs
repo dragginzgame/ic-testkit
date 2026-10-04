@@ -31,7 +31,7 @@ use super::{
     digest::{
         FileDigest, InputDigest, InputHasher, LabeledPathDigestCache, copy_file_atomic,
         destination_matches_bytes, destination_matches_digest, digest_bytes, digest_file,
-        digest_labeled_paths_composable, os_bytes, write_atomic,
+        digest_labeled_paths_composable, os_bytes, read_stamp_with_limit, write_atomic,
     },
     wasm::wasm_path,
 };
@@ -4857,6 +4857,10 @@ fn validated_artifact_set(
     artifacts: &[PathBuf],
     fingerprint: InputDigest,
 ) -> Option<Vec<FileDigest>> {
+    let header = artifact_stamp_header(fingerprint);
+    // Both digests have a fixed encoded width. Use the writer's format to bound
+    // the read without hashing artifact bytes before rejecting a stale stamp.
+    let stamp_len = artifact_stamp_contents(fingerprint, fingerprint).len();
     artifacts
         .iter()
         .map(|artifact| {
@@ -4864,14 +4868,14 @@ fn validated_artifact_set(
             if !metadata.is_file() || metadata.len() == 0 {
                 return None;
             }
-            let stamp = fs::read_to_string(artifact_stamp_path(artifact)).ok()?;
-            // A different build cannot be a hit. Inspect its small header before
-            // reading the Wasm bytes; then verify the complete exact stamp.
-            if !stamp.starts_with(&artifact_stamp_header(fingerprint)) {
+            let stamp = read_stamp_with_limit(&artifact_stamp_path(artifact), stamp_len).ok()??;
+            // An incomplete stamp or different build cannot be a hit. Reject it
+            // before reading the Wasm bytes; then verify the complete exact stamp.
+            if stamp.len() != stamp_len || !stamp.starts_with(&header) {
                 return None;
             }
             let info = digest_file("wasm-artifact-v1", artifact).ok()?;
-            (stamp == artifact_stamp_contents(fingerprint, &info)).then_some(info)
+            (stamp == artifact_stamp_contents(fingerprint, info.digest)).then_some(info)
         })
         .collect()
 }
@@ -4898,11 +4902,10 @@ fn artifact_stamp_header(fingerprint: InputDigest) -> String {
     format!("{CACHE_FORMAT_VERSION}\nbuild-sha256:{fingerprint}\n")
 }
 
-fn artifact_stamp_contents(fingerprint: InputDigest, info: &FileDigest) -> String {
+fn artifact_stamp_contents(fingerprint: InputDigest, artifact_digest: InputDigest) -> String {
     format!(
-        "{}artifact-sha256:{}\n",
+        "{}artifact-sha256:{artifact_digest}\n",
         artifact_stamp_header(fingerprint),
-        info.digest,
     )
 }
 
@@ -4913,7 +4916,7 @@ fn write_artifact_stamp(
     preserve_matching: bool,
 ) -> Result<(), WasmBuildError> {
     let stamp_path = artifact_stamp_path(artifact);
-    let stamp = artifact_stamp_contents(fingerprint, info);
+    let stamp = artifact_stamp_contents(fingerprint, info.digest);
     if preserve_matching && destination_matches_bytes(&stamp_path, stamp.as_bytes()) {
         return Ok(());
     }

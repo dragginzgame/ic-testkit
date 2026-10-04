@@ -6,6 +6,37 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.1] - 2026-10-04 - Transport recovery and bounded freshness checks
+
+### Fixed
+
+- PocketIC transport classification follows the contained error inside
+  `std::io::Error`, including nested wrappers. Contextual typed Candid failures
+  now retain their transport classification when callers wrap them for reporting.
+- Diagnostic failures already classified as `InstanceUnavailable` are recognized
+  by the shared transport classifier, both directly and through error wrappers.
+  Controller rejections, decode failures, and unrelated application panics remain
+  distinct from transport failures.
+- Watched-input freshness and Wasm-cache validation use one bounded stamp
+  reader, reading at most the expected stamp length plus one byte. Oversized
+  sidecars are stale without reading or allocating their full contents. Exact
+  matching, artifact-content verification, and reconstruction from verified
+  public outputs remain intact. Watched-input checks preserve missing-stamp
+  handling, I/O errors, and `InvalidData` for invalid UTF-8 within the size limit.
+  Truncated Wasm stamps are rejected before scanning artifact contents.
+
+### Testing
+
+- Both classification gaps were reproduced before fixing. Focused unit tests,
+  a refused-server subprocess check, and live PocketIC 16 diagnostic authorization
+  checks pass. Rust 1.88 compilation, Clippy, documentation, formatting, and diff
+  checks pass; full pre-push validation remains maintainer-owned.
+- Focused artifact checks cover missing, truncated, mismatched, invalid UTF-8,
+  and oversized stamps, plus normal stamp publication and input changes.
+  Wasm-cache recovery from an oversized stamp reuses verified public outputs
+  without running Cargo; warm publication and copied-byte verification are checked.
+- Public APIs, dependencies, and persisted cache formats are unchanged.
+
 ## [0.15.0] - 2026-10-04 - Runtime fixture capacity and one reset-policy model
 
 ### Changed

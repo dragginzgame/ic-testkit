@@ -1,7 +1,7 @@
 use candid::Principal;
 use ic_testkit::pic::{
     CanisterDiagnosticFailure, CanisterDiagnosticsRequest, LabeledCanisterDiagnosticsRequest,
-    PocketIc, PocketIcDiagnosticsExt,
+    PocketIc, PocketIcDiagnosticsExt, is_dead_pocket_ic_transport_error,
 };
 use pocket_ic::CanisterSettings;
 
@@ -56,6 +56,12 @@ fn diagnostics_use_independent_exact_senders_and_preserve_both_outcomes() {
         denied.logs(),
         Err(CanisterDiagnosticFailure::Rejected(_))
     ));
+    for error in [denied.status().unwrap_err(), denied.logs().unwrap_err()] {
+        assert!(
+            !is_dead_pocket_ic_transport_error(error),
+            "controller rejection must not be interpreted as a dead transport",
+        );
+    }
     assert!(batch.entries()[1].is_success());
     assert_eq!(batch.failures().count(), 1);
 }

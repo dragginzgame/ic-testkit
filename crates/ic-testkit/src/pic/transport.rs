@@ -63,17 +63,21 @@ pub(super) fn panic_is_dead_instance_transport(payload: &(dyn Any + Send)) -> bo
         .is_some_and(is_dead_instance_transport_error)
 }
 
-/// Recognize transport failures in PocketIC's unstructured request errors.
+/// Recognize PocketIC transport failures in typed causes and request-error text.
 ///
 /// The complete error source chain is inspected so a recipe can classify its
 /// own wrapper error as [`super::RebuildReason::DeadPocketIcTransport`]. This
-/// requires a reqwest debug error with a PocketIC instance URL and a recognized
-/// transport source, optionally prefixed by PocketIC's HTTP panic context.
-/// Generic application messages and bare I/O error kinds do not qualify.
-/// Testkit [`super::CandidCallError`] and [`PocketIcOperationError`] causes
-/// retain their transport classification through contextual display wrappers.
+/// preserves the classification already captured by testkit's structured errors.
+/// Testkit [`super::CandidCallError`], [`super::CanisterDiagnosticFailure`], and
+/// [`PocketIcOperationError`] causes retain their transport classification through
+/// contextual display wrappers, including nested [`std::io::Error`] values.
 /// Snapshot and installation failures expose their operation cause through
 /// the error source chain.
+///
+/// For other errors, message recognition requires a reqwest debug error with a
+/// PocketIC instance URL and a recognized transport source, optionally prefixed
+/// by PocketIC's HTTP panic context. Generic application messages and bare I/O
+/// error kinds do not qualify.
 ///
 /// Use this only for errors originating in a PocketIC operation. This is a
 /// message-based heuristic, not proof that the server or instance has died;
@@ -95,10 +99,26 @@ pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'stati
         {
             return true;
         }
+        if matches!(
+            candidate.downcast_ref::<super::CanisterDiagnosticFailure>(),
+            Some(super::CanisterDiagnosticFailure::InstanceUnavailable { .. })
+        ) {
+            return true;
+        }
         if is_dead_instance_transport_error(&candidate.to_string()) {
             return true;
         }
-        current = candidate.source();
+        // io::Error::source delegates to the contained error's source, skipping
+        // the contained error itself. Inspect it before following its causes so
+        // contextual errors keep their own structured classification.
+        current = if let Some(inner) = candidate
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+        {
+            Some(inner)
+        } else {
+            candidate.source()
+        };
     }
     false
 }
@@ -301,5 +321,30 @@ mod tests {
         assert!(is_dead_pocket_ic_transport_error(&error));
         let error = super::super::CandidCallError::decode(context, 0, "channel closed");
         assert!(!is_dead_pocket_ic_transport_error(&error));
+    }
+
+    #[test]
+    fn io_wrappers_preserve_contextual_call_error_kinds() {
+        let context = super::super::CandidCallContext::new(
+            "query_call",
+            candid::Principal::anonymous(),
+            candid::Principal::anonymous(),
+            "get",
+        );
+        for (error, expected) in [
+            (
+                super::super::CandidCallError::transport(context.clone(), REFUSED),
+                true,
+            ),
+            (
+                super::super::CandidCallError::decode(context, 0, REFUSED),
+                false,
+            ),
+        ] {
+            let inner = std::io::Error::other(error);
+            assert_eq!(is_dead_pocket_ic_transport_error(&inner), expected);
+            let wrapped = WrapperError(std::io::Error::other(inner));
+            assert_eq!(is_dead_pocket_ic_transport_error(&wrapped), expected);
+        }
     }
 }

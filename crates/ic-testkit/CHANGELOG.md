@@ -4,6 +4,30 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.1
+
+This patch fixes transport recovery classification without changing public APIs,
+dependencies, or persisted cache formats. No consumer migration is required.
+
+- Typed Candid transport errors retain their classification through contextual
+  `std::io::Error` wrappers, including nested wrappers.
+- `CanisterDiagnosticFailure::InstanceUnavailable` is recognized by
+  `is_dead_pocket_ic_transport_error`, directly and through error wrappers.
+  Diagnostic controller rejections, decode failures, and unrelated application
+  panics still do not qualify as transport failures.
+- Watched-input freshness and Wasm-cache validation share a bounded stamp reader.
+  Reads stop at the expected stamp length plus one byte; oversized stamps are
+  stale. Exact matching, Wasm content verification, and recovery from verified
+  public outputs remain intact. Watched-input checks preserve missing-stamp
+  handling, I/O errors, and `InvalidData` for invalid UTF-8 within the size limit.
+  Truncated Wasm stamps are rejected before scanning artifact contents. Stamp
+  formats remain `v1`.
+
+Focused unit and integration checks cover both reproduced failures, a refused
+server, live PocketIC 16 diagnostic authorization, and artifact stamp boundaries.
+Rust 1.88 compilation, Clippy, documentation, formatting, and diff checks pass.
+Full pre-push validation remains maintainer-owned.
+
 ## 0.15.0
 
 This minor release makes standalone fixture capacity configurable at runtime and

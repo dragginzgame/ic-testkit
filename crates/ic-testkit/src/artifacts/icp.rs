@@ -1,6 +1,6 @@
 use std::{ffi::OsString, fs, io, path::Path};
 
-use super::digest::{InputDigest, digest_labeled_paths, write_atomic};
+use super::digest::{InputDigest, digest_labeled_paths, read_stamp_with_limit, write_atomic};
 
 const WATCHED_INPUT_STAMP_VERSION: &str = "ic-testkit-watched-input-v1";
 
@@ -41,14 +41,18 @@ impl WatchedInputSnapshot {
     /// artifact has been produced successfully from this snapshot.
     /// Output bytes are not hashed; a replaced nonempty artifact can still
     /// carry the same matching input stamp.
+    /// Stamp reads are bounded by the expected stamp length plus one byte;
+    /// oversized stamps are stale. I/O errors and invalid UTF-8 in stamps within
+    /// that size limit are reported to the caller.
     pub fn artifact_is_fresh(self, artifact_path: &Path) -> io::Result<bool> {
         let metadata = fs::metadata(artifact_path)?;
         if !metadata.is_file() || metadata.len() == 0 {
             return Ok(false);
         }
 
-        match fs::read_to_string(watched_input_stamp_path(artifact_path)) {
-            Ok(stamp) => Ok(stamp == self.stamp_contents()),
+        let expected = self.stamp_contents();
+        match read_stamp_with_limit(&watched_input_stamp_path(artifact_path), expected.len()) {
+            Ok(stamp) => Ok(stamp.is_some_and(|contents| contents == expected)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         }
@@ -203,5 +207,56 @@ mod tests {
 
         let _ = fs::remove_dir_all(first_root);
         let _ = fs::remove_dir_all(second_root);
+    }
+
+    #[test]
+    fn artifact_freshness_rejects_malformed_and_oversized_stamps() {
+        let root = temp_workspace();
+        let artifact = root.join("artifact.wasm");
+        fs::write(root.join("Cargo.toml"), "workspace").expect("write watched input");
+        fs::write(&artifact, b"wasm").expect("write artifact");
+        let snapshot =
+            WatchedInputSnapshot::capture(&root, &["Cargo.toml"]).expect("capture watched inputs");
+        let stamp_path = super::watched_input_stamp_path(&artifact);
+        let expected = snapshot.stamp_contents();
+
+        assert!(!snapshot.artifact_is_fresh(&artifact).unwrap());
+        for contents in [
+            String::new(),
+            expected[..expected.len() - 1].to_owned(),
+            expected.replacen("sha256:", "sha257:", 1),
+            format!("{expected}\n"),
+        ] {
+            fs::write(&stamp_path, contents).expect("write malformed stamp");
+            assert!(!snapshot.artifact_is_fresh(&artifact).unwrap());
+        }
+
+        fs::write(&stamp_path, [0xff]).expect("write invalid UTF-8 stamp");
+        assert_eq!(
+            snapshot.artifact_is_fresh(&artifact).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData,
+        );
+
+        // A sparse oversized sidecar must not be allocated or read in full.
+        fs::write(&stamp_path, &expected).expect("write matching prefix");
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&stamp_path)
+            .expect("open oversized stamp")
+            .set_len(1024 * 1024 * 1024)
+            .expect("extend oversized stamp");
+        assert!(!snapshot.artifact_is_fresh(&artifact).unwrap());
+
+        snapshot.mark_artifact_fresh(&artifact).unwrap();
+        assert!(snapshot.artifact_is_fresh(&artifact).unwrap());
+        fs::remove_file(&stamp_path).expect("remove stamp");
+        fs::create_dir(&stamp_path).expect("replace stamp with unreadable directory");
+        assert!(snapshot.artifact_is_fresh(&artifact).is_err());
+        assert!(!icp_artifact_ready_for_build(
+            &root,
+            "artifact.wasm",
+            &["Cargo.toml"],
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 }

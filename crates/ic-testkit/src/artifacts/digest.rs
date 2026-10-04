@@ -153,6 +153,21 @@ pub(super) fn digest_file(domain: &str, path: &Path) -> io::Result<FileDigest> {
     })
 }
 
+/// Read a UTF-8 stamp without allocating or reading an oversized sidecar in full.
+/// An oversized stamp is stale; other read and decoding errors reach the caller.
+pub(super) fn read_stamp_with_limit(path: &Path, maximum_len: usize) -> io::Result<Option<String>> {
+    let mut contents = Vec::with_capacity(maximum_len + 1);
+    File::open(path)?
+        .take((maximum_len + 1) as u64)
+        .read_to_end(&mut contents)?;
+    if contents.len() > maximum_len {
+        return Ok(None);
+    }
+    String::from_utf8(contents)
+        .map(Some)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
 /// Only reuse an independent, caller-owned writable destination. The caller
 /// coordinates other writers and supplies a digest from a verified cache entry.
 pub(super) fn destination_matches_digest(

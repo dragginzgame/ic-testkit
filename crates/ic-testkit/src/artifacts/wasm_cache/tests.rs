@@ -174,6 +174,20 @@ fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
         fs::write(&stamp_path, invalid).expect("write invalid stamp");
         assert!(validated_artifact_set(&artifacts, fingerprint).is_none());
     }
+    fs::write(&stamp_path, [0xff]).expect("write invalid UTF-8 stamp");
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_none());
+
+    // A matching header must not turn an oversized sidecar into an unbounded read.
+    fs::write(&stamp_path, &stamp).expect("write matching stamp prefix");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&stamp_path)
+        .expect("open oversized stamp")
+        .set_len(1024 * 1024 * 1024)
+        .expect("extend oversized stamp");
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_none());
+    publish_artifact_stamps(&artifacts, fingerprint).expect("replace oversized stamp");
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_some());
     fs::remove_dir_all(root).expect("remove stamp fixture");
 }
 
@@ -1464,6 +1478,42 @@ fn failed_exact_entry_reconstruction_removes_partial_outputs() {
         "failed reconstruction must remove its partial entry"
     );
     fs::remove_dir_all(root).expect("remove failed reconstruction fixture");
+}
+
+#[test]
+#[cfg(unix)]
+fn oversized_wasm_cache_stamp_recovers_from_verified_public_outputs() {
+    use super::{artifact_stamp_path, build_wasm_canisters_cached, validated_artifact_set};
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, spec) = fake_wasm_build_spec("oversized-wasm-cache-stamp");
+    let cold = build_wasm_canisters_cached(&spec).expect("build cold artifact");
+    let fingerprint = cold.record().fingerprint();
+    let cached = cold.record().artifacts()[0].clone();
+    let original = fs::read(&cached).expect("read original artifact");
+    let stamp_path = artifact_stamp_path(&cached);
+    let stamp = fs::read(&stamp_path).expect("read original stamp");
+    // Release the retained entry before simulating external cache damage.
+    drop(cold);
+    fs::remove_file(&stamp_path).expect("remove read-only stamp");
+    fs::write(&stamp_path, stamp).expect("write matching stamp prefix");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&stamp_path)
+        .expect("open oversized stamp")
+        .set_len(1024 * 1024 * 1024)
+        .expect("extend oversized stamp");
+
+    let recovered = build_wasm_canisters_cached(&spec).expect("recover from public artifacts");
+    assert!(recovered.is_reused());
+    assert!(recovered.record().timings().cargo_build().is_none());
+    assert_eq!(
+        fs::read(&recovered.record().artifacts()[0]).unwrap(),
+        original
+    );
+    assert!(validated_artifact_set(recovered.record().artifacts(), fingerprint).is_some());
+    drop(recovered);
+    fs::remove_dir_all(root).expect("remove recovery fixture");
 }
 
 #[test]

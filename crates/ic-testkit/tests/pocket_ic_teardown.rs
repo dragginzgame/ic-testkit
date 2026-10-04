@@ -3,8 +3,9 @@
 
 use candid::Principal;
 use ic_testkit::pic::{
-    CandidCallErrorKind, CandidCallExt, CanisterInstallPhase, InstallSpec, PocketIc,
-    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig, StandaloneCanisterFixture,
+    CandidCallErrorKind, CandidCallExt, CanisterDiagnosticFailure, CanisterDiagnosticsRequest,
+    CanisterInstallPhase, InstallSpec, PocketIc, PocketIcBuilder, PocketIcBuilderExt,
+    PocketIcDiagnosticsExt, PocketIcStartupConfig, StandaloneCanisterFixture,
     is_dead_pocket_ic_transport_error,
 };
 use ic_testkit::pocket_ic::common::rest::{CreateInstanceResponse, RawCanisterId, Topology};
@@ -85,6 +86,27 @@ fn refused_instance_request_probe() {
         .expect_err("peer is gone");
     assert_eq!(error.kind(), CandidCallErrorKind::Transport);
     assert!(is_dead_pocket_ic_transport_error(&error));
+    let error = std::io::Error::other(error);
+    assert!(is_dead_pocket_ic_transport_error(&error));
+
+    let request = CanisterDiagnosticsRequest::new(
+        Principal::anonymous(),
+        Principal::anonymous(),
+        Principal::anonymous(),
+    );
+    let (_, status, logs) = pic.collect_canister_diagnostics(request).into_parts();
+    for error in [
+        status.expect_err("status peer is gone"),
+        logs.expect_err("log peer is gone"),
+    ] {
+        assert!(matches!(
+            error,
+            CanisterDiagnosticFailure::InstanceUnavailable { .. }
+        ));
+        assert!(is_dead_pocket_ic_transport_error(&error));
+        let error = std::io::Error::other(error);
+        assert!(is_dead_pocket_ic_transport_error(&error));
+    }
     drop(pic);
 }
 
