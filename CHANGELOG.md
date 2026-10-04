@@ -6,6 +6,45 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.3] - 2026-10-04 - Leaner benchmark processing and cache finalization
+
+### Changed
+
+- Benchmark pairing borrows input markers and grouping keys rather than copying
+  complete events into temporary stacks. Only the resulting spans and
+  diagnostics retain owned data; nested pairing, suite boundaries, and
+  deterministic diagnostic ordering are preserved.
+- Benchmark aggregation keeps group identity in its map key instead of also
+  storing it in each accumulator. Comparison and Markdown lookups borrow row
+  keys, and comparison removes a redundant deduplication pass. Overflow errors,
+  row ordering, missing-row handling, and duplicate-row precedence are unchanged.
+- Cold Wasm builds and reconstruction of missing exact-cache entries share one
+  finalization path. Successful entries are preserved; failures clean up partial
+  entries while retaining the original error, cleanup diagnostics, and timings.
+- Canister installation retains its existing label for failure diagnostics
+  without cloning it before every installation. Install failures still preserve
+  the original cause and caller-owned PocketIC instance.
+- Digest formatting writes hexadecimal directly to its destination instead of
+  constructing an intermediate string. The owned-string API uses the same
+  formatter; lowercase text, leading zeroes, and cache identities are unchanged.
+- Public APIs and persisted layouts are unchanged. Repository-owned format
+  identifiers remain `v1`; existing `0.14` callers need no migration. These
+  changes have no measured downstream suite speedup.
+
+### Testing
+
+- Twenty-five benchmark integration checks and one focused overflow check pass,
+  including owned diagnostics, suite isolation, comparison ordering, missing
+  rows, zero denominators, and duplicate-row precedence.
+- Three focused Wasm cleanup/reconstruction checks, four artifact handoff
+  checks, and two live PocketIC 16 install-failure checks pass. They cover partial
+  output cleanup, successful warm reconstruction, retained artifacts, and
+  preserved installation diagnostics and instance ownership.
+- Six digest checks and two stamp/manifest checks pass, covering exact
+  hexadecimal output, native filenames, exclusions, streaming copies, and
+  persisted artifact validation. Targeted Clippy, formatting, and Wasm compile
+  checks pass; full pre-push validation remains maintainer-owned.
+
 ## [0.14.2] - 2026-10-04 - Fixture reuse measurements and simpler ownership
 
 ### Added

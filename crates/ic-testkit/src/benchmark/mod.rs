@@ -560,25 +560,22 @@ pub fn parse_benchmark_events_from_captured_output(
 #[must_use]
 pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport {
     let mut report = BenchmarkSpanReport::default();
-    let mut open_starts: BTreeMap<(String, String), Vec<RawBenchmarkEvent>> = BTreeMap::new();
+    let mut open_starts: BTreeMap<(&str, &str), Vec<&RawBenchmarkEvent>> = BTreeMap::new();
 
     for event in events {
-        let key = (event.suite.clone(), event.span_label.clone());
+        let key = (event.suite.as_str(), event.span_label.as_str());
         match event.kind {
-            BenchmarkEventKind::Start => open_starts.entry(key).or_default().push(event.clone()),
+            BenchmarkEventKind::Start => open_starts.entry(key).or_default().push(event),
             BenchmarkEventKind::End => match open_starts.entry(key) {
                 Entry::Occupied(mut entry) => {
-                    if let Some(start) = entry.get_mut().pop() {
-                        if entry.get().is_empty() {
-                            entry.remove();
-                        }
-                        push_paired_span(&mut report, start, event.clone());
-                    } else {
-                        report.unpaired_markers.push(UnpairedBenchmarkMarker {
-                            event: event.clone(),
-                            kind: UnpairedBenchmarkMarkerKind::End,
-                        });
+                    let start = entry
+                        .get_mut()
+                        .pop()
+                        .expect("open marker stacks must remain nonempty");
+                    if entry.get().is_empty() {
+                        entry.remove();
                     }
+                    push_paired_span(&mut report, start, event);
                 }
                 Entry::Vacant(_) => report.unpaired_markers.push(UnpairedBenchmarkMarker {
                     event: event.clone(),
@@ -591,7 +588,7 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
     for starts in open_starts.into_values() {
         for event in starts {
             report.unpaired_markers.push(UnpairedBenchmarkMarker {
-                event,
+                event: event.clone(),
                 kind: UnpairedBenchmarkMarkerKind::Start,
             });
         }
@@ -620,7 +617,10 @@ pub fn aggregate_benchmark_spans(
     }
 
     Ok(BenchmarkAggregateReport {
-        rows: rows.into_values().map(AggregateBuilder::finish).collect(),
+        rows: rows
+            .into_iter()
+            .map(|((scope, span_label), builder)| builder.finish(scope, span_label))
+            .collect(),
     })
 }
 
@@ -631,27 +631,26 @@ pub fn compare_benchmark_aggregates(
 ) -> BenchmarkComparisonReport {
     let current_by_key = aggregate_rows_by_key(current);
     let previous_by_key = aggregate_rows_by_key(previous);
-    let mut keys = current_by_key.keys().cloned().collect::<Vec<_>>();
+    let mut keys = current_by_key.keys().copied().collect::<Vec<_>>();
 
     for key in previous_by_key.keys() {
         if !current_by_key.contains_key(key) {
-            keys.push(key.clone());
+            keys.push(*key);
         }
     }
 
     keys.sort();
-    keys.dedup();
 
     BenchmarkComparisonReport {
         rows: keys
             .into_iter()
             .map(|(scope, span_label)| {
-                let current_row = current_by_key.get(&(scope.clone(), span_label.clone()));
-                let previous_row = previous_by_key.get(&(scope.clone(), span_label.clone()));
+                let current_row = current_by_key.get(&(scope, span_label));
+                let previous_row = previous_by_key.get(&(scope, span_label));
                 let current_average = current_row.map(|row| row.average());
                 let previous_average = previous_row.map(|row| row.average());
                 BenchmarkComparisonRow {
-                    span_label,
+                    span_label: span_label.to_owned(),
                     current_runs: current_row.map(|row| row.runs),
                     previous_runs: previous_row.map(|row| row.runs),
                     instructions_avg_change_percent: compare_average(
@@ -670,7 +669,7 @@ pub fn compare_benchmark_aggregates(
                         current_average.map(|average| average.total_allocation),
                         previous_average.map(|average| average.total_allocation),
                     ),
-                    scope,
+                    scope: scope.clone(),
                 }
             })
             .collect(),
@@ -862,8 +861,8 @@ fn malformed(
 
 fn push_paired_span(
     report: &mut BenchmarkSpanReport,
-    start: RawBenchmarkEvent,
-    end: RawBenchmarkEvent,
+    start: &RawBenchmarkEvent,
+    end: &RawBenchmarkEvent,
 ) {
     if let Some(delta) = end.counters.checked_delta(start.counters) {
         report.spans.push(BenchmarkSpan {
@@ -877,8 +876,8 @@ fn push_paired_span(
         });
     } else {
         report.invalid_spans.push(InvalidBenchmarkSpan {
-            start,
-            end,
+            start: start.clone(),
+            end: end.clone(),
             reason: "end counter is lower than start counter".to_string(),
         });
     }
@@ -886,8 +885,6 @@ fn push_paired_span(
 
 #[derive(Clone, Debug)]
 struct AggregateBuilder {
-    scope: AggregateScope,
-    span_label: String,
     runs: u64,
     total: BenchmarkCounters,
     min: BenchmarkCounters,
@@ -896,10 +893,8 @@ struct AggregateBuilder {
 }
 
 impl AggregateBuilder {
-    fn new(scope: AggregateScope, span_label: &str, span: &BenchmarkSpan) -> Self {
+    const fn new(span: &BenchmarkSpan) -> Self {
         Self {
-            scope,
-            span_label: span_label.to_string(),
             runs: 1,
             total: span.delta,
             min: span.delta,
@@ -919,15 +914,15 @@ impl AggregateBuilder {
         Ok(())
     }
 
-    fn finish(self) -> BenchmarkAggregateRow {
+    const fn finish(self, scope: AggregateScope, span_label: String) -> BenchmarkAggregateRow {
         BenchmarkAggregateRow {
-            span_label: self.span_label,
+            span_label,
             runs: self.runs,
             total: self.total,
             min: self.min,
             max: self.max,
             peak_end: self.peak_end,
-            scope: self.scope,
+            scope,
         }
     }
 }
@@ -938,19 +933,17 @@ fn add_span_to_aggregate(
     span_label: &str,
     span: &BenchmarkSpan,
 ) -> Result<(), BenchmarkAggregateError> {
-    match rows.entry((scope.clone(), span_label.to_string())) {
-        Entry::Occupied(mut entry) => {
-            entry
-                .get_mut()
-                .push(span)
-                .map_err(|counter| BenchmarkAggregateError {
-                    span_label: span_label.to_string(),
-                    counter,
-                    scope,
-                })
-        }
+    match rows.entry((scope, span_label.to_string())) {
+        Entry::Occupied(mut entry) => entry.get_mut().push(span).map_err(|counter| {
+            let (scope, span_label) = entry.key();
+            BenchmarkAggregateError {
+                span_label: span_label.clone(),
+                counter,
+                scope: scope.clone(),
+            }
+        }),
         Entry::Vacant(entry) => {
-            entry.insert(AggregateBuilder::new(scope, span_label, span));
+            entry.insert(AggregateBuilder::new(span));
             Ok(())
         }
     }
@@ -969,9 +962,9 @@ fn averages(total: BenchmarkCounters, runs: u64) -> BenchmarkAverages {
 
 fn aggregate_rows_by_key(
     rows: &[BenchmarkAggregateRow],
-) -> BTreeMap<(AggregateScope, String), &BenchmarkAggregateRow> {
+) -> BTreeMap<(&AggregateScope, &str), &BenchmarkAggregateRow> {
     rows.iter()
-        .map(|row| ((row.scope.clone(), row.span_label.clone()), row))
+        .map(|row| ((&row.scope, row.span_label.as_str()), row))
         .collect()
 }
 
@@ -1139,7 +1132,7 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
         comparison
             .rows
             .iter()
-            .map(|row| ((row.scope.clone(), row.span_label.clone()), row))
+            .map(|row| ((&row.scope, row.span_label.as_str()), row))
             .collect::<BTreeMap<_, _>>()
     });
     let mut out = String::from(
@@ -1153,10 +1146,9 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
         .filter(|row| !row.is_all_suites())
     {
         let average = row.average();
-        let comparison = comparison_by_key.as_ref().and_then(|rows| {
-            rows.get(&(row.scope.clone(), row.span_label.clone()))
-                .copied()
-        });
+        let comparison = comparison_by_key
+            .as_ref()
+            .and_then(|rows| rows.get(&(&row.scope, row.span_label.as_str())).copied());
         let _ = writeln!(
             out,
             "| {} | {} | {} | {} | {} | {} |",
@@ -1317,9 +1309,7 @@ fn markdown_cell(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AggregateBuilder, AggregateScope, BenchmarkCounter, BenchmarkCounters, BenchmarkSpan,
-    };
+    use super::{AggregateBuilder, BenchmarkCounter, BenchmarkCounters, BenchmarkSpan};
 
     #[test]
     fn aggregate_run_count_overflow_is_rejected_without_changing_totals() {
@@ -1332,11 +1322,7 @@ mod tests {
             end: BenchmarkCounters::default(),
             delta: BenchmarkCounters::default(),
         };
-        let mut builder = AggregateBuilder::new(
-            AggregateScope::Suite(span.suite.clone()),
-            &span.span_label,
-            &span,
-        );
+        let mut builder = AggregateBuilder::new(&span);
         builder.runs = u64::MAX;
         assert_eq!(builder.push(&span), Err(BenchmarkCounter::Runs));
         assert_eq!(builder.runs, u64::MAX);

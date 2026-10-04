@@ -230,8 +230,7 @@ fn try_create_funded_and_install(
         )?;
     }
 
-    // Move the Wasm and init payload only after retaining failure context.
-    let label = spec.label.clone();
+    // Move the Wasm and init payload while retaining the label for failures.
     let install = catch_unwind(AssertUnwindSafe(|| {
         pocket_ic.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
     }));
@@ -256,7 +255,7 @@ fn try_create_funded_and_install(
         return Err(CanisterInstallError::new(
             CanisterInstallPhase::InstallCode,
             Some(canister_id),
-            label,
+            spec.label,
             source,
         ));
     }

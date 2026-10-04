@@ -3007,17 +3007,7 @@ fn ensure_exact_cache_entry(
         publish_artifact_stamps(&cached_artifacts, fingerprint)?;
         record_cache_entry_use(cache_entry)
     });
-    match result {
-        Ok(()) => {
-            incomplete.preserve();
-            Ok(())
-        }
-        Err(build_error) => Err(cleanup_failed_fingerprint_build(
-            build_error,
-            incomplete,
-            progress,
-        )),
-    }
+    finish_fingerprint_build(result, incomplete, progress)
 }
 
 fn build_wasm_cache_miss(
@@ -3217,11 +3207,11 @@ impl Drop for IncompleteBuildDirectory {
     }
 }
 
-fn finish_fingerprint_build(
-    result: Result<WasmBuildOutcome, WasmBuildError>,
+fn finish_fingerprint_build<T>(
+    result: Result<T, WasmBuildError>,
     incomplete_directory: IncompleteBuildDirectory,
     progress: &mut ProgressReporter<'_>,
-) -> Result<WasmBuildOutcome, WasmBuildError> {
+) -> Result<T, WasmBuildError> {
     match result {
         Ok(outcome) => {
             incomplete_directory.preserve();

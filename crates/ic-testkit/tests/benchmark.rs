@@ -4,10 +4,11 @@ use ic_testkit::benchmark::{
     BenchmarkAggregateReport, BenchmarkCounter, BenchmarkCounters, BenchmarkEventKind,
     BenchmarkEventSource, BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata,
     BenchmarkRunReport, BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation,
-    aggregate_benchmark_spans, benchmark_run_directory_name, compare_benchmark_aggregates,
-    find_latest_previous_run, format_marker, next_benchmark_run_directory, pair_benchmark_spans,
-    parse_benchmark_events, parse_benchmark_events_from_captured_output,
-    parse_benchmark_events_from_source, read_benchmark_run_metadata, write_benchmark_report_dir,
+    UnpairedBenchmarkMarkerKind, aggregate_benchmark_spans, benchmark_run_directory_name,
+    compare_benchmark_aggregates, find_latest_previous_run, format_marker,
+    next_benchmark_run_directory, pair_benchmark_spans, parse_benchmark_events,
+    parse_benchmark_events_from_captured_output, parse_benchmark_events_from_source,
+    read_benchmark_run_metadata, write_benchmark_report_dir,
 };
 use std::{fmt::Write as _, fs};
 use support::unique_temp_directory as unique_temp_dir;
@@ -186,6 +187,55 @@ ICTK|app/c:end|40|60|60|60
     assert_eq!(
         spans.invalid_spans[0].reason,
         "end counter is lower than start counter"
+    );
+}
+
+#[test]
+fn pairing_preserves_suite_boundaries_and_owned_diagnostics() {
+    let report = {
+        let mut parsed = parse_benchmark_events(
+            "ICTK|work:start|10|0|0|0\n\
+             ICTK|work:end|20|0|0|0\n\
+             ICTK|work:end|30|0|0|0\n\
+             ICTK|work:start|50|0|0|0\n\
+             ICTK|work:end|40|0|0|0\n\
+             ICTK|work:start|70|0|0|0\n\
+             ICTK|work:start|80|0|0|0\n",
+            &BenchmarkParserConfig::default(),
+        );
+        for (event, suite) in parsed
+            .events
+            .iter_mut()
+            .zip(["b", "a", "b", "a", "a", "b", "a"])
+        {
+            event.suite = suite.into();
+        }
+        pair_benchmark_spans(&parsed.events)
+    };
+
+    assert_eq!(report.spans.len(), 1);
+    assert_eq!(report.spans[0].suite, "b");
+    assert_eq!(report.spans[0].start_line, 1);
+    assert_eq!(report.spans[0].end_line, 3);
+    assert_eq!(report.spans[0].delta.instructions, 20);
+    assert_eq!(report.invalid_spans.len(), 1);
+    assert_eq!(report.invalid_spans[0].start.source_line, 4);
+    assert_eq!(report.invalid_spans[0].end.source_line, 5);
+    assert_eq!(
+        report
+            .unpaired_markers
+            .iter()
+            .map(|marker| (
+                marker.event.suite.as_str(),
+                marker.event.source_line,
+                marker.kind.clone()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("a", 2, UnpairedBenchmarkMarkerKind::End),
+            ("a", 7, UnpairedBenchmarkMarkerKind::Start),
+            ("b", 6, UnpairedBenchmarkMarkerKind::Start),
+        ],
     );
 }
 
@@ -494,6 +544,78 @@ ICTK|app/a:end|150|50|100|100
 
     assert_eq!(app.instructions_avg_change_percent, Some(50.0));
     assert_eq!(app.heap_bytes_avg_change_percent, Some(-50.0));
+}
+
+#[test]
+fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
+    let aggregate = |input| {
+        let parsed = parse_benchmark_events(
+            input,
+            &BenchmarkParserConfig {
+                suite_derivation: SuiteDerivation::Fixed("ALL".into()),
+                ..BenchmarkParserConfig::default()
+            },
+        );
+        aggregate_benchmark_spans(&pair_benchmark_spans(&parsed.events).spans).unwrap()
+    };
+    let previous = aggregate(
+        "ICTK|common:start|0|0|0|0\nICTK|common:end|100|0|0|0\n\
+         ICTK|previous:start|0|0|0|0\nICTK|previous:end|50|0|0|0\n",
+    );
+    let mut current = aggregate(
+        "ICTK|common:start|0|0|0|0\nICTK|common:end|150|0|0|0\n\
+         ICTK|current:start|0|0|0|0\nICTK|current:end|75|0|0|0\n",
+    );
+    current.rows.reverse();
+    let mut duplicate = current
+        .rows
+        .iter()
+        .find(|row| !row.is_all_suites() && row.span_label == "common")
+        .unwrap()
+        .clone();
+    duplicate.total.instructions = 300;
+    current.rows.push(duplicate);
+    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows);
+
+    assert_eq!(
+        comparison
+            .rows
+            .iter()
+            .map(|row| (row.is_all_suites(), row.suite(), row.span_label.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (false, "ALL", "common"),
+            (false, "ALL", "current"),
+            (false, "ALL", "previous"),
+            (true, "ALL", "common"),
+            (true, "ALL", "current"),
+            (true, "ALL", "previous"),
+        ],
+    );
+    assert_eq!(
+        comparison.rows[0].instructions_avg_change_percent,
+        Some(200.0)
+    );
+    assert_eq!(
+        comparison.rows[3].instructions_avg_change_percent,
+        Some(50.0)
+    );
+    for row in &comparison.rows {
+        assert_eq!(row.heap_bytes_avg_change_percent, None);
+        match row.span_label.as_str() {
+            "current" => {
+                assert_eq!(row.current_runs, Some(1));
+                assert_eq!(row.previous_runs, None);
+                assert_eq!(row.instructions_avg_change_percent, None);
+            }
+            "previous" => {
+                assert_eq!(row.current_runs, None);
+                assert_eq!(row.previous_runs, Some(1));
+                assert_eq!(row.instructions_avg_change_percent, None);
+            }
+            _ => {}
+        }
+    }
 }
 
 #[test]

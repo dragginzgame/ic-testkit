@@ -4,6 +4,33 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.3
+
+This patch release simplifies benchmark processing and Wasm cache finalization.
+Public APIs and persisted layouts are unchanged; existing `0.14` callers need
+no source migration. Repository-owned format identifiers remain `v1`.
+
+- Benchmark pairing borrows markers until constructing owned spans or
+  diagnostics. Aggregation stores group identity only in map keys, and
+  comparison and Markdown lookups borrow existing row keys. Nested pairing,
+  suite boundaries, deterministic ordering, overflow rejection, missing rows,
+  and duplicate-row precedence retain their existing behavior.
+- Cold builds and missing exact-cache reconstruction use one success/failure
+  finalization path. Successful entries survive, incomplete entries are cleaned
+  up, and original errors, cleanup diagnostics, and timings are preserved.
+- Canister installation moves the existing label into failure diagnostics
+  instead of cloning it before every install. Original causes and caller-owned
+  PocketIC instances remain available after failures.
+- Digest text has one hexadecimal formatter that writes directly to its
+  destination. The owned-string API and persisted stamps, manifests, and cache
+  paths keep the same lowercase, zero-padded representation.
+
+Twenty-five benchmark integration checks, one overflow check, three Wasm
+cleanup/reconstruction checks, four artifact handoff checks, two live PocketIC
+16 install checks, six digest checks, and two stamp/manifest checks pass.
+Targeted Clippy, formatting, and Wasm compile checks also pass. No downstream
+suite speedup is claimed; full pre-push validation remains maintainer-owned.
+
 ## 0.14.2
 
 This patch release simplifies fixture and artifact ownership and adds opt-in

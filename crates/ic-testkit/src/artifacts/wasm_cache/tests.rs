@@ -1263,6 +1263,65 @@ fn failed_build_removes_its_incomplete_fingerprint_directory() {
 }
 
 #[test]
+fn failed_exact_entry_reconstruction_removes_partial_outputs() {
+    use super::ensure_exact_cache_entry;
+    use crate::artifacts::digest::digest_bytes;
+
+    let root = unique_temp_directory("failed-exact-entry-reconstruction");
+    let entry = root.join("cache-entry");
+    let sources = [root.join("first.wasm"), root.join("missing.wasm")];
+    fs::write(&sources[0], b"\0asm\x01\0\0\0").expect("write first source artifact");
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["first", "missing"], "debug");
+    let mut progress = ProgressReporter::silent();
+    let error = ensure_exact_cache_entry(
+        &spec,
+        &sources,
+        &entry,
+        digest_bytes("wasm-artifact-v1", b"reconstruction-fixture"),
+        &mut progress,
+    )
+    .expect_err("a missing second source must fail after the first copy");
+
+    assert!(matches!(
+        error,
+        WasmBuildError::Io { path, source, .. }
+            if path.ends_with("missing.wasm") && source.kind() == std::io::ErrorKind::NotFound
+    ));
+    assert!(progress.failure_timings.cleanup().is_some());
+    assert!(
+        !entry.exists(),
+        "failed reconstruction must remove its partial entry"
+    );
+    fs::remove_dir_all(root).expect("remove failed reconstruction fixture");
+}
+
+#[test]
+#[cfg(unix)]
+fn warm_caller_artifacts_reconstruct_a_missing_exact_entry() {
+    use super::build_wasm_canisters_cached;
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, spec) = fake_wasm_build_spec("reconstruct-exact-entry");
+    let built = build_wasm_canisters_cached(&spec).expect("build initial exact entry");
+    let entry = built.record().exact_cache_path().to_owned();
+    let expected = fs::read(&built.record().artifacts()[0]).expect("read initial Wasm");
+    drop(built);
+    fs::remove_dir_all(&entry).expect("remove exact entry while keeping caller artifacts");
+
+    let reused = build_wasm_canisters_cached(&spec).expect("reconstruct from caller artifacts");
+    assert!(reused.is_reused());
+    assert!(reused.record().timings().cargo_build().is_none());
+    assert_eq!(reused.record().exact_cache_path(), entry);
+    assert_eq!(fs::read(&reused.record().artifacts()[0]).unwrap(), expected);
+    drop(reused);
+    assert!(
+        entry.is_dir(),
+        "successful reconstruction must survive record drop"
+    );
+    fs::remove_dir_all(root).expect("remove reconstruction fixture");
+}
+
+#[test]
 fn age_pruning_removes_only_stale_fingerprint_directories() {
     let target_dir = unique_temp_directory("age-pruning");
     let cache_root = target_dir.join(".ic-testkit/wasm-targets");

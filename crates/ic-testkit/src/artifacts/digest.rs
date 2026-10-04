@@ -52,16 +52,17 @@ impl InputDigest {
     #[must_use]
     pub fn to_hex(self) -> String {
         let mut hex = String::with_capacity(64);
-        for byte in self.0 {
-            write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
-        }
+        write!(hex, "{self}").expect("writing to a String cannot fail");
         hex
     }
 }
 
 impl std::fmt::Display for InputDigest {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.to_hex())
+        for byte in self.0 {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
     }
 }
 
@@ -438,6 +439,17 @@ mod tests {
     };
     use crate::artifacts::test_support::unique_temp_directory;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn digest_text_preserves_lowercase_hex_and_leading_zeroes() {
+        let digest = super::InputDigest(std::array::from_fn(|index| {
+            u8::try_from(index).expect("digest byte index must fit")
+        }));
+        let expected = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+        assert_eq!(digest.to_hex(), expected);
+        assert_eq!(digest.to_string(), expected);
+        assert_eq!(super::InputDigest([0xff; 32]).to_string(), "ff".repeat(32));
+    }
 
     #[test]
     #[cfg(unix)]
