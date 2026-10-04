@@ -74,6 +74,51 @@ fn metadata_receives_only_resolution_arguments() {
 }
 
 #[test]
+fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
+    use super::{artifact_set_matches, artifact_stamp_path, publish_artifact_stamps};
+    use crate::artifacts::digest::digest_bytes;
+
+    let root = unique_temp_directory("wasm-stamp-validation");
+    let artifact = root.join("fixture.wasm");
+    let artifacts = [artifact.clone()];
+    let fingerprint = digest_bytes("stamp-fixture-v1", b"first");
+    let other_fingerprint = digest_bytes("stamp-fixture-v1", b"second");
+    let original = b"\0asm\x01\0\0\0";
+    fs::write(&artifact, original).expect("write artifact");
+    assert!(!artifact_set_matches(&artifacts, fingerprint));
+    publish_artifact_stamps(&artifacts, fingerprint).expect("publish stamp");
+    let stamp_path = artifact_stamp_path(&artifact);
+    let stamp = fs::read_to_string(&stamp_path).expect("read stamp");
+    let artifact_digest = digest_bytes("wasm-artifact-v1", original);
+    assert_eq!(
+        stamp,
+        format!(
+            "ic-testkit-wasm-build-v1\nbuild-sha256:{fingerprint}\nartifact-sha256:{artifact_digest}\n"
+        ),
+    );
+    assert!(artifact_set_matches(&artifacts, fingerprint));
+    assert!(!artifact_set_matches(&artifacts, other_fingerprint));
+
+    // A correct build header still requires checking the artifact's bytes.
+    fs::write(&artifact, b"\0asm\x02\0\0\0").expect("modify same-size artifact");
+    assert!(!artifact_set_matches(&artifacts, fingerprint));
+    fs::write(&artifact, original).expect("restore artifact bytes");
+    assert!(artifact_set_matches(&artifacts, fingerprint));
+
+    for invalid in [
+        stamp.replace("ic-testkit-wasm-build-v1", "invalid-format"),
+        stamp.replace(&fingerprint.to_hex(), &other_fingerprint.to_hex()),
+        stamp.replace("artifact-sha256:", "unknown-digest:"),
+        format!("{stamp}extra\n"),
+        stamp.trim_end().to_owned(),
+    ] {
+        fs::write(&stamp_path, invalid).expect("write invalid stamp");
+        assert!(!artifact_set_matches(&artifacts, fingerprint));
+    }
+    fs::remove_dir_all(root).expect("remove stamp fixture");
+}
+
+#[test]
 fn compact_feature_arguments_watch_enabled_optional_dependencies() {
     use crate::artifacts::WasmBuildInputSnapshot;
 

@@ -6,6 +6,48 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.1] - 2026-10-03 - Leaner artifact validation and pool acquisition
+
+### Changed
+
+- Wasm cache stamps and transactional artifact manifests reject missing or
+  mismatched format/build identities before hashing artifact contents. Matching
+  entries still require full content validation and an exact stamp or manifest;
+  corrupted entries remain subject to active-consumer retention locks.
+- Artifact input hashing borrows declared paths and Unix-native filename bytes
+  instead of copying them. Directory traversal computes each filename sort key
+  once. Native ordering, non-UTF-8 Unix names, Windows UTF-16 little-endian
+  encoding, and existing digest identities are preserved.
+- Composable digest-cache lookups compare borrowed exclusion paths directly,
+  avoiding temporary cloned lists on cache hits. Descendant and ancestor
+  exclusions remain significant, and inputs following external symlinks retain
+  their conservative exclusion checks.
+- Cache size scans count files and symlinks immediately and queue only
+  directories. Logical-size accounting, sparse files, missing-path errors, and
+  symlink handling retain their existing behavior.
+- Bounded fixture pools register a FIFO waiter and select an available slot
+  under one coordinator lock. Optional tickets replace separate ticket/active
+  state, and cancellation guards release the coordinator before cleanup during
+  unwinding. Capacity, FIFO order, cancellation wakeups, and slot invalidation
+  remain enforced.
+- Public APIs and persisted cache layouts are unchanged. Repository-owned
+  cache, stamp, and digest identifiers remain `v1`.
+
+### Testing
+
+- Adds focused native-filename and exact digest-order coverage, stamp identity
+  and same-size content corruption checks, malformed-manifest recovery with live
+  retention, and directory-size coverage for sparse files, external links,
+  dangling links, and symlink cycles.
+- Verifies relevant exclusion changes rehash cached roots, excluded input roots
+  are rejected even after a cache hit, and exclusions beyond external symlinks
+  cannot reuse an incompatible digest.
+- Covers FIFO head-waiter cancellation, capacity, panic invalidation, warm source
+  mutation rejection, pruning, and cross-process artifact handoff. PocketIC 16
+  checks verify standalone reuse and 100 consecutive baseline restores.
+- Targeted checks, Clippy, and formatting pass. Full pre-push validation remains
+  maintainer-owned; whole-suite performance improvements are not yet measured.
+
 ## [0.14.0] - 2026-10-03 - One fixture builder and shared Cargo metadata
 
 ### Changed

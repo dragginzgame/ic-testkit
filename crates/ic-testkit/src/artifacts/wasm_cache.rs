@@ -4841,10 +4841,18 @@ fn missing_artifacts(artifacts: &[PathBuf]) -> Vec<PathBuf> {
 
 fn cache_stamp_matches(artifact: &Path, fingerprint: InputDigest) -> bool {
     let stamp_path = artifact_stamp_path(artifact);
+    let Ok(stamp) = fs::read_to_string(stamp_path) else {
+        return false;
+    };
+    // A different build cannot be a hit, regardless of artifact contents.
+    // Check its small stamp before reading and hashing the entire Wasm file.
+    if !stamp.starts_with(&artifact_stamp_header(fingerprint)) {
+        return false;
+    }
     let Ok(expected) = artifact_stamp_contents(artifact, fingerprint) else {
         return false;
     };
-    fs::read_to_string(stamp_path).is_ok_and(|stamp| stamp == expected)
+    stamp == expected
 }
 
 fn artifact_stamp_path(artifact: &Path) -> PathBuf {
@@ -4855,10 +4863,15 @@ fn artifact_stamp_path(artifact: &Path) -> PathBuf {
     artifact.with_file_name(name)
 }
 
+fn artifact_stamp_header(fingerprint: InputDigest) -> String {
+    format!("{CACHE_FORMAT_VERSION}\nbuild-sha256:{fingerprint}\n")
+}
+
 fn artifact_stamp_contents(artifact: &Path, fingerprint: InputDigest) -> io::Result<String> {
     let (_, artifact_digest) = digest_file("wasm-artifact-v1", artifact)?;
     Ok(format!(
-        "{CACHE_FORMAT_VERSION}\nbuild-sha256:{fingerprint}\nartifact-sha256:{artifact_digest}\n"
+        "{}artifact-sha256:{artifact_digest}\n",
+        artifact_stamp_header(fingerprint),
     ))
 }
 

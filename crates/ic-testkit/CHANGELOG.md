@@ -4,6 +4,34 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.1
+
+This patch release reduces artifact acquisition and fixture-pool overhead without
+changing public APIs or persisted layouts. Existing `0.14.0` callers need no
+source migration. Repository-owned cache, stamp, and digest identifiers remain
+`v1`.
+
+- Wasm stamps and transactional manifests reject mismatched format/build
+  identities before hashing outputs. Matching entries still require full content
+  validation and exact metadata; live retained entries cannot be replaced during
+  corruption recovery.
+- Input hashing borrows declared paths and Unix-native filename bytes, and
+  computes directory sort keys once per entry. Native ordering and Windows
+  UTF-16 little-endian encoding retain their existing digest semantics.
+- Digest-cache hits compare borrowed exclusion paths without reconstructing
+  cloned lists. Changes to relevant exclusions still rehash inputs, excluded
+  input roots are rejected, and external symlinks retain conservative checks.
+- Cache size scans queue only directories while preserving logical file sizes
+  and counting symlink bytes without following their targets.
+- Bounded fixture pools register and claim FIFO slots under one coordinator
+  lock, with one optional cancellation ticket and safe unwind cleanup. Capacity,
+  waiter ordering, cancellation wakeups, and invalidation remain unchanged.
+
+Targeted checks cover native filenames, exact digests and stamps, corruption
+recovery, retained consumers, pruning, cross-process handoff, FIFO cancellation,
+and PocketIC 16 reuse with 100 consecutive baseline restores. Whole-suite
+performance improvements are not yet measured.
+
 ## 0.14.0
 
 Standalone fixture pools own one builder, removing the per-acquisition builder

@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::{
+    borrow::Cow,
     collections::BTreeSet,
     ffi::OsStr,
     fmt::Write as _,
@@ -140,7 +141,7 @@ pub(super) fn digest_labeled_paths(
     paths: &[(PathBuf, PathBuf)],
     excluded_roots: &[PathBuf],
 ) -> io::Result<InputDigest> {
-    let mut paths = paths.to_vec();
+    let mut paths = paths.iter().collect::<Vec<_>>();
     paths.sort_by(|(left, _), (right, _)| {
         os_bytes(left.as_os_str()).cmp(&os_bytes(right.as_os_str()))
     });
@@ -154,8 +155,8 @@ pub(super) fn digest_labeled_paths(
     for (label, path) in paths {
         hash_path(
             &mut hasher,
-            &label,
-            &path,
+            label,
+            path,
             &excluded_roots,
             &mut visited_directories,
             true,
@@ -191,7 +192,7 @@ pub(super) fn digest_labeled_paths_composable(
     excluded_roots: &[PathBuf],
     cache: &mut LabeledPathDigestCache,
 ) -> io::Result<InputDigest> {
-    let mut paths = paths.to_vec();
+    let mut paths = paths.iter().collect::<Vec<_>>();
     paths.sort_by(|(left, _), (right, _)| {
         os_bytes(left.as_os_str()).cmp(&os_bytes(right.as_os_str()))
     });
@@ -201,7 +202,7 @@ pub(super) fn digest_labeled_paths_composable(
         .collect::<Vec<_>>();
     let mut hasher = InputHasher::new(&format!("{domain}/composable-v1"));
     for (label, path) in paths {
-        let digest = cache.digest_root(domain, &label, &path, &excluded_roots)?;
+        let digest = cache.digest_root(domain, label, path, &excluded_roots)?;
         hasher.field("input-label", &os_bytes(label.as_os_str()));
         hasher.field("input-digest", digest.as_bytes());
     }
@@ -221,12 +222,11 @@ impl LabeledPathDigestCache {
             entry.domain == domain
                 && entry.label == label
                 && entry.path == path
-                && entry.excluded_roots
-                    == effective_root_exclusions(
-                        &entry.canonical_root,
-                        excluded_roots,
-                        entry.traversed_external_path,
-                    )
+                && entry.excluded_roots.iter().eq(effective_root_exclusions(
+                    &entry.canonical_root,
+                    excluded_roots,
+                    entry.traversed_external_path,
+                ))
         }) {
             return Ok(entry.digest);
         }
@@ -254,7 +254,9 @@ impl LabeledPathDigestCache {
                 &trace.canonical_root,
                 excluded_roots,
                 trace.traversed_external_path,
-            ),
+            )
+            .cloned()
+            .collect(),
             traversed_external_path: trace.traversed_external_path,
             digest,
         });
@@ -262,21 +264,16 @@ impl LabeledPathDigestCache {
     }
 }
 
-fn effective_root_exclusions(
-    canonical_root: &Path,
-    excluded_roots: &[PathBuf],
+fn effective_root_exclusions<'a>(
+    canonical_root: &'a Path,
+    excluded_roots: &'a [PathBuf],
     traversed_external_path: bool,
-) -> Vec<PathBuf> {
-    if traversed_external_path {
-        return excluded_roots.to_vec();
-    }
-    excluded_roots
-        .iter()
-        .filter(|excluded| {
-            excluded.starts_with(canonical_root) || canonical_root.starts_with(excluded)
-        })
-        .cloned()
-        .collect()
+) -> impl Iterator<Item = &'a PathBuf> {
+    excluded_roots.iter().filter(move |excluded| {
+        traversed_external_path
+            || excluded.starts_with(canonical_root)
+            || canonical_root.starts_with(excluded)
+    })
 }
 
 fn hash_path(
@@ -339,7 +336,7 @@ fn hash_path(
         .map_err(context)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(context)?;
-    entries.sort_by_key(|entry| os_bytes(&entry.file_name()));
+    entries.sort_by_cached_key(|entry| os_bytes(&entry.file_name()).into_owned());
     for entry in entries {
         hash_path(
             hasher,
@@ -417,23 +414,20 @@ fn write_file_atomic<T>(
 }
 
 #[cfg(unix)]
-pub(super) fn os_bytes(value: &OsStr) -> Vec<u8> {
+pub(super) fn os_bytes(value: &OsStr) -> Cow<'_, [u8]> {
     use std::os::unix::ffi::OsStrExt as _;
-    value.as_bytes().to_vec()
+    Cow::Borrowed(value.as_bytes())
 }
 
 #[cfg(windows)]
-pub(super) fn os_bytes(value: &OsStr) -> Vec<u8> {
+pub(super) fn os_bytes(value: &OsStr) -> Cow<'_, [u8]> {
     use std::os::windows::ffi::OsStrExt as _;
-    value
-        .encode_wide()
-        .flat_map(u16::to_le_bytes)
-        .collect::<Vec<_>>()
+    Cow::Owned(value.encode_wide().flat_map(u16::to_le_bytes).collect())
 }
 
 #[cfg(not(any(unix, windows)))]
-pub(super) fn os_bytes(value: &OsStr) -> Vec<u8> {
-    value.to_string_lossy().as_bytes().to_vec()
+pub(super) fn os_bytes(value: &OsStr) -> Cow<'_, [u8]> {
+    Cow::Owned(value.to_string_lossy().as_bytes().to_vec())
 }
 
 #[cfg(test)]
@@ -444,6 +438,80 @@ mod tests {
     };
     use crate::artifacts::test_support::unique_temp_directory;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    #[cfg(unix)]
+    fn labeled_path_digests_preserve_native_names_and_sorted_order() {
+        use super::{InputHasher, digest_labeled_paths};
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+
+        let root = unique_temp_directory("native-path-digest");
+        let tree = root.join("tree");
+        fs::create_dir_all(tree.join("nested")).unwrap();
+        fs::write(tree.join(OsStr::from_bytes(b"\xff")), b"native").unwrap();
+        fs::write(tree.join("nested/z"), b"last").unwrap();
+        fs::write(tree.join("a"), b"first").unwrap();
+        fs::write(root.join("top"), b"top").unwrap();
+        let mut paths = [
+            (PathBuf::from("tree"), tree),
+            (PathBuf::from("aaa"), root.join("top")),
+        ];
+
+        let tree_fields = |hasher: &mut InputHasher| {
+            hasher.field("directory", b"tree");
+            hasher.field("file-path", b"tree/a");
+            hasher.field("file-content", b"first");
+            hasher.field("directory", b"tree/nested");
+            hasher.field("file-path", b"tree/nested/z");
+            hasher.field("file-content", b"last");
+            hasher.field("file-path", b"tree/\xff");
+            hasher.field("file-content", b"native");
+        };
+        let mut expected = InputHasher::new("native-path-test-v1");
+        expected.field("file-path", b"aaa");
+        expected.field("file-content", b"top");
+        tree_fields(&mut expected);
+        let expected = expected.finish();
+
+        let mut top = InputHasher::new("native-path-test-v1/root-v1");
+        top.field("file-path", b"aaa");
+        top.field("file-content", b"top");
+        let mut tree = InputHasher::new("native-path-test-v1/root-v1");
+        tree_fields(&mut tree);
+        let mut composable = InputHasher::new("native-path-test-v1/composable-v1");
+        composable.field("input-label", b"aaa");
+        composable.field("input-digest", top.finish().as_bytes());
+        composable.field("input-label", b"tree");
+        composable.field("input-digest", tree.finish().as_bytes());
+        let composable = composable.finish();
+
+        for _ in 0..2 {
+            assert_eq!(
+                digest_labeled_paths("native-path-test-v1", &paths, &[]).unwrap(),
+                expected,
+            );
+            assert_eq!(
+                digest_labeled_paths_composable(
+                    "native-path-test-v1",
+                    &paths,
+                    &[],
+                    &mut LabeledPathDigestCache::default(),
+                )
+                .unwrap(),
+                composable,
+            );
+            paths.reverse();
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn native_names_preserve_utf16_little_endian_encoding() {
+        use std::{ffi::OsString, os::windows::ffi::OsStringExt as _};
+        let value = OsString::from_wide(&[0x0061, 0xd800, 0x0100]);
+        assert_eq!(super::os_bytes(&value).as_ref(), &[0x61, 0, 0, 0xd8, 0, 1]);
+    }
 
     #[test]
     fn streaming_digest_and_atomic_copy_preserve_exact_bytes() {
@@ -510,5 +578,78 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(cache.entries.len(), 1);
         fs::remove_dir_all(root).expect("remove composable digest fixture");
+    }
+
+    #[test]
+    fn composable_digest_rehashes_changed_descendant_exclusions_and_rejects_ancestors() {
+        let root = unique_temp_directory("composable-relevant-exclusions");
+        let input = root.join("input");
+        let generated = input.join("generated");
+        fs::create_dir_all(&generated).unwrap();
+        fs::write(input.join("source"), b"source").unwrap();
+        fs::write(generated.join("artifact"), b"generated").unwrap();
+        let paths = [(PathBuf::from("input"), input.clone())];
+        let digest = |exclusions: &[PathBuf], cache: &mut LabeledPathDigestCache| {
+            digest_labeled_paths_composable("exclusions-test-v1", &paths, exclusions, cache)
+        };
+        let mut cache = LabeledPathDigestCache::default();
+        let excluded = digest(std::slice::from_ref(&generated), &mut cache).unwrap();
+        let included = digest(&[], &mut cache).unwrap();
+        assert_ne!(included, excluded);
+        assert_eq!(
+            included,
+            digest(&[], &mut LabeledPathDigestCache::default()).unwrap(),
+        );
+        for ancestor in [&input, &root] {
+            assert_eq!(
+                digest(std::slice::from_ref(ancestor), &mut cache)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::InvalidInput,
+            );
+        }
+        assert_eq!(
+            digest(std::slice::from_ref(&generated), &mut cache).unwrap(),
+            excluded,
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn composable_digest_tracks_exclusions_beyond_an_external_symlink() {
+        let root = unique_temp_directory("composable-external-exclusions");
+        let input = root.join("input");
+        let external = root.join("external");
+        fs::create_dir_all(&input).unwrap();
+        fs::create_dir_all(external.join("first")).unwrap();
+        fs::create_dir_all(external.join("second")).unwrap();
+        fs::write(input.join("source"), b"source").unwrap();
+        fs::write(external.join("first/file"), b"first").unwrap();
+        fs::write(external.join("second/file"), b"second").unwrap();
+        std::os::unix::fs::symlink(&external, input.join("linked")).unwrap();
+        let paths = [(PathBuf::from("input"), input)];
+        let digest = |exclusion: &PathBuf, cache: &mut LabeledPathDigestCache| {
+            digest_labeled_paths_composable(
+                "external-exclusions-test-v1",
+                &paths,
+                std::slice::from_ref(exclusion),
+                cache,
+            )
+        };
+        let mut cache = LabeledPathDigestCache::default();
+        let first = digest(&external.join("first"), &mut cache).unwrap();
+        let second = digest(&external.join("second"), &mut cache).unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            second,
+            digest(
+                &external.join("second"),
+                &mut LabeledPathDigestCache::default(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(digest(&external.join("first"), &mut cache).unwrap(), first);
+        fs::remove_dir_all(root).unwrap();
     }
 }

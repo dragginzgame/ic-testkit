@@ -1407,6 +1407,9 @@ fn cache_entry_is_valid(
         path: manifest_path,
         source,
     })?;
+    if !manifest.starts_with(manifest_header(key).as_bytes()) {
+        return Ok(false);
+    }
     let Some(output_info) = inspect_cached_output_set(spec, entry)? else {
         return Ok(false);
     };
@@ -1588,12 +1591,16 @@ fn inspect_artifact(
     Ok(Some(ArtifactInfo { bytes, digest }))
 }
 
+fn manifest_header(key: InputDigest) -> String {
+    format!("{ARTIFACT_CACHE_FORMAT}\nkey:{key}\n")
+}
+
 fn manifest_contents(
     key: InputDigest,
     spec: &ArtifactCacheSpec,
     output_info: &[ArtifactInfo],
 ) -> String {
-    let mut manifest = format!("{ARTIFACT_CACHE_FORMAT}\nkey:{key}\n");
+    let mut manifest = manifest_header(key);
     for ((index, output), info) in spec.outputs.iter().enumerate().zip(output_info) {
         use std::fmt::Write as _;
         writeln!(

@@ -403,14 +403,41 @@ fn malformed_manifests_and_nondirectory_entries_are_rebuilt() {
     let outcome = build_output(&spec, b"valid");
     let entry = entry_directory(&namespace_directory(&spec), outcome.record().key());
     drop(outcome);
-    fs::write(entry.join(super::MANIFEST_FILE), [0xff, 0xfe])
-        .expect("write invalid UTF-8 manifest");
+    let manifest_path = entry.join(super::MANIFEST_FILE);
+    let manifest = fs::read_to_string(&manifest_path).expect("read valid manifest");
+    let output = entry.join("outputs/0000.artifact");
+    let output_digest = crate::artifacts::digest::digest_bytes("artifact-set-output-v1", b"valid");
+    assert_eq!(
+        manifest,
+        format!(
+            "ic-testkit-artifact-set-v1\nkey:{}\noutput:0:output:nonempty-file:5:{output_digest}\n",
+            resolve_key(&spec).unwrap().key,
+        ),
+    );
+    let invalid_manifests = [
+        vec![0xff, 0xfe],
+        manifest
+            .replace("ic-testkit-artifact-set-v1", "invalid-format")
+            .into_bytes(),
+        manifest
+            .replace(&resolve_key(&spec).unwrap().key.to_hex(), &"0".repeat(64))
+            .into_bytes(),
+        manifest
+            .replace("output:0:output:", "output:0:other:")
+            .into_bytes(),
+        format!("{manifest}extra\n").into_bytes(),
+    ];
+    for invalid in invalid_manifests {
+        fs::write(&manifest_path, invalid).expect("write malformed manifest");
+        let transaction =
+            expect_build(prepare_artifact_cache(&spec).expect("prepare after malformed manifest"));
+        assert!(!entry.exists());
+        fs::write(transaction.output_path("output").unwrap(), b"valid").unwrap();
+        drop(transaction.commit().expect("restore valid cache entry"));
+        assert_eq!(fs::read(&output).unwrap(), b"valid");
+    }
 
-    let transaction =
-        expect_build(prepare_artifact_cache(&spec).expect("prepare after malformed manifest"));
-    assert!(!entry.exists());
-    transaction.abort().expect("abort manifest recovery");
-
+    fs::remove_dir_all(&entry).expect("remove restored cache entry");
     fs::write(&entry, b"not a directory").expect("write nondirectory cache entry");
     let transaction =
         expect_build(prepare_artifact_cache(&spec).expect("prepare after nondirectory entry"));
@@ -1006,6 +1033,14 @@ fn retained_corrupt_entry_fails_closed_until_consumer_releases_it() {
     assert!(matches!(prepare_artifact_cache(&spec),
         Err(ArtifactCacheError::Io { source, .. }) if source.kind() == std::io::ErrorKind::WouldBlock));
     assert_eq!(fs::read(&path).unwrap(), b"corrupt");
+    fs::write(&path, b"valid").unwrap();
+    let manifest =
+        entry_directory(&namespace_directory(&spec), retained.key()).join(super::MANIFEST_FILE);
+    fs::write(&manifest, b"invalid manifest").unwrap();
+    assert!(matches!(prepare_artifact_cache(&spec),
+        Err(ArtifactCacheError::Io { source, .. }) if source.kind() == std::io::ErrorKind::WouldBlock));
+    assert_eq!(fs::read(&path).unwrap(), b"valid");
+    assert_eq!(fs::read(&manifest).unwrap(), b"invalid manifest");
     drop(retained);
     expect_build(prepare_artifact_cache(&spec).unwrap())
         .abort()

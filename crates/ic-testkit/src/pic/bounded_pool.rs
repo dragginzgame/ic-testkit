@@ -32,8 +32,7 @@ pub(super) struct BoundedSlotLease<'a, T> {
 
 struct WaitTicket<'a, T> {
     pool: &'a BoundedSlotPool<T>,
-    ticket: u64,
-    active: bool,
+    ticket: Option<u64>,
 }
 
 impl<T> BoundedSlotPool<T> {
@@ -63,20 +62,11 @@ impl<T> BoundedSlotPool<T> {
 
     pub(super) fn acquire(&self) -> BoundedSlotLease<'_, T> {
         let started = Instant::now();
-        let ticket = {
-            let mut coordinator = self
-                .coordinator
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let ticket = coordinator.next_ticket;
-            coordinator.next_ticket = coordinator.next_ticket.wrapping_add(1);
-            coordinator.waiters.push_back(ticket);
-            ticket
-        };
+        // Declare the ticket guard before taking the coordinator lock so an
+        // unwind releases the lock before cancellation tries to acquire it.
         let mut ticket_guard = WaitTicket {
             pool: self,
-            ticket,
-            active: true,
+            ticket: None,
         };
 
         let slot_index = {
@@ -84,13 +74,17 @@ impl<T> BoundedSlotPool<T> {
                 .coordinator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let ticket = coordinator.next_ticket;
+            coordinator.next_ticket = coordinator.next_ticket.wrapping_add(1);
+            coordinator.waiters.push_back(ticket);
+            ticket_guard.ticket = Some(ticket);
             loop {
                 if coordinator.waiters.front() == Some(&ticket)
                     && let Some(slot_index) = coordinator.available.pop_front()
                 {
                     let removed = coordinator.waiters.pop_front();
                     debug_assert_eq!(removed, Some(ticket));
-                    ticket_guard.active = false;
+                    ticket_guard.ticket = None;
                     self.slot_available.notify_all();
                     break slot_index;
                 }
@@ -209,9 +203,9 @@ impl<T> Drop for BoundedSlotLease<'_, T> {
 
 impl<T> Drop for WaitTicket<'_, T> {
     fn drop(&mut self) {
-        if !self.active {
+        let Some(ticket) = self.ticket else {
             return;
-        }
+        };
         let mut coordinator = self
             .pool
             .coordinator
@@ -220,7 +214,7 @@ impl<T> Drop for WaitTicket<'_, T> {
         if let Some(position) = coordinator
             .waiters
             .iter()
-            .position(|ticket| *ticket == self.ticket)
+            .position(|queued_ticket| *queued_ticket == ticket)
         {
             coordinator.waiters.remove(position);
             self.pool.slot_available.notify_all();
@@ -230,7 +224,7 @@ impl<T> Drop for WaitTicket<'_, T> {
 
 #[cfg(test)]
 mod tests {
-    use super::BoundedSlotPool;
+    use super::{BoundedSlotPool, WaitTicket};
     use std::{
         num::NonZeroUsize,
         panic::{AssertUnwindSafe, catch_unwind},
@@ -303,6 +297,34 @@ mod tests {
         assert_eq!(order_rx.recv_timeout(TIMEOUT).unwrap(), 2);
         first.join().expect("first waiter should not panic");
         second.join().expect("second waiter should not panic");
+    }
+
+    #[test]
+    fn cancelling_the_head_waiter_wakes_the_next_waiter() {
+        let pool = Arc::new(BoundedSlotPool::<usize>::new(NonZeroUsize::new(1).unwrap()));
+        // Represent an interrupted acquisition at the head of the queue. A
+        // slot is available, so cancellation must itself wake the next caller.
+        let cancelled = {
+            let mut coordinator = pool.coordinator.lock().unwrap();
+            let ticket = coordinator.next_ticket;
+            coordinator.next_ticket += 1;
+            coordinator.waiters.push_back(ticket);
+            WaitTicket {
+                pool: &pool,
+                ticket: Some(ticket),
+            }
+        };
+        let worker_pool = Arc::clone(&pool);
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let lease = worker_pool.acquire();
+            acquired_tx.send(lease.slot_index()).unwrap();
+        });
+        wait_for_waiters(&pool, 2);
+        assert!(acquired_rx.try_recv().is_err());
+        drop(cancelled);
+        assert_eq!(acquired_rx.recv_timeout(TIMEOUT).unwrap(), 0);
+        worker.join().expect("remaining waiter should acquire");
     }
 
     #[test]
