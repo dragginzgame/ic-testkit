@@ -4,6 +4,35 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.10
+
+This patch release fixes artifact publication and repair failures. Public APIs,
+fingerprint bytes, dependencies, and persisted layouts are unchanged;
+repository-owned format identifiers remain `v1`.
+
+- Failed exclusive temporary-file creation preserves the existing temporary
+  file and destination. Collisions still return a creation error; cleanup only
+  removes a temporary file successfully created by this operation.
+- Short sibling temporary names allow atomic writes and copies to valid long
+  destination filenames. The temporary name remains distinct from the
+  destination, including ASCII case variants. Same-directory rename, file
+  synchronization, and cleanup after write or rename failure are preserved.
+- Transactional publication and cache hits can replace cyclic final output
+  symlinks without requiring readable referents. Directory targets,
+  invalid parent paths, and input/output overlap remain rejected. Declared
+  inputs and retained artifacts are unchanged by output-link repair.
+- Maintenance marker writing uses the shared atomic writer's directory creation
+  instead of repeating it. Scheduling and maintenance failure handling remain
+  enforced.
+
+Existing callers need no source or cache migration. Temporary names are private
+implementation details. Publication regressions were reproduced before fixing
+them; focused tests cover ownership, filename limits, failure cleanup, cyclic
+and dangling output-link repair, invalid parents, artifact reuse, maintenance,
+and cross-process retention. Targeted tests, Clippy,
+formatting, and diff checks pass. No performance gain has been measured. Full
+pre-push validation remains maintainer-owned.
+
 ## 0.14.9
 
 This patch release gives each verified retained Wasm entry authority over the

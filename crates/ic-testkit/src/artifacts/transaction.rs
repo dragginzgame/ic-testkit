@@ -825,6 +825,8 @@ impl Drop for ArtifactBuildTransaction {
 /// are atomically replaced from the verified entry. Cold commits and non-Unix
 /// acquisitions always replace destinations. Callers must coordinate any other
 /// writers to these mutable paths.
+/// Final symlinks with missing or cyclic referents can be replaced. Directories
+/// and directory referents remain invalid destinations.
 pub fn prepare_artifact_cache(
     spec: &ArtifactCacheSpec,
 ) -> Result<ArtifactCachePreparation, ArtifactCacheError> {
@@ -1143,8 +1145,15 @@ fn validate_filesystem_boundaries(spec: &ArtifactCacheSpec) -> Result<(), Artifa
                 ));
             }
         }
-        match fs::metadata(&destination) {
-            Ok(metadata) if metadata.is_dir() => {
+        // Directory referents remain invalid: replacing their symlink may
+        // strand another output's parent. Other final symlinks are replaced
+        // as entries, independently of whether their referents are readable.
+        match fs::symlink_metadata(&destination) {
+            Ok(metadata)
+                if metadata.is_dir()
+                    || (metadata.file_type().is_symlink()
+                        && fs::metadata(&destination).is_ok_and(|target| target.is_dir())) =>
+            {
                 return invalid_spec(&format!(
                     "output `{}` destination must not be an existing directory",
                     output.name

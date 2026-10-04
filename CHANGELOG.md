@@ -6,6 +6,46 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.10] - 2026-10-04 - Safer atomic artifact publication
+
+### Fixed
+
+- Atomic publication only cleans up a temporary file after exclusive creation
+  succeeds. A temporary-name collision leaves the existing file and destination
+  intact and returns the creation error rather than deleting an unowned file.
+- Atomic writes and copies use short sibling temporary names instead of
+  appending a suffix to the destination filename. Valid long destination names
+  can be published without exceeding the filesystem's filename limit. Temporary
+  names stay distinct from the destination, including ASCII case variants.
+- Transactional publication and cache-hit repair can replace cyclic final
+  output symlinks. Validation no longer fails solely because that link's
+  referent cannot be inspected. Directory targets, invalid parents, and
+  input/output overlaps remain rejected; input and retained artifact bytes
+  remain protected.
+
+### Changed
+
+- Cache maintenance marker writing delegates directory creation to the shared
+  atomic writer, removing a duplicate filesystem step and error branch.
+- These fixes apply to Wasm and transactional artifacts and cache metadata.
+  Public APIs, fingerprint bytes, dependencies, and persisted layouts are
+  unchanged; repository-owned format identifiers remain `v1`. No performance
+  improvement has been measured for this release.
+
+### Testing
+
+- Publication regressions were reproduced against the released implementation
+  before fixing them. Focused regressions cover collision ownership, subsequent
+  publication, destination/temp-name separation, long filenames, and cleanup
+  after write or rename failures. Existing symlink tests also cover cold
+  replacement of cyclic links, warm repair of cyclic and dangling links, and
+  rejection of cyclic parents and unsafe nested outputs. Transactional
+  acquisition, warm Wasm reuse, partial-publication failures, maintenance
+  scheduling and failure handling,
+  and retained cross-process handoffs are checked.
+- Targeted tests, Clippy, formatting, and diff checks pass. Full pre-push
+  validation remains maintainer-owned.
+
 ## [0.14.9] - 2026-10-04 - Authoritative Wasm entries and selective publication
 
 ### Fixed

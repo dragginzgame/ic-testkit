@@ -250,6 +250,8 @@ fn warm_output_repair_detaches_links_and_replaces_restricted_files() {
 
     for replacement in [
         "symlink",
+        "cyclic-symlink",
+        "dangling-symlink",
         "cache-hardlink",
         "input-hardlink",
         "readonly",
@@ -266,10 +268,13 @@ fn warm_output_repair_detaches_links_and_replaces_restricted_files() {
         let built = build_output(&spec, b"cached");
         let cached = built.record().artifacts()[0].path();
         match replacement {
-            "symlink" | "cache-hardlink" | "input-hardlink" => {
+            "symlink" | "cyclic-symlink" | "dangling-symlink" | "cache-hardlink"
+            | "input-hardlink" => {
                 fs::remove_file(&destination).unwrap();
                 match replacement {
                     "symlink" => symlink(cached, &destination).unwrap(),
+                    "cyclic-symlink" => symlink(&destination, &destination).unwrap(),
+                    "dangling-symlink" => symlink(root.join("missing"), &destination).unwrap(),
                     "cache-hardlink" => fs::hard_link(cached, &destination).unwrap(),
                     "input-hardlink" => fs::hard_link(&input, &destination).unwrap(),
                     _ => unreachable!(),
@@ -1175,6 +1180,21 @@ fn symlink_destination_boundaries_validate_the_replaced_entry() {
             .is_symlink()
     );
     drop(outcome);
+    let cyclic_link = public.join("cyclic-output-link");
+    symlink(&cyclic_link, &cyclic_link).expect("create cyclic public symlink");
+    let spec = ArtifactCacheSpec::new(&cache, "cyclic-public-output", "recipe/v1")
+        .with_input("input", &input)
+        .with_output("output", &cyclic_link);
+    let outcome = build_output(&spec, b"published");
+    assert!(
+        fs::symlink_metadata(&cyclic_link)
+            .unwrap()
+            .file_type()
+            .is_file()
+    );
+    assert_eq!(fs::read(&cyclic_link).unwrap(), b"published");
+    assert_eq!(fs::read(&input).unwrap(), b"input");
+    drop(outcome);
     let directory_link = public.join("directory-link");
     symlink(&public, &directory_link).expect("create directory output link");
     let spec = ArtifactCacheSpec::new(&cache, "directory-link-output", "recipe/v1")
@@ -1187,6 +1207,17 @@ fn symlink_destination_boundaries_validate_the_replaced_entry() {
             .file_type()
             .is_symlink()
     );
+    let cyclic_parent = root.join("cyclic-parent");
+    symlink(&cyclic_parent, &cyclic_parent).expect("create cyclic parent symlink");
+    let spec = ArtifactCacheSpec::new(&cache, "cyclic-parent-output", "recipe/v1")
+        .with_output("output", &cyclic_parent.join("output"));
+    assert!(matches!(
+        prepare_artifact_cache(&spec),
+        Err(ArtifactCacheError::Io {
+            operation: "resolve artifact output destination",
+            ..
+        })
+    ));
     fs::remove_dir_all(root).expect("remove symlink output fixture");
 }
 

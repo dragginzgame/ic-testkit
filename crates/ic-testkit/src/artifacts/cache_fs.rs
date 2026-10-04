@@ -420,11 +420,6 @@ pub(super) fn record_cache_maintenance(
     path: &Path,
     maintenance_identity: &str,
 ) -> Result<(), CacheFsError> {
-    fs::create_dir_all(path).map_err(|source| CacheFsError {
-        operation: "create cache maintenance directory",
-        path: path.to_owned(),
-        source,
-    })?;
     let marker = path.join(LAST_MAINTENANCE_FILE);
     let elapsed = encode_system_time(&marker, SystemTime::now())?;
     let contents = format!("{}\n{maintenance_identity}\n", elapsed.as_nanos());

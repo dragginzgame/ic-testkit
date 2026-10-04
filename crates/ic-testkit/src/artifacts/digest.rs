@@ -458,21 +458,31 @@ fn write_file_atomic<T>(
             format!("atomic output path has no file name: {}", path.display()),
         )
     })?;
-    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let mut temp_name = file_name.to_os_string();
-    temp_name.push(format!(".tmp-{}-{sequence}", std::process::id()));
-    let temp_path = parent.join(temp_name);
+    let temp_path = loop {
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temp_name = format!(".ic-testkit-tmp-{}-{sequence}", std::process::id());
+        // Keep names short and distinct from the destination, including on
+        // case-insensitive filesystems. The sibling preserves atomic rename.
+        if !file_name
+            .as_encoded_bytes()
+            .eq_ignore_ascii_case(temp_name.as_bytes())
+        {
+            break parent.join(temp_name);
+        }
+    };
 
+    // Cleanup owns this path only after exclusive creation succeeds.
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temp_path)?;
     let result = (|| {
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_path)?;
         let value = write(&mut file)?;
         file.sync_all()?;
         fs::rename(&temp_path, path)?;
         Ok(value)
     })();
+    drop(file);
     if result.is_err() {
         let _ = fs::remove_file(&temp_path);
     }
@@ -642,6 +652,106 @@ mod tests {
         assert!(message.contains(&missing.display().to_string()));
         assert!(message.contains(&destination.display().to_string()));
         fs::remove_dir_all(root).expect("remove streaming-digest test directory");
+    }
+
+    #[test]
+    fn atomic_creation_failure_preserves_existing_files() {
+        const CHILD_ENV: &str = "IC_TESTKIT_ATOMIC_CREATION_COLLISION_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            // Isolate the temporary-name sequence from other parallel tests.
+            let child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "artifacts::digest::tests::atomic_creation_failure_preserves_existing_files",
+                    "--test-threads=1",
+                ])
+                .env(CHILD_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(
+                child.status.success(),
+                "collision regression failed: {}{}",
+                String::from_utf8_lossy(&child.stdout),
+                String::from_utf8_lossy(&child.stderr)
+            );
+            return;
+        }
+
+        let root = unique_temp_directory("atomic-creation-collision");
+        let destination = root.join("output");
+        fs::write(&destination, b"original output").unwrap();
+        let sequence = super::TEMP_FILE_SEQUENCE.load(super::Ordering::Relaxed);
+        let existing = root.join(format!(".ic-testkit-tmp-{}-{sequence}", std::process::id()));
+        fs::write(&existing, b"existing temporary file").unwrap();
+
+        let error = write_atomic(&destination, b"replacement").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&destination).unwrap(), b"original output");
+        assert_eq!(fs::read(&existing).unwrap(), b"existing temporary file");
+
+        // A subsequent acquisition gets a new name and can publish normally.
+        write_atomic(&destination, b"replacement").unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"replacement");
+        assert_eq!(fs::read(&existing).unwrap(), b"existing temporary file");
+
+        // A caller may choose a destination in the temporary-name namespace.
+        // It must still stay absent until publication rather than be opened directly.
+        let sequence = super::TEMP_FILE_SEQUENCE.load(super::Ordering::Relaxed);
+        let destination = root.join(format!(".ic-testkit-tmp-{}-{sequence}", std::process::id()));
+        super::write_file_atomic(&destination, |file| {
+            assert!(!destination.exists());
+            std::io::Write::write_all(file, b"separate temporary file")
+        })
+        .unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"separate temporary file");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn atomic_publication_failures_remove_only_the_owned_temporary_file() {
+        use std::io::{self, Write as _};
+
+        let root = unique_temp_directory("atomic-publication-failure");
+        let destination = root.join("output");
+        fs::write(&destination, b"original output").unwrap();
+        let error = super::write_file_atomic(&destination, |file| {
+            file.write_all(b"partial output")?;
+            Err::<(), _>(io::Error::other("synthetic write failure"))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "synthetic write failure");
+        assert_eq!(fs::read(&destination).unwrap(), b"original output");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+
+        // Rename must also leave the old destination and clean up the new file.
+        fs::remove_file(&destination).unwrap();
+        fs::create_dir(&destination).unwrap();
+        fs::write(destination.join("child"), b"original child").unwrap();
+        assert!(write_atomic(&destination, b"replacement").is_err());
+        assert_eq!(
+            fs::read(destination.join("child")).unwrap(),
+            b"original child"
+        );
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn atomic_publication_supports_long_destination_names() {
+        let root = unique_temp_directory("atomic-long-destination");
+        let destination = root.join("a".repeat(255));
+        // Establish that the destination itself is valid on this filesystem.
+        fs::write(&destination, b"original output").unwrap();
+        write_atomic(&destination, b"replacement").unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"replacement");
+
+        let source = root.join("source");
+        fs::write(&source, b"copied output").unwrap();
+        assert_eq!(copy_file_atomic(&source, &destination).unwrap(), 13);
+        assert_eq!(fs::read(&destination).unwrap(), b"copied output");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
