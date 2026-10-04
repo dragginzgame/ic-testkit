@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="930" viewBox="0 0 1400 930" role="img" aria-labelledby="title desc">
+<title id="title">IC Testkit complete-system testing with PocketIC</title>
+<desc id="desc">An illustrative game system contains Accounts, Inventory and Payments canisters inside PocketIC. One test interacts with all three canisters. ic-testkit manages the shared baseline around the system under test.</desc>
+<defs>
+  <marker id="test-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#009DBD"/></marker>
+  <marker id="baseline-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#7354C6"/></marker>
+</defs>
+<rect width="1400" height="930" fill="#F7FAFD"/>
+<g font-family="Inter, Arial, sans-serif" fill="#102B50">
+  <text x="56" y="57" font-size="14" font-weight="700" letter-spacing="2" fill="#53718F">IC TESTKIT · COMPLETE-SYSTEM TESTING</text>
+  <text x="56" y="107" font-size="34" font-weight="700">One test. The complete game system.</text>
+  <text x="56" y="143" font-size="19" fill="#53718F">An illustrative topology with three canisters running inside PocketIC.</text>
+
+  <rect x="150" y="390" width="1100" height="448" rx="24" fill="#F5F1FD" stroke="#7354C6" stroke-width="2"/>
+  <text x="182" y="429" font-size="16" font-weight="700" letter-spacing="1.2" fill="#7354C6">IC-TESTKIT · SHARED BASELINE MANAGEMENT</text>
+  <rect x="190" y="462" width="1020" height="326" rx="20" fill="white" stroke="#B8CBDF" stroke-width="1.5"/>
+  <text x="222" y="503" font-size="26" font-weight="700">PocketIC</text>
+  <text x="222" y="534" font-size="18" fill="#53718F">System under test</text>
+
+  <rect x="470" y="192" width="460" height="108" rx="18" fill="#102B50"/>
+  <text x="700" y="234" font-size="26" font-weight="700" text-anchor="middle" fill="white">One test</text>
+  <text x="700" y="270" font-size="19" text-anchor="middle" fill="#B5C8DD">Interacts with all three canisters</text>
+  <path d="M700 302V344H380V568M700 344V568M700 344H1020V568" fill="none" stroke="#009DBD" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#test-arrow)"/>
+  <circle cx="700" cy="344" r="5" fill="#009DBD"/>
+
+  <rect x="240" y="584" width="280" height="150" rx="16" fill="#F0FBFD" stroke="#009DBD" stroke-width="2"/>
+  <rect x="560" y="584" width="280" height="150" rx="16" fill="#F0FBFD" stroke="#009DBD" stroke-width="2"/>
+  <rect x="880" y="584" width="280" height="150" rx="16" fill="#F0FBFD" stroke="#009DBD" stroke-width="2"/>
+  <g fill="none" stroke="#087C94" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="380" cy="614" r="9"/><path d="M363 645V640C363 624 397 624 397 640V645"/>
+    <path d="M681 611L700 602L719 611V635L700 645L681 635ZM681 611L700 620L719 611M700 620V645"/>
+    <rect x="996" y="606" width="48" height="34" rx="6"/><path d="M996 616H1044M1005 630H1016"/>
+  </g>
+  <g text-anchor="middle">
+    <text x="380" y="680" font-size="25" font-weight="700">Accounts</text>
+    <text x="700" y="680" font-size="25" font-weight="700">Inventory</text>
+    <text x="1020" y="680" font-size="25" font-weight="700">Payments</text>
+    <text x="380" y="711" font-size="17" fill="#53718F">Canister</text>
+    <text x="700" y="711" font-size="17" fill="#53718F">Canister</text>
+    <text x="1020" y="711" font-size="17" fill="#53718F">Canister</text>
+  </g>
+
+  <path d="M151 655H102V809H134" fill="none" stroke="#7354C6" stroke-width="2.5" stroke-dasharray="7 5" stroke-linejoin="round" marker-end="url(#baseline-arrow)"/>
+  <path d="M1249 655H1298V809H1266" fill="none" stroke="#7354C6" stroke-width="2.5" stroke-dasharray="7 5" stroke-linejoin="round" marker-end="url(#baseline-arrow)"/>
+  <text x="700" y="818" font-size="18" font-weight="600" text-anchor="middle" fill="#7354C6">ic-testkit manages the baseline for the system under test</text>
+
+  <g font-size="16" fill="#53718F">
+    <path d="M290 880H336" stroke="#009DBD" stroke-width="2.5"/>
+    <text x="348" y="886">Test interactions</text>
+    <rect x="758" y="869" width="24" height="20" rx="5" fill="#F5F1FD" stroke="#7354C6" stroke-width="1.5"/>
+    <text x="795" y="886">Baseline management</text>
+  </g>
+</g>
+</svg>
