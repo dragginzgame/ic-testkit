@@ -29,6 +29,10 @@ migration. Repository-owned format identifiers remain `v1`.
   recovery preserves both its cause and any retained value, including panics
   before population. Safe teardown, FIFO scheduling, cancellation, capacity,
   explicit invalidation, and restore-failure recovery remain intact.
+- Executable unit-test fixtures are written in a child process and awaited
+  before use. Parallel test subprocesses cannot inherit a writable script
+  handle, avoiding intermittent Linux "Text file busy" launches while retaining
+  real Cargo wrapper coverage. Production command execution is unchanged.
 
 Thirty-one targeted unit checks, seven artifact/Wasm integration checks, and
 ten live PocketIC 16 checks pass. Coverage includes concurrent prepared readers,

@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Testing
 
+- Executable unit-test fixtures are written by a child process and awaited
+  before launch, preventing concurrent test subprocesses from inheriting a
+  writable script handle and causing intermittent Linux "Text file busy"
+  failures. Cargo wrappers still exercise real tool identities, metadata,
+  invocation counts, and build paths; production command execution is unchanged.
 - Thirty-one targeted unit checks pass, covering input resolution, batch
   failures and grouping, pool scheduling and unwind recovery, native digest
   semantics, watched-input stamps, label validation, identity dimensions, and
