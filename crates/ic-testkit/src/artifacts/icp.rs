@@ -22,10 +22,9 @@ impl WatchedInputSnapshot {
     pub fn capture(workspace_root: &Path, watched_relative_paths: &[&str]) -> io::Result<Self> {
         let paths = watched_relative_paths
             .iter()
-            .map(|relative| ((*relative).into(), workspace_root.join(relative)))
-            .collect::<Vec<_>>();
+            .map(|relative| (Path::new(relative), workspace_root.join(relative)));
         Ok(Self {
-            digest: digest_labeled_paths("watched-inputs-v1", &paths, &[])?,
+            digest: digest_labeled_paths("watched-inputs-v1", paths, &[])?,
         })
     }
 

@@ -137,14 +137,14 @@ pub(super) fn digest_file(domain: &str, path: &Path) -> io::Result<(u64, InputDi
     Ok((bytes, hasher.finish()))
 }
 
-pub(super) fn digest_labeled_paths(
+pub(super) fn digest_labeled_paths<L: AsRef<Path>, P: AsRef<Path>>(
     domain: &str,
-    paths: &[(PathBuf, PathBuf)],
+    paths: impl IntoIterator<Item = (L, P)>,
     excluded_roots: &[PathBuf],
 ) -> io::Result<InputDigest> {
-    let mut paths = paths.iter().collect::<Vec<_>>();
+    let mut paths = paths.into_iter().collect::<Vec<_>>();
     paths.sort_by(|(left, _), (right, _)| {
-        os_bytes(left.as_os_str()).cmp(&os_bytes(right.as_os_str()))
+        os_bytes(left.as_ref().as_os_str()).cmp(&os_bytes(right.as_ref().as_os_str()))
     });
 
     let excluded_roots = excluded_roots
@@ -156,8 +156,8 @@ pub(super) fn digest_labeled_paths(
     for (label, path) in paths {
         hash_path(
             &mut hasher,
-            label,
-            path,
+            label.as_ref(),
+            path.as_ref(),
             &excluded_roots,
             &mut visited_directories,
             true,
@@ -499,7 +499,12 @@ mod tests {
 
         for _ in 0..2 {
             assert_eq!(
-                digest_labeled_paths("native-path-test-v1", &paths, &[]).unwrap(),
+                digest_labeled_paths(
+                    "native-path-test-v1",
+                    paths.iter().map(|(label, path)| (label, path)),
+                    &[],
+                )
+                .unwrap(),
                 expected,
             );
             assert_eq!(

@@ -208,13 +208,15 @@ pub struct CargoBuildInput {
 ///
 /// The snapshot can be resolved again after an external operation to detect
 /// source, configuration, toolchain, argument, or environment changes.
+/// Clones share immutable input and exclusion lists while retaining independent
+/// timing values.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolvedCargoBuildInputs {
     fingerprint: InputDigest,
     input_digest: InputDigest,
     validation_digest: InputDigest,
-    inputs: Vec<CargoBuildInput>,
-    exclusions: Vec<PathBuf>,
+    inputs: Arc<[CargoBuildInput]>,
+    exclusions: Arc<[PathBuf]>,
     timings: WasmInputResolutionTimings,
 }
 
@@ -1464,9 +1466,7 @@ impl WasmBuildSessionState {
             .iter()
             .find(|(candidate, _)| candidate == spec)?;
         self.snapshot_reuses = self.snapshot_reuses.saturating_add(1);
-        let mut snapshot = snapshot.clone();
-        snapshot.timings = WasmInputResolutionTimings::default();
-        Some(snapshot)
+        Some(snapshot.clone())
     }
 
     fn remember(&mut self, spec: &WasmBuildSpec, resolved: &ResolvedCargoBuildInputs) {
@@ -1684,9 +1684,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         progress: &mut ProgressReporter<'_>,
     ) -> Result<(), WasmBuildError> {
         let total_started = Instant::now();
-        let indexes = self.groups[self.group_by_index[active_index]]
-            .indexes
-            .clone();
+        let group = self.group_by_index[active_index];
         let active = self.specs[active_index];
 
         let (cargo_identity, rustc_identity, tool_identity) =
@@ -1698,8 +1696,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
         })?;
         let cargo_metadata = metadata_started.elapsed();
 
-        let (discovered, input_discovery) =
-            self.discover_group_inputs(indexes, &metadata, progress);
+        let (discovered, input_discovery) = self.discover_group_inputs(group, &metadata, progress);
 
         let hashing_started = Instant::now();
         let mut batch_digest_cache = LabeledPathDigestCache::default();
@@ -1707,7 +1704,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             Some(WasmBuildInputReuse::Session(session)) => &mut session.digest_cache,
             _ => &mut batch_digest_cache,
         };
-        let workspace_root = active.workspace_root.clone();
+        let workspace_root = &active.workspace_root;
         let resolved_inputs = progress.run_phase(WasmBuildProgressPhase::ContentHashing, || {
             discovered
                 .into_iter()
@@ -1716,7 +1713,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
                         &inputs,
                         &exclusions,
                         digest_cache,
-                        &workspace_root,
+                        workspace_root,
                         "hash batched Wasm build inputs",
                         "hash batched semantic Wasm build inputs",
                     )
@@ -1774,7 +1771,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
                     .into_iter()
                     .map(|(label, path)| CargoBuildInput { label, path })
                     .collect(),
-                exclusions,
+                exclusions: exclusions.into(),
                 timings: if Some(index) == timing_index {
                     timings
                 } else {
@@ -1791,21 +1788,17 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
 
     fn discover_group_inputs(
         &mut self,
-        indexes: Vec<usize>,
+        group: usize,
         metadata: &Value,
         progress: &mut ProgressReporter<'_>,
     ) -> (Vec<(usize, ResolvedLocalInputs, Vec<PathBuf>)>, Duration) {
         let started = Instant::now();
-        let pending = indexes
-            .into_iter()
-            .filter(|index| {
-                self.resolved[*index].is_none() && validate_spec(self.specs[*index]).is_ok()
-            })
-            .collect::<Vec<_>>();
+        let pending = self.groups[group].indexes.iter().copied().filter(|index| {
+            self.resolved[*index].is_none() && validate_spec(self.specs[*index]).is_ok()
+        });
         let results = progress.run_phase(WasmBuildProgressPhase::InputDiscovery, || {
             let parsed = ParsedCargoMetadata::parse(metadata);
             pending
-                .into_iter()
                 .map(|index| {
                     let spec = self.specs[index];
                     let result = (|| {
@@ -3445,7 +3438,7 @@ fn build_fingerprint_with_progress(
             .into_iter()
             .map(|(label, path)| CargoBuildInput { label, path })
             .collect(),
-        exclusions,
+        exclusions: exclusions.into(),
         timings: WasmInputResolutionTimings {
             tool_identity,
             cargo_metadata,

@@ -999,16 +999,12 @@ fn validate_spec(spec: &ArtifactCacheSpec) -> Result<(), ArtifactCacheError> {
     }
 
     let mut labels = BTreeSet::new();
-    for input in &spec.inputs {
-        validate_path_label("input", &input.label)?;
-        if !labels.insert(format!("input/{}", input.label)) {
-            return invalid_spec(&format!("duplicate input label `{}`", input.label));
-        }
-    }
-    for tool in &spec.tools {
-        validate_path_label("tool", &tool.label)?;
-        if !labels.insert(format!("tool/{}", tool.label)) {
-            return invalid_spec(&format!("duplicate tool label `{}`", tool.label));
+    for (kind, paths) in [("input", &spec.inputs), ("tool", &spec.tools)] {
+        for path in paths {
+            validate_path_label(kind, &path.label)?;
+            if !labels.insert((kind, path.label.as_str())) {
+                return invalid_spec(&format!("duplicate {kind} label `{}`", path.label));
+            }
         }
     }
     let mut identity_labels = BTreeSet::new();
@@ -1277,21 +1273,15 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
     let paths = spec
         .inputs
         .iter()
-        .map(|input| {
-            (
-                PathBuf::from("input").join(&input.label),
-                input.path.clone(),
-            )
-        })
+        .map(|input| (PathBuf::from("input").join(&input.label), &input.path))
         .chain(
             spec.tools
                 .iter()
-                .map(|tool| (PathBuf::from("tool").join(&tool.label), tool.path.clone())),
-        )
-        .collect::<Vec<_>>();
+                .map(|tool| (PathBuf::from("tool").join(&tool.label), &tool.path)),
+        );
     let declared_input_digest = digest_labeled_paths(
         "artifact-set-inputs-v1",
-        &paths,
+        paths,
         std::slice::from_ref(&spec.cache_root),
     )
     .map_err(|source| ArtifactCacheError::Io {

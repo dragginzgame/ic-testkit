@@ -854,6 +854,19 @@ fn invalid_specifications_are_rejected_before_acquisition() {
     for spec in specs {
         expect_invalid_spec(prepare_artifact_cache(&spec));
     }
+    assert!(
+        !cache.exists(),
+        "invalid specs must fail before cache initialization"
+    );
+    let shared_label = ArtifactCacheSpec::new(&cache, "namespace", "recipe/v1")
+        .with_input("shared", &input)
+        .with_tool("shared", &tool)
+        .with_output("output", &output);
+    expect_build(
+        prepare_artifact_cache(&shared_label).expect("input and tool labels are separate"),
+    )
+    .abort()
+    .expect("abort label namespace check");
     fs::remove_dir_all(root).expect("remove invalid-specification test directory");
 }
 

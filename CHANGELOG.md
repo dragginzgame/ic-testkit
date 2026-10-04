@@ -6,6 +6,53 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.6] - 2026-10-04 - Shared build inputs and explicit pool state
+
+### Changed
+
+- Resolved Cargo input snapshots share immutable input and exclusion lists
+  across clones instead of copying every path. Sessions and prepared readers
+  retain independent timing values; session reuse also removes a redundant
+  timing reset. Source revalidation and lease invalidation are unchanged.
+- Wasm batch resolution borrows group membership and filters pending entries
+  directly, removing temporary index lists and a copied workspace path.
+  Environment grouping, independent feature resolution, indexed failures, and
+  progress reporting retain their existing behavior.
+- Labeled-path hashing accepts borrowed or owned paths and collects them once
+  for deterministic sorting. Transactional artifacts borrow filesystem paths,
+  and watched ICP inputs borrow labels, removing caller-side temporary lists.
+  Native path ordering, exclusions, digest framing, and cache identities are
+  unchanged.
+- Artifact input and tool labels share one validation rule and use borrowed
+  namespaced membership keys. Duplicate labels remain invalid within each
+  namespace; an input and a tool may still share the same label. Validation
+  continues to precede cache acquisition.
+- Bounded fixture pools represent empty, reusable, invalidated, and unwound
+  slots explicitly instead of combining an optional value with validity flags.
+  Panic recovery retains its cause even before a slot is populated, and stale
+  values remain available for safe teardown. FIFO scheduling, cancellation,
+  capacity, explicit invalidation, and restore-failure recovery are preserved.
+- Public APIs and persisted layouts are unchanged. Repository-owned format
+  identifiers remain `v1`; existing `0.14` callers need no migration. No
+  downstream suite speedup has been measured for these changes.
+
+### Testing
+
+- Thirty-one targeted unit checks pass, covering input resolution, batch
+  failures and grouping, pool scheduling and unwind recovery, native digest
+  semantics, watched-input stamps, label validation, identity dimensions, and
+  transactional publication and source guards.
+- Seven artifact/Wasm integration checks pass, covering feature isolation,
+  concurrent prepared readers, source-race rejection and invalidation,
+  transactional Cargo input guards, cross-process build coordination, and
+  preservation of successful entries through later batch failures.
+- Ten live PocketIC 16 checks pass across generic and standalone pools,
+  including 100 consecutive restores without reconstruction, capacity-scoped
+  overlap, explicit invalidation, caller and recipe-hook panics, and failed
+  restore and recovery behavior.
+- Targeted Clippy, formatting, and diff checks pass; full pre-push validation
+  remains maintainer-owned.
+
 ## [0.14.5] - 2026-10-04 - Simpler build inputs, fixture reuse, and reporting
 
 ### Changed

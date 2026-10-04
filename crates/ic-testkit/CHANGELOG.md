@@ -4,6 +4,40 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.6
+
+This patch release shares immutable Cargo input lists, simplifies batch and
+artifact hashing ownership, and makes fixture-pool states explicit. Public APIs
+and persisted layouts are unchanged; existing `0.14` callers need no source
+migration. Repository-owned format identifiers remain `v1`.
+
+- Cargo input snapshot clones share immutable input and exclusion lists while
+  retaining independent timing values. Sessions no longer repeat an already
+  established timing reset. Source revalidation and prepared-reader lease
+  invalidation retain their behavior.
+- Wasm batches borrow group membership and filter pending entries without
+  temporary index lists or a copied workspace path. Environment grouping,
+  feature isolation, indexed failures, and progress reporting are preserved.
+- Labeled-path hashing owns the single collection needed for deterministic
+  sorting. Artifact transactions borrow filesystem paths, and watched ICP
+  inputs borrow labels. Native path ordering, exclusions, digest framing, and
+  cache identities are unchanged.
+- Input and tool label validation shares one rule with separate namespaces.
+  Duplicates within a namespace are rejected before cache acquisition; an
+  input and a tool may still have the same label.
+- Bounded pools replace validity flags with explicit slot states. Unwind
+  recovery preserves both its cause and any retained value, including panics
+  before population. Safe teardown, FIFO scheduling, cancellation, capacity,
+  explicit invalidation, and restore-failure recovery remain intact.
+
+Thirty-one targeted unit checks, seven artifact/Wasm integration checks, and
+ten live PocketIC 16 checks pass. Coverage includes concurrent prepared readers,
+source-race invalidation, cross-process artifact coordination, pool scheduling,
+panic and restore-failure recovery, and 100 consecutive restores without
+reconstruction. Targeted Clippy, formatting, and diff checks also pass. No
+downstream suite speedup is claimed; full pre-push validation remains
+maintainer-owned.
+
 ## 0.14.5
 
 This patch release consolidates Cargo input safety checks and simplifies warm

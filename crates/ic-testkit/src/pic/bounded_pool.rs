@@ -17,10 +17,23 @@ struct Coordinator {
     next_ticket: u64,
 }
 
-struct Slot<T> {
-    value: Option<T>,
-    valid: bool,
-    invalidated_by_unwind: bool,
+enum Slot<T> {
+    Empty,
+    Reusable(T),
+    Invalidated(T),
+    // A build can unwind before populating the slot. Retain that cause even
+    // without a value so the next acquisition still reports an unwind rebuild.
+    Unwound(Option<T>),
+}
+
+impl<T> Slot<T> {
+    fn into_value(self) -> Option<T> {
+        match self {
+            Self::Empty => None,
+            Self::Reusable(value) | Self::Invalidated(value) => Some(value),
+            Self::Unwound(value) => value,
+        }
+    }
 }
 
 pub(super) struct BoundedSlotLease<'a, T> {
@@ -38,13 +51,7 @@ struct WaitTicket<'a, T> {
 impl<T> BoundedSlotPool<T> {
     pub(super) fn new(capacity: NonZeroUsize) -> Self {
         let slots = (0..capacity.get())
-            .map(|_| {
-                Mutex::new(Slot {
-                    value: None,
-                    valid: false,
-                    invalidated_by_unwind: false,
-                })
-            })
+            .map(|_| Mutex::new(Slot::Empty))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         let available = (0..capacity.get()).collect();
@@ -131,42 +138,48 @@ impl<T> BoundedSlotLease<'_, T> {
     }
 
     pub(super) fn is_reusable(&self) -> bool {
-        let slot = self.slot();
-        slot.valid && slot.value.is_some()
+        matches!(self.slot(), Slot::Reusable(_))
     }
 
     pub(super) fn is_populated(&self) -> bool {
-        self.slot().value.is_some()
+        self.get().is_some()
     }
 
     pub(super) fn invalidated_by_unwind(&self) -> bool {
-        self.slot().invalidated_by_unwind
+        matches!(self.slot(), Slot::Unwound(_))
     }
 
     pub(super) fn get(&self) -> Option<&T> {
-        self.slot().value.as_ref()
+        match self.slot() {
+            Slot::Empty => None,
+            Slot::Reusable(value) | Slot::Invalidated(value) => Some(value),
+            Slot::Unwound(value) => value.as_ref(),
+        }
     }
 
     pub(super) fn get_mut(&mut self) -> Option<&mut T> {
-        self.slot_mut().value.as_mut()
+        match self.slot_mut() {
+            Slot::Empty => None,
+            Slot::Reusable(value) | Slot::Invalidated(value) => Some(value),
+            Slot::Unwound(value) => value.as_mut(),
+        }
     }
 
     pub(super) fn replace(&mut self, value: T) -> Option<T> {
-        let slot = self.slot_mut();
-        slot.valid = true;
-        slot.invalidated_by_unwind = false;
-        slot.value.replace(value)
+        std::mem::replace(self.slot_mut(), Slot::Reusable(value)).into_value()
     }
 
     pub(super) fn take(&mut self) -> Option<T> {
-        let slot = self.slot_mut();
-        slot.valid = false;
-        slot.invalidated_by_unwind = false;
-        slot.value.take()
+        std::mem::replace(self.slot_mut(), Slot::Empty).into_value()
     }
 
     pub(super) fn invalidate(&mut self) {
-        self.slot_mut().valid = false;
+        let slot = self.slot_mut();
+        let state = std::mem::replace(slot, Slot::Empty);
+        *slot = match state {
+            Slot::Reusable(value) => Slot::Invalidated(value),
+            other => other,
+        };
     }
 
     fn slot(&self) -> &Slot<T> {
@@ -185,9 +198,8 @@ impl<T> BoundedSlotLease<'_, T> {
 impl<T> Drop for BoundedSlotLease<'_, T> {
     fn drop(&mut self) {
         if std::thread::panicking() {
-            let slot = self.slot_mut();
-            slot.valid = false;
-            slot.invalidated_by_unwind = true;
+            let value = self.take();
+            *self.slot_mut() = Slot::Unwound(value);
         }
         drop(self.slot.take());
 
@@ -329,20 +341,31 @@ mod tests {
 
     #[test]
     fn unwind_invalidates_but_preserves_slot_value_for_safe_teardown() {
-        let pool = BoundedSlotPool::new(NonZeroUsize::new(1).unwrap());
+        for value in [None, Some(42)] {
+            let pool = BoundedSlotPool::new(NonZeroUsize::new(1).unwrap());
 
-        let panic = catch_unwind(AssertUnwindSafe(|| {
+            let panic = catch_unwind(AssertUnwindSafe(|| {
+                let mut lease = pool.acquire();
+                if let Some(value) = value {
+                    lease.replace(value);
+                }
+                panic!("synthetic leased-test panic");
+            }));
+            assert!(panic.is_err());
+
             let mut lease = pool.acquire();
-            lease.replace(42);
-            panic!("synthetic leased-test panic");
-        }));
-        assert!(panic.is_err());
+            assert!(!lease.is_reusable());
+            assert_eq!(lease.is_populated(), value.is_some());
+            assert!(lease.invalidated_by_unwind());
+            assert_eq!(lease.get(), value.as_ref());
+            assert_eq!(lease.replace(7), value);
+            drop(lease);
 
-        let lease = pool.acquire();
-        assert!(!lease.is_reusable());
-        assert!(lease.is_populated());
-        assert!(lease.invalidated_by_unwind());
-        assert_eq!(lease.get(), Some(&42));
+            let lease = pool.acquire();
+            assert!(lease.is_reusable());
+            assert!(!lease.invalidated_by_unwind());
+            assert_eq!(lease.get(), Some(&7));
+        }
     }
 
     fn wait_for_waiters<T>(pool: &BoundedSlotPool<T>, expected: usize) {
