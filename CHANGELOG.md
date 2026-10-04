@@ -6,6 +6,51 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.9] - 2026-10-04 - Authoritative Wasm entries and selective publication
+
+### Fixed
+
+- A verified retained Wasm entry now owns the bytes for its build fingerprint.
+  Public files with independently valid stamps but different bytes are repaired
+  from that entry rather than left inconsistent with the returned artifact record.
+- Recovery from mutable public files hashes the newly copied private files before
+  constructing their stamps. Empty copies fail acquisition and remove the
+  incomplete entry instead of publishing an invalid reconstructed cache entry.
+
+### Changed
+
+- Wasm validation retains verified lengths and digests for publication from
+  exact entries. Public stamp construction no longer rehashes just-copied outputs.
+  Warm acquisitions repair each public file and stamp independently; a missing
+  or damaged stamp alone no longer forces a Wasm copy. On Unix, matching independent writable files
+  owned by the effective user preserve their inode, modification time, and
+  permissions. Linked, foreign-owned, restricted, and executable destinations
+  are atomically replaced. Cold publication and non-Unix materialization use
+  atomic replacement.
+- Transactional and Wasm artifact publication share the destination ownership
+  checks and one private file-digest representation. Public artifacts remain
+  usable to reconstruct a missing or invalid exact entry, subject to retention
+  locks. Complete stamp verification, input revalidation, prepared-reader
+  invalidation, producer locks, and all-copies-before-public-stamps ordering
+  remain enforced.
+- Public APIs, fingerprint bytes, and persisted layouts are unchanged; owned
+  format identifiers remain `v1`. Callers must coordinate other writers to
+  mutable public paths and treat retained artifacts as read-only. No runtime
+  or downstream suite speedup has been measured for this release.
+
+### Testing
+
+- The conflicting-public-bytes regression fails against separately compiled
+  released `0.14.8` and passes with the fix. Focused checks cover selective
+  repairs, matching inode/time preservation, link and permission normalization,
+  partial-copy failures, exact-entry reconstruction and retained corruption,
+  changed and empty public recovery sources, concurrent prepared readers, source
+  races, and cross-process handoffs.
+- Forty-five targeted unit checks and ten integration checks pass, including
+  exact-build coordination and scheduled shared-target maintenance. Clippy,
+  formatting, and diff checks pass; full pre-push validation remains
+  maintainer-owned.
+
 ## [0.14.8] - 2026-10-04 - Verified artifact reuse and large-file hashing
 
 ### Changed

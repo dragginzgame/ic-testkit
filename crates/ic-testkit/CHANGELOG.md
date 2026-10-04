@@ -4,6 +4,40 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.9
+
+This patch release gives each verified retained Wasm entry authority over the
+bytes for its fingerprint and removes redundant publication work. Public APIs,
+fingerprint bytes, and persisted layouts are unchanged; repository-owned format
+identifiers remain `v1`.
+
+- Public Wasm files carrying valid stamps but different bytes from the retained
+  entry are repaired to match the artifact paths returned by acquisition.
+- Publication from verified exact entries reuses lengths and digests rather than
+  hashing public copies again to construct stamps. Warm files and stamps are
+  repaired separately; a stamp-only failure no longer forces a Wasm copy.
+  Matching independent, writable Unix files owned by the effective user retain their inode, time, and
+  permissions. Linked, foreign-owned, restricted, and executable destinations
+  are replaced. Cold and non-Unix publication use atomic replacement.
+- Wasm and transactional publication share destination ownership checks and a
+  private file-digest representation. Public artifacts can still reconstruct
+  missing or invalid exact entries when no consumer retains them. Full stamp
+  validation, source guards, producer locks, prepared-reader invalidation, and
+  copying every output before publishing public stamps remain enforced.
+- Recovery from mutable public files hashes the newly copied private files before
+  stamping them. Empty copies fail acquisition and remove the incomplete entry.
+
+The conflicting-public-bytes regression fails against released `0.14.8` and
+passes with this fix. Focused checks cover warm repairs, ownership, timestamps,
+partial-copy failure, reconstruction, retained corruption, prepared readers,
+changed and empty public recovery sources, source races, and process handoffs.
+Callers remain responsible for coordinating other writers to public paths and
+treating retained paths as read-only. No runtime or downstream suite speedup has
+been measured for these changes.
+Forty-five targeted unit checks and ten integration checks pass, along with
+Clippy, formatting, and diff checks. Full pre-push validation remains
+maintainer-owned.
+
 ## 0.14.8
 
 This patch release avoids replacing already-correct public artifact outputs on

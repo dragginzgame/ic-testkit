@@ -355,3 +355,22 @@ permission bits alone allowed a false destination match. The same probe
 rejected reuse after the effective-user ownership check was added. The maintained
 tests use private fixtures; this local probe is not retained as a test that
 depends on host filesystem layout.
+
+## 0.14.9 Wasm publication follow-up
+
+Wasm acquisition now gives a verified retained entry authority over its public
+outputs. Independently stamped public bytes cannot override a valid exact entry
+for the same fingerprint. Verified lengths and digests from exact entries are
+retained through publication, so public stamp generation does not reread copied
+Wasm files. Recovery from mutable public files instead hashes the newly copied
+private files before stamping them and rejects empty copies, removing the
+incomplete entry on failure. Public files and stamps are repaired independently;
+a missing stamp alone need not cause a
+Wasm copy. Matching independent writable Unix files owned by the effective user
+retain their inode and modification time. Cold and non-Unix publication use
+atomic replacement, and links or restricted files are replaced.
+
+These changes have correctness and filesystem-behavior verification, including
+a regression reproduced on separately compiled released `0.14.8`. They have no
+new runtime measurements. The earlier tables describe their recorded versions;
+they are not measurements of `0.14.9` or downstream test-suite speedups.

@@ -75,7 +75,7 @@ fn metadata_receives_only_resolution_arguments() {
 
 #[test]
 fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
-    use super::{artifact_set_matches, artifact_stamp_path, publish_artifact_stamps};
+    use super::{artifact_stamp_path, publish_artifact_stamps, validated_artifact_set};
     use crate::artifacts::digest::digest_bytes;
 
     let root = unique_temp_directory("wasm-stamp-validation");
@@ -85,7 +85,7 @@ fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
     let other_fingerprint = digest_bytes("stamp-fixture-v1", b"second");
     let original = b"\0asm\x01\0\0\0";
     fs::write(&artifact, original).expect("write artifact");
-    assert!(!artifact_set_matches(&artifacts, fingerprint));
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_none());
     publish_artifact_stamps(&artifacts, fingerprint).expect("publish stamp");
     let stamp_path = artifact_stamp_path(&artifact);
     let stamp = fs::read_to_string(&stamp_path).expect("read stamp");
@@ -96,14 +96,14 @@ fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
             "ic-testkit-wasm-build-v1\nbuild-sha256:{fingerprint}\nartifact-sha256:{artifact_digest}\n"
         ),
     );
-    assert!(artifact_set_matches(&artifacts, fingerprint));
-    assert!(!artifact_set_matches(&artifacts, other_fingerprint));
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_some());
+    assert!(validated_artifact_set(&artifacts, other_fingerprint).is_none());
 
     // A correct build header still requires checking the artifact's bytes.
     fs::write(&artifact, b"\0asm\x02\0\0\0").expect("modify same-size artifact");
-    assert!(!artifact_set_matches(&artifacts, fingerprint));
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_none());
     fs::write(&artifact, original).expect("restore artifact bytes");
-    assert!(artifact_set_matches(&artifacts, fingerprint));
+    assert!(validated_artifact_set(&artifacts, fingerprint).is_some());
 
     for invalid in [
         stamp.replace("ic-testkit-wasm-build-v1", "invalid-format"),
@@ -113,7 +113,7 @@ fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
         stamp.trim_end().to_owned(),
     ] {
         fs::write(&stamp_path, invalid).expect("write invalid stamp");
-        assert!(!artifact_set_matches(&artifacts, fingerprint));
+        assert!(validated_artifact_set(&artifacts, fingerprint).is_none());
     }
     fs::remove_dir_all(root).expect("remove stamp fixture");
 }
@@ -1264,8 +1264,67 @@ fn failed_build_removes_its_incomplete_fingerprint_directory() {
 }
 
 #[test]
+fn reconstructed_wasm_stamps_describe_the_bytes_actually_copied() {
+    use super::{
+        expected_artifacts, publish_artifact_stamps, reconstruct_exact_cache_entry,
+        validated_artifact_set,
+    };
+    use crate::artifacts::digest::digest_bytes;
+
+    let root = unique_temp_directory("reconstructed-wasm-bytes");
+    let source = root.join("public.wasm");
+    fs::write(&source, b"original").unwrap();
+    let sources = [source.clone()];
+    let fingerprint = digest_bytes("wasm-reconstruction-test-v1", b"fixture");
+    publish_artifact_stamps(&sources, fingerprint).unwrap();
+    assert!(validated_artifact_set(&sources, fingerprint).is_some());
+    // The public source is mutable across the verification/copy boundary.
+    fs::write(&source, b"modified").unwrap();
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["fixture"], "debug");
+    let entry = root.join("entry");
+    let copied_info = reconstruct_exact_cache_entry(
+        &spec,
+        &sources,
+        &entry,
+        fingerprint,
+        &mut ProgressReporter::silent(),
+    )
+    .unwrap();
+    let cached = expected_artifacts(&spec, &entry);
+    assert_eq!(fs::read(&cached[0]).unwrap(), b"modified");
+    assert_eq!(
+        validated_artifact_set(&cached, fingerprint).unwrap(),
+        copied_info
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reconstruction_rejects_empty_copies_and_removes_the_incomplete_entry() {
+    use super::{expected_artifacts, publish_artifact_stamps, reconstruct_exact_cache_entry};
+    use crate::artifacts::digest::digest_bytes;
+
+    let root = unique_temp_directory("empty-reconstructed-wasm");
+    let sources = [root.join("public.wasm")];
+    fs::write(&sources[0], b"original").unwrap();
+    let fingerprint = digest_bytes("wasm-reconstruction-test-v1", b"fixture");
+    publish_artifact_stamps(&sources, fingerprint).unwrap();
+    fs::write(&sources[0], b"").unwrap();
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["fixture"], "debug");
+    let entry = root.join("entry");
+    let cached = expected_artifacts(&spec, &entry);
+    let mut progress = ProgressReporter::silent();
+    let error = reconstruct_exact_cache_entry(&spec, &sources, &entry, fingerprint, &mut progress)
+        .expect_err("a copied Wasm must remain nonempty");
+    assert!(matches!(error, WasmBuildError::MissingArtifacts { paths } if paths == cached));
+    assert!(progress.failure_timings.cleanup().is_some());
+    assert!(!entry.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn failed_exact_entry_reconstruction_removes_partial_outputs() {
-    use super::ensure_exact_cache_entry;
+    use super::reconstruct_exact_cache_entry;
     use crate::artifacts::digest::digest_bytes;
 
     let root = unique_temp_directory("failed-exact-entry-reconstruction");
@@ -1274,7 +1333,7 @@ fn failed_exact_entry_reconstruction_removes_partial_outputs() {
     fs::write(&sources[0], b"\0asm\x01\0\0\0").expect("write first source artifact");
     let spec = WasmBuildSpec::new(&root, &root.join("target"), &["first", "missing"], "debug");
     let mut progress = ProgressReporter::silent();
-    let error = ensure_exact_cache_entry(
+    let error = reconstruct_exact_cache_entry(
         &spec,
         &sources,
         &entry,
@@ -1298,6 +1357,207 @@ fn failed_exact_entry_reconstruction_removes_partial_outputs() {
 
 #[test]
 #[cfg(unix)]
+fn warm_wasm_outputs_follow_retained_entry_and_preserve_matching_files() {
+    use super::{
+        artifact_stamp_path, build_wasm_canisters_cached, expected_artifacts,
+        publish_artifact_stamps,
+    };
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+    use std::{fs::FileTimes, os::unix::fs::MetadataExt as _};
+
+    for mode in ["isolated", "shared", "scheduled"] {
+        let (root, mut spec) = fake_wasm_build_spec("warm-wasm-publication");
+        if mode != "isolated" {
+            spec = spec.with_shared_incremental_target(root.join("incremental"));
+        }
+        if mode == "scheduled" {
+            spec = spec.with_shared_incremental_target_maintenance_at_most_every(
+                SharedIncrementalTargetPrunePolicy::new(),
+                Duration::from_secs(60),
+            );
+        }
+        let public = expected_artifacts(&spec, &spec.target_dir);
+        fs::create_dir_all(public[0].parent().unwrap()).unwrap();
+        let original = b"\0asm\x01\0\0\0";
+        fs::write(&public[0], original).unwrap();
+        let before_cold = fs::metadata(&public[0]).unwrap().ino();
+        let cold = build_wasm_canisters_cached(&spec).unwrap();
+        assert!(!cold.is_reused());
+        assert_ne!(before_cold, fs::metadata(&public[0]).unwrap().ino());
+
+        // Both stamps are valid for this fingerprint, but their bytes differ.
+        fs::write(&public[0], b"stamped!").unwrap();
+        publish_artifact_stamps(&public, cold.record().fingerprint()).unwrap();
+        let reused = build_wasm_canisters_cached(&spec).unwrap();
+        assert!(reused.is_reused());
+        assert!(reused.record().timings().cargo_build().is_none());
+        assert_eq!(fs::read(&public[0]).unwrap(), original, "{mode}");
+        assert_eq!(fs::read(&reused.record().artifacts()[0]).unwrap(), original);
+
+        let stamp = artifact_stamp_path(&public[0]);
+        let expected_stamp = fs::read(&stamp).unwrap();
+        let file_identity = fs::metadata(&public[0]).unwrap().ino();
+        for damaged_stamp in [None, Some(b"invalid".as_slice())] {
+            if let Some(bytes) = damaged_stamp {
+                fs::write(&stamp, bytes).unwrap();
+            } else {
+                fs::remove_file(&stamp).unwrap();
+            }
+            assert!(build_wasm_canisters_cached(&spec).unwrap().is_reused());
+            assert_eq!(fs::metadata(&public[0]).unwrap().ino(), file_identity);
+            assert_eq!(fs::read(&stamp).unwrap(), expected_stamp);
+        }
+
+        let time = UNIX_EPOCH + Duration::from_secs(3600);
+        for path in [&public[0], &stamp] {
+            fs::File::open(path)
+                .unwrap()
+                .set_times(FileTimes::new().set_modified(time))
+                .unwrap();
+        }
+        let stamp_identity = fs::metadata(&stamp).unwrap().ino();
+        assert!(build_wasm_canisters_cached(&spec).unwrap().is_reused());
+        assert_eq!(fs::metadata(&public[0]).unwrap().ino(), file_identity);
+        assert_eq!(fs::metadata(&public[0]).unwrap().modified().unwrap(), time);
+        assert_eq!(fs::metadata(&stamp).unwrap().ino(), stamp_identity);
+        assert_eq!(fs::metadata(&stamp).unwrap().modified().unwrap(), time);
+
+        fs::remove_file(&public[0]).unwrap();
+        assert!(build_wasm_canisters_cached(&spec).unwrap().is_reused());
+        assert_eq!(fs::read(&public[0]).unwrap(), original);
+        assert_eq!(fs::metadata(&stamp).unwrap().ino(), stamp_identity);
+        drop(reused);
+        drop(cold);
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn warm_wasm_publication_detaches_linked_or_restricted_outputs_and_stamps() {
+    use super::{artifact_stamp_path, build_wasm_canisters_cached, expected_artifacts};
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
+
+    let (root, spec) = fake_wasm_build_spec("warm-wasm-ownership");
+    let cold = build_wasm_canisters_cached(&spec).unwrap();
+    let public = expected_artifacts(&spec, &spec.target_dir);
+    let cached = &cold.record().artifacts()[0];
+    let public_stamp = artifact_stamp_path(&public[0]);
+    let cached_stamp = artifact_stamp_path(cached);
+    let expected = fs::read(cached).unwrap();
+    let expected_stamp = fs::read(&cached_stamp).unwrap();
+    for case in ["symlink", "hardlink", "readonly", "executable"] {
+        for (source, destination) in [(cached, &public[0]), (&cached_stamp, &public_stamp)] {
+            fs::remove_file(destination).unwrap();
+            match case {
+                "symlink" => symlink(source, destination).unwrap(),
+                "hardlink" => fs::hard_link(source, destination).unwrap(),
+                _ => {
+                    fs::copy(source, destination).unwrap();
+                    let mode = if case == "readonly" { 0o444 } else { 0o755 };
+                    fs::set_permissions(destination, fs::Permissions::from_mode(mode)).unwrap();
+                }
+            }
+        }
+        assert!(build_wasm_canisters_cached(&spec).unwrap().is_reused());
+        for destination in [&public[0], &public_stamp] {
+            let metadata = fs::symlink_metadata(destination).unwrap();
+            assert!(metadata.is_file(), "{case}");
+            assert_eq!(metadata.nlink(), 1, "{case}");
+            assert_eq!(metadata.mode() & 0o600, 0o600, "{case}");
+            assert_eq!(metadata.mode() & 0o7111, 0, "{case}");
+        }
+        assert_eq!(fs::read(&public[0]).unwrap(), expected);
+        assert_eq!(fs::read(&public_stamp).unwrap(), expected_stamp);
+        fs::write(&public[0], b"changed").unwrap();
+        fs::write(&public_stamp, b"changed").unwrap();
+        assert_eq!(fs::read(cached).unwrap(), expected);
+        assert_eq!(fs::read(&cached_stamp).unwrap(), expected_stamp);
+    }
+    drop(cold);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn warm_wasm_materialization_repairs_only_changed_members() {
+    use super::{
+        artifact_stamp_path, materialize_artifacts, publish_artifact_stamps, validated_artifact_set,
+    };
+    use crate::artifacts::digest::digest_bytes;
+    use std::{fs::FileTimes, os::unix::fs::MetadataExt as _};
+
+    let root = unique_temp_directory("selective-wasm-materialization");
+    let cached = [root.join("first.wasm"), root.join("second.wasm")];
+    fs::write(&cached[0], b"first").unwrap();
+    fs::write(&cached[1], b"second").unwrap();
+    let fingerprint = digest_bytes("wasm-materialization-test-v1", b"fixture");
+    let info = publish_artifact_stamps(&cached, fingerprint).unwrap();
+    let public = [
+        root.join("public-first.wasm"),
+        root.join("public-second.wasm"),
+    ];
+    fs::write(&public[0], b"first").unwrap();
+    fs::write(&public[1], b"wrong!").unwrap();
+    publish_artifact_stamps(&public, fingerprint).unwrap();
+    let stamp = artifact_stamp_path(&public[0]);
+    let time = UNIX_EPOCH + Duration::from_secs(3600);
+    let identities = [&public[0], &stamp].map(|path| {
+        fs::File::open(path)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(time))
+            .unwrap();
+        fs::metadata(path).unwrap().ino()
+    });
+
+    materialize_artifacts(&cached, &public, fingerprint, &info, true).unwrap();
+
+    assert_eq!(fs::read(&public[0]).unwrap(), b"first");
+    assert_eq!(fs::read(&public[1]).unwrap(), b"second");
+    assert_eq!(validated_artifact_set(&public, fingerprint).unwrap(), info);
+    for (path, identity) in [&public[0], &stamp].into_iter().zip(identities) {
+        assert_eq!(fs::metadata(path).unwrap().ino(), identity);
+        assert_eq!(fs::metadata(path).unwrap().modified().unwrap(), time);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_wasm_materialization_does_not_stamp_a_partial_public_set() {
+    use super::{artifact_stamp_path, materialize_artifacts, publish_artifact_stamps};
+    use crate::artifacts::digest::digest_bytes;
+
+    let root = unique_temp_directory("partial-wasm-materialization");
+    let cached = [root.join("first.wasm"), root.join("second.wasm")];
+    for path in &cached {
+        fs::write(path, b"wasm").unwrap();
+    }
+    let fingerprint = digest_bytes("wasm-materialization-test-v1", b"fixture");
+    let info = publish_artifact_stamps(&cached, fingerprint).unwrap();
+    fs::write(root.join("blocked"), b"file").unwrap();
+    let public = [
+        root.join("public/first.wasm"),
+        root.join("blocked/second.wasm"),
+    ];
+    for preserve_matching in [false, true] {
+        let error = materialize_artifacts(&cached, &public, fingerprint, &info, preserve_matching)
+            .expect_err("second destination must fail before any stamp is published");
+        assert!(matches!(
+            error,
+            WasmBuildError::Io {
+                operation: "publish Wasm artifact",
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&public[0]).unwrap(), b"wasm");
+        assert!(!artifact_stamp_path(&public[0]).exists());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
 fn warm_caller_artifacts_reconstruct_a_missing_exact_entry() {
     use super::build_wasm_canisters_cached;
     use crate::artifacts::test_support::fake_wasm_build_spec;
@@ -1314,7 +1574,29 @@ fn warm_caller_artifacts_reconstruct_a_missing_exact_entry() {
     assert!(reused.record().timings().cargo_build().is_none());
     assert_eq!(reused.record().exact_cache_path(), entry);
     assert_eq!(fs::read(&reused.record().artifacts()[0]).unwrap(), expected);
+    fs::write(&reused.record().artifacts()[0], b"corrupt").unwrap();
+    let error = build_wasm_canisters_cached(&spec)
+        .expect_err("an invalid retained entry must not be replaced from public artifacts");
+    assert!(matches!(
+        error,
+        WasmBuildError::Io {
+            operation: "replace retained cache entry",
+            ..
+        }
+    ));
+    assert_eq!(
+        fs::read(&super::expected_artifacts(&spec, &spec.target_dir)[0]).unwrap(),
+        expected
+    );
     drop(reused);
+    let recovered = build_wasm_canisters_cached(&spec)
+        .expect("recover the invalid entry once its consumer releases it");
+    assert!(recovered.is_reused());
+    assert_eq!(
+        fs::read(&recovered.record().artifacts()[0]).unwrap(),
+        expected
+    );
+    drop(recovered);
     assert!(
         entry.is_dir(),
         "successful reconstruction must survive record drop"

@@ -29,8 +29,9 @@ use super::{
         record_cache_maintenance, remove_path_if_present, remove_unretained_entry,
     },
     digest::{
-        InputDigest, InputHasher, LabeledPathDigestCache, copy_file_atomic, digest_bytes,
-        digest_file, digest_labeled_paths_composable, os_bytes, write_atomic,
+        FileDigest, InputDigest, InputHasher, LabeledPathDigestCache, copy_file_atomic,
+        destination_matches_bytes, destination_matches_digest, digest_bytes, digest_file,
+        digest_labeled_paths_composable, os_bytes, write_atomic,
     },
     wasm::wasm_path,
 };
@@ -2431,6 +2432,14 @@ fn clear_shared_incremental_target_contents(target_dir: &Path) -> Result<(), Was
 /// Explicit immutable-source sessions and prepared readers skip that warm
 /// revalidation under their source-lease contract. Failed or interrupted
 /// builds never publish a successful stamp.
+///
+/// A verified exact entry owns the bytes for its fingerprint. Warm acquisitions
+/// repair public outputs and stamps to match it; matching independent writable
+/// files owned by the effective user stay in place on Unix. If the exact entry
+/// is missing or invalid, a fully stamped public set may reconstruct it unless
+/// an acquisition record still retains that entry. Cold publication and
+/// non-Unix materialization use atomic replacement. Callers must coordinate
+/// other writers to mutable public destinations and treat retained paths as read-only.
 pub fn build_wasm_canisters_cached(
     spec: &WasmBuildSpec,
 ) -> Result<WasmBuildOutcome, WasmBuildError> {
@@ -2883,25 +2892,34 @@ fn try_reuse_wasm_artifacts(
     let fingerprint = resolved.fingerprint;
     let artifacts = expected_artifacts(spec, &spec.target_dir);
     let cache_entry = cache_entry_directory(spec, fingerprint);
-    let artifacts_match = progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-        artifact_set_matches(&artifacts, fingerprint)
+    let cached_artifacts = expected_artifacts(spec, &cache_entry);
+    let cached_info = progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
+        validated_artifact_set(&cached_artifacts, fingerprint)
     });
-    if artifacts_match {
-        ensure_exact_cache_entry(spec, &artifacts, &cache_entry, fingerprint, progress)?;
+    let artifact_info = if let Some(info) = cached_info {
+        info
     } else {
-        let cached_artifacts = expected_artifacts(spec, &cache_entry);
-        let cached_artifacts_match = progress
+        // Recover a missing or invalid exact entry from fully verified public
+        // artifacts. A valid retained entry always owns the bytes for its key.
+        let public_is_current = progress
             .run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-                artifact_set_matches(&cached_artifacts, fingerprint)
+                validated_artifact_set(&artifacts, fingerprint).is_some()
             });
-        if !cached_artifacts_match {
+        if !public_is_current {
             return Ok(None);
         }
-        progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-            materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
-            record_cache_entry_use(&cache_entry)
-        })?;
-    }
+        reconstruct_exact_cache_entry(spec, &artifacts, &cache_entry, fingerprint, progress)?
+    };
+    progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
+        materialize_artifacts(
+            &cached_artifacts,
+            &artifacts,
+            fingerprint,
+            &artifact_info,
+            true,
+        )?;
+        record_cache_entry_use(&cache_entry)
+    })?;
     let input_resolution = validate_reused_inputs(spec, resolved, shared_incremental, progress)?;
     Ok(Some(WasmBuildOutcome::Reused(complete_build_record(
         spec,
@@ -2950,26 +2968,14 @@ fn verify_resolved_inputs(
     Ok(verified)
 }
 
-fn ensure_exact_cache_entry(
+fn reconstruct_exact_cache_entry(
     spec: &WasmBuildSpec,
     artifacts: &[PathBuf],
     cache_entry: &Path,
     fingerprint: InputDigest,
     progress: &mut ProgressReporter<'_>,
-) -> Result<(), WasmBuildError> {
+) -> Result<Vec<FileDigest>, WasmBuildError> {
     let cached_artifacts = expected_artifacts(spec, cache_entry);
-    let entry_is_current =
-        progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
-            if artifact_set_matches(&cached_artifacts, fingerprint) {
-                record_cache_entry_use(cache_entry)?;
-                Ok::<_, WasmBuildError>(true)
-            } else {
-                Ok(false)
-            }
-        })?;
-    if entry_is_current {
-        return Ok(());
-    }
     progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
         remove_unretained_entry(cache_entry).map_err(wasm_cache_fs_error)?;
         create_dir_all(
@@ -2980,8 +2986,13 @@ fn ensure_exact_cache_entry(
     let incomplete = IncompleteBuildDirectory::new(cache_entry.to_owned());
     let result = progress.run_phase(WasmBuildProgressPhase::ArtifactPublication, || {
         copy_wasm_artifacts(artifacts, &cached_artifacts)?;
-        publish_artifact_stamps(&cached_artifacts, fingerprint)?;
-        record_cache_entry_use(cache_entry)
+        let missing = missing_artifacts(&cached_artifacts);
+        if !missing.is_empty() {
+            return Err(WasmBuildError::MissingArtifacts { paths: missing });
+        }
+        // Public sources are mutable. Hash the private copies before stamping;
+        // only these newly verified digests may feed subsequent materialization.
+        publish_artifact_stamps(&cached_artifacts, fingerprint)
     });
     finish_fingerprint_build(result, incomplete, progress)
 }
@@ -3053,8 +3064,8 @@ fn build_wasm_cache_miss(
             if cargo_target_dir != cache_entry {
                 copy_wasm_artifacts(&built_artifacts, &cached_artifacts)?;
             }
-            publish_artifact_stamps(&cached_artifacts, fingerprint)?;
-            materialize_artifacts(&cached_artifacts, &artifacts, fingerprint)?;
+            let info = publish_artifact_stamps(&cached_artifacts, fingerprint)?;
+            materialize_artifacts(&cached_artifacts, &artifacts, fingerprint, &info, false)?;
             record_cache_entry_use(&cache_entry)
         })?;
         drop(publication_guard);
@@ -4775,11 +4786,27 @@ fn cache_entry_directory(spec: &WasmBuildSpec, fingerprint: InputDigest) -> Path
         .join(fingerprint.to_hex())
 }
 
-fn artifact_set_matches(artifacts: &[PathBuf], fingerprint: InputDigest) -> bool {
-    artifacts.iter().all(|path| {
-        fs::metadata(path).is_ok_and(|metadata| metadata.is_file() && metadata.len() > 0)
-            && cache_stamp_matches(path, fingerprint)
-    })
+fn validated_artifact_set(
+    artifacts: &[PathBuf],
+    fingerprint: InputDigest,
+) -> Option<Vec<FileDigest>> {
+    artifacts
+        .iter()
+        .map(|artifact| {
+            let metadata = fs::metadata(artifact).ok()?;
+            if !metadata.is_file() || metadata.len() == 0 {
+                return None;
+            }
+            let stamp = fs::read_to_string(artifact_stamp_path(artifact)).ok()?;
+            // A different build cannot be a hit. Inspect its small header before
+            // reading the Wasm bytes; then verify the complete exact stamp.
+            if !stamp.starts_with(&artifact_stamp_header(fingerprint)) {
+                return None;
+            }
+            let info = digest_file("wasm-artifact-v1", artifact).ok()?;
+            (stamp == artifact_stamp_contents(fingerprint, &info)).then_some(info)
+        })
+        .collect()
 }
 
 fn missing_artifacts(artifacts: &[PathBuf]) -> Vec<PathBuf> {
@@ -4790,22 +4817,6 @@ fn missing_artifacts(artifacts: &[PathBuf]) -> Vec<PathBuf> {
         })
         .cloned()
         .collect()
-}
-
-fn cache_stamp_matches(artifact: &Path, fingerprint: InputDigest) -> bool {
-    let stamp_path = artifact_stamp_path(artifact);
-    let Ok(stamp) = fs::read_to_string(stamp_path) else {
-        return false;
-    };
-    // A different build cannot be a hit, regardless of artifact contents.
-    // Check its small stamp before reading and hashing the entire Wasm file.
-    if !stamp.starts_with(&artifact_stamp_header(fingerprint)) {
-        return false;
-    }
-    let Ok(expected) = artifact_stamp_contents(artifact, fingerprint) else {
-        return false;
-    };
-    stamp == expected
 }
 
 fn artifact_stamp_path(artifact: &Path) -> PathBuf {
@@ -4820,49 +4831,73 @@ fn artifact_stamp_header(fingerprint: InputDigest) -> String {
     format!("{CACHE_FORMAT_VERSION}\nbuild-sha256:{fingerprint}\n")
 }
 
-fn artifact_stamp_contents(artifact: &Path, fingerprint: InputDigest) -> io::Result<String> {
-    let (_, artifact_digest) = digest_file("wasm-artifact-v1", artifact)?;
-    Ok(format!(
-        "{}artifact-sha256:{artifact_digest}\n",
+fn artifact_stamp_contents(fingerprint: InputDigest, info: &FileDigest) -> String {
+    format!(
+        "{}artifact-sha256:{}\n",
         artifact_stamp_header(fingerprint),
-    ))
+        info.digest,
+    )
+}
+
+fn write_artifact_stamp(
+    artifact: &Path,
+    fingerprint: InputDigest,
+    info: &FileDigest,
+    preserve_matching: bool,
+) -> Result<(), WasmBuildError> {
+    let stamp_path = artifact_stamp_path(artifact);
+    let stamp = artifact_stamp_contents(fingerprint, info);
+    if preserve_matching && destination_matches_bytes(&stamp_path, stamp.as_bytes()) {
+        return Ok(());
+    }
+    write_atomic(&stamp_path, stamp.as_bytes()).map_err(|source| WasmBuildError::Io {
+        operation: "publish Wasm build stamp",
+        path: stamp_path,
+        source,
+    })
 }
 
 fn publish_artifact_stamps(
     artifacts: &[PathBuf],
     fingerprint: InputDigest,
-) -> Result<(), WasmBuildError> {
+) -> Result<Vec<FileDigest>, WasmBuildError> {
+    let mut info = Vec::with_capacity(artifacts.len());
     for artifact in artifacts {
-        let stamp_path = artifact_stamp_path(artifact);
-        let stamp = artifact_stamp_contents(artifact, fingerprint).map_err(|source| {
-            WasmBuildError::Io {
+        let digest =
+            digest_file("wasm-artifact-v1", artifact).map_err(|source| WasmBuildError::Io {
                 operation: "hash built Wasm artifact",
                 path: artifact.clone(),
                 source,
-            }
-        })?;
-        write_atomic(&stamp_path, stamp.as_bytes()).map_err(|source| WasmBuildError::Io {
-            operation: "publish Wasm build stamp",
-            path: stamp_path,
-            source,
-        })?;
+            })?;
+        write_artifact_stamp(artifact, fingerprint, &digest, false)?;
+        info.push(digest);
     }
-    Ok(())
+    Ok(info)
 }
 
 fn materialize_artifacts(
     cached_artifacts: &[PathBuf],
     artifacts: &[PathBuf],
     fingerprint: InputDigest,
+    artifact_info: &[FileDigest],
+    preserve_matching: bool,
 ) -> Result<(), WasmBuildError> {
-    for (cached, artifact) in cached_artifacts.iter().zip(artifacts) {
+    for ((cached, artifact), info) in cached_artifacts.iter().zip(artifacts).zip(artifact_info) {
+        if preserve_matching && destination_matches_digest("wasm-artifact-v1", artifact, info) {
+            continue;
+        }
         copy_file_atomic(cached, artifact).map_err(|source| WasmBuildError::Io {
             operation: "publish Wasm artifact",
             path: artifact.clone(),
             source,
         })?;
     }
-    publish_artifact_stamps(artifacts, fingerprint)
+    // Complete every copy before stamping any public output. A copy failure
+    // must not publish stamps for a partially materialized set.
+    for (artifact, info) in artifacts.iter().zip(artifact_info) {
+        write_artifact_stamp(artifact, fingerprint, info, preserve_matching)?;
+    }
+    Ok(())
 }
 
 fn copy_wasm_artifacts(

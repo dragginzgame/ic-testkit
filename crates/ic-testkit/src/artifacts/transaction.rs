@@ -20,8 +20,8 @@ use super::{
         try_lock_cache_file,
     },
     digest::{
-        InputDigest, InputHasher, copy_file_atomic, digest_bytes, digest_file,
-        digest_labeled_paths, os_bytes, write_atomic,
+        FileDigest, InputDigest, InputHasher, copy_file_atomic, destination_matches_digest,
+        digest_bytes, digest_file, digest_labeled_paths, os_bytes, write_atomic,
     },
     wasm_cache::{
         ResolvedCargoBuildInputs, WasmBuildError, WasmBuildSpec, resolve_cargo_build_inputs,
@@ -215,11 +215,6 @@ struct OutputSpec {
 struct ResolvedKey {
     key: InputDigest,
     input_digest: InputDigest,
-}
-
-struct ArtifactInfo {
-    bytes: u64,
-    digest: InputDigest,
 }
 
 impl ArtifactCacheSpec {
@@ -1375,7 +1370,7 @@ fn validated_cache_outputs(
     spec: &ArtifactCacheSpec,
     key: InputDigest,
     entry: &Path,
-) -> Result<Option<Vec<ArtifactInfo>>, ArtifactCacheError> {
+) -> Result<Option<Vec<FileDigest>>, ArtifactCacheError> {
     let entry_metadata = match fs::symlink_metadata(entry) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -1422,7 +1417,7 @@ fn validated_cache_outputs(
 fn inspect_complete_output_set(
     spec: &ArtifactCacheSpec,
     root: &Path,
-) -> Result<Vec<ArtifactInfo>, ArtifactCacheError> {
+) -> Result<Vec<FileDigest>, ArtifactCacheError> {
     let mut info = Vec::new();
     let mut invalid = Vec::new();
     let output_directory = root.join("outputs");
@@ -1472,7 +1467,7 @@ fn inspect_complete_output_set(
 fn inspect_cached_output_set(
     spec: &ArtifactCacheSpec,
     root: &Path,
-) -> Result<Option<Vec<ArtifactInfo>>, ArtifactCacheError> {
+) -> Result<Option<Vec<FileDigest>>, ArtifactCacheError> {
     let mut info = Vec::new();
     let outputs = &spec.outputs;
     for (index, output) in outputs.iter().enumerate() {
@@ -1587,7 +1582,7 @@ fn is_plain_directory(path: &Path, operation: &'static str) -> Result<bool, Arti
 fn inspect_artifact(
     path: &Path,
     validation: ArtifactOutputValidation,
-) -> io::Result<Option<ArtifactInfo>> {
+) -> io::Result<Option<FileDigest>> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -1599,8 +1594,7 @@ fn inspect_artifact(
     if validation == ArtifactOutputValidation::NonEmptyFile && metadata.len() == 0 {
         return Ok(None);
     }
-    let (bytes, digest) = digest_file("artifact-set-output-v1", path)?;
-    Ok(Some(ArtifactInfo { bytes, digest }))
+    digest_file("artifact-set-output-v1", path).map(Some)
 }
 
 fn manifest_header(key: InputDigest) -> String {
@@ -1610,7 +1604,7 @@ fn manifest_header(key: InputDigest) -> String {
 fn manifest_contents(
     key: InputDigest,
     spec: &ArtifactCacheSpec,
-    output_info: &[ArtifactInfo],
+    output_info: &[FileDigest],
 ) -> String {
     let mut manifest = manifest_header(key);
     for ((index, output), info) in spec.outputs.iter().enumerate().zip(output_info) {
@@ -1631,14 +1625,14 @@ fn manifest_contents(
 fn materialize_outputs(
     spec: &ArtifactCacheSpec,
     entry: &Path,
-    verified_outputs: Option<&[ArtifactInfo]>,
+    verified_outputs: Option<&[FileDigest]>,
 ) -> Result<(), ArtifactCacheError> {
     for (index, output) in spec.outputs.iter().enumerate() {
         // Only a hit supplies the complete output set checked against its manifest.
         // A cold commit always publishes; a hit may leave matching destinations alone.
-        if verified_outputs
-            .is_some_and(|info| destination_matches_artifact(&output.destination, &info[index]))
-        {
+        if verified_outputs.is_some_and(|info| {
+            destination_matches_digest("artifact-set-output-v1", &output.destination, &info[index])
+        }) {
             continue;
         }
         let cached = staged_output_path(entry, index);
@@ -1651,44 +1645,6 @@ fn materialize_outputs(
         })?;
     }
     Ok(())
-}
-
-fn destination_matches_artifact(destination: &Path, expected: &ArtifactInfo) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-
-        let Ok(metadata) = fs::symlink_metadata(destination) else {
-            return false;
-        };
-        // SAFETY: geteuid takes no pointers and has no failure case.
-        let effective_uid = unsafe { libc::geteuid() };
-        // Publication must still detach links and normalize foreign-owned,
-        // restricted or executable files, even when their bytes match. A public
-        // output must not alias a retained cache artifact or another caller-owned file.
-        if !metadata.file_type().is_file()
-            || metadata.nlink() != 1
-            || metadata.uid() != effective_uid
-            || metadata.mode() & 0o600 != 0o600
-            || metadata.mode() & 0o7111 != 0
-            || metadata.len() != expected.bytes
-        {
-            return false;
-        }
-        // Failure to read a destination is not a hit. The ordinary copy path
-        // can still replace an unreadable file in a writable parent directory.
-        inspect_artifact(destination, ArtifactOutputValidation::RegularFile).is_ok_and(|info| {
-            info.is_some_and(|actual| {
-                actual.bytes == expected.bytes && actual.digest == expected.digest
-            })
-        })
-    }
-    #[cfg(not(unix))]
-    {
-        // Preserve replacement where a portable single-link check is unavailable.
-        let _ = (destination, expected);
-        false
-    }
 }
 
 fn perform_maintenance_locked(

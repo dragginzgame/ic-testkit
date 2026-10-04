@@ -138,10 +138,68 @@ pub(super) fn digest_bytes(domain: &str, value: &[u8]) -> InputDigest {
     hasher.finish()
 }
 
-pub(super) fn digest_file(domain: &str, path: &Path) -> io::Result<(u64, InputDigest)> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct FileDigest {
+    pub(super) bytes: u64,
+    pub(super) digest: InputDigest,
+}
+
+pub(super) fn digest_file(domain: &str, path: &Path) -> io::Result<FileDigest> {
     let mut hasher = InputHasher::new(domain);
     let bytes = hasher.file_field("content", path)?;
-    Ok((bytes, hasher.finish()))
+    Ok(FileDigest {
+        bytes,
+        digest: hasher.finish(),
+    })
+}
+
+/// Only reuse an independent, caller-owned writable destination. The caller
+/// coordinates other writers and supplies a digest from a verified cache entry.
+pub(super) fn destination_matches_digest(
+    domain: &str,
+    destination: &Path,
+    expected: &FileDigest,
+) -> bool {
+    destination_is_reusable(destination, expected.bytes)
+        && digest_file(domain, destination).is_ok_and(|actual| actual == *expected)
+}
+
+pub(super) fn destination_matches_bytes(destination: &Path, expected: &[u8]) -> bool {
+    destination_is_reusable(
+        destination,
+        u64::try_from(expected.len()).expect("artifact byte length must fit in u64"),
+    ) && fs::read(destination).is_ok_and(|actual| actual == expected)
+}
+
+fn destination_is_reusable(destination: &Path, expected_bytes: u64) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let Ok(metadata) = fs::symlink_metadata(destination) else {
+            return false;
+        };
+        // SAFETY: geteuid takes no pointers and has no failure case.
+        let effective_uid = unsafe { libc::geteuid() };
+        // Detach links and normalize foreign-owned, restricted or executable
+        // files, even when their bytes match a retained artifact.
+        if !metadata.file_type().is_file()
+            || metadata.nlink() != 1
+            || metadata.uid() != effective_uid
+            || metadata.mode() & 0o600 != 0o600
+            || metadata.mode() & 0o7111 != 0
+            || metadata.len() != expected_bytes
+        {
+            return false;
+        }
+        true
+    }
+    #[cfg(not(unix))]
+    {
+        // Preserve replacement where a portable single-link check is unavailable.
+        let _ = (destination, expected_bytes);
+        false
+    }
 }
 
 pub(super) fn digest_labeled_paths<L: AsRef<Path>, P: AsRef<Path>>(
@@ -560,12 +618,12 @@ mod tests {
         ] {
             let data = &contents[..length];
             fs::write(&source, data).expect("write source");
-            let (bytes, streamed) = digest_file("streaming-test-v1", &source).expect("digest file");
+            let streamed = digest_file("streaming-test-v1", &source).expect("digest file");
             assert_eq!(
-                bytes,
+                streamed.bytes,
                 u64::try_from(length).expect("fixture length must fit in u64")
             );
-            assert_eq!(streamed, digest_bytes("streaming-test-v1", data));
+            assert_eq!(streamed.digest, digest_bytes("streaming-test-v1", data));
         }
 
         write_atomic(&destination, b"old").expect("write original destination");
