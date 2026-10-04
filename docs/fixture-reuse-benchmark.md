@@ -147,3 +147,211 @@ Focused sampler checks:
 ```sh
 python3 scripts/dev/test-fixture-reuse-benchmark.py
 ```
+
+## Released 0.14.7 baseline
+
+Revision `87d4dd282804bc4a74554507ea7a3e344161a3cc` was measured with a
+clean working tree on 2026-10-04: PocketIC 16.0.0, WSL2 Linux, 64 logical CPUs,
+Rust 1.99.0, host release profile, and probe dev profile. The probe Wasm SHA-256
+was `210fa3962038089637dbaa4f4763ac90647451190879b2e8ef2e2bebed4f6259`.
+The longer-batch command above ran 100 tasks per mode, two workers, three
+alternating repeats, and 1 MiB of state per canister. All 600 measured tasks
+validated their restored state and subsequent mutations.
+
+| Mode | Median task-loop wall | Median including preparation and instance teardown | Median tasks/s | Median sampled peak MiB |
+| --- | ---: | ---: | ---: | ---: |
+| Pooled, capacity 1 | 10.58 s | 12.17 s | 9.45 | 564 |
+| Pooled, capacity 2 | 5.04 s | 7.87 s | 19.83 | 774 |
+
+Capacity two reduced task-loop wall time by about 52% and total fixture time by
+35%, with about 37% more sampled process-tree RSS. This compares capacities on
+the same release; it does not measure a release-to-release speedup. The earlier
+samples have a different Wasm identity and are separate baselines.
+
+Across the 300 tasks at each capacity, mean capacity wait was 103.61 ms at
+capacity one and 0.00049 ms at capacity two. Mean restore time was 18.65/17.22 ms,
+validation 36.66/36.32 ms, and task body 49.27/47.79 ms respectively. Reset and
+readiness hooks remain no-ops in this probe. These results support allowing two
+leases for this workload when memory permits. They do not justify weakening
+restore validation or predict another suite's optimal capacity.
+
+## Warm artifact setup on 0.14.7
+
+A separate exploratory release-profile probe measured six existing public
+acquisition paths at the same revision and compiler. Its dependency versions
+and checksums matched the workspace lockfile. Each artifact size used 30
+acquisitions per mode and three rotating repeats, for 540 measured acquisitions.
+All 1,080 acquisitions were cache hits, retained the expected fingerprint where
+applicable, and returned bytes identical to the seeded artifact. Byte checks
+ran after timing stopped.
+
+The private, dependency-free Cargo workspace contained one dev-profile Wasm
+crate and 64 additional source files containing 1 MiB of comments in total.
+The extra files exercise conservative source hashing, even though they are not
+compiled modules. Exported data arrays of 1 MiB and 16 MiB produced artifacts of
+2,722,789 and 18,451,433 bytes, including debug information. Measurements were
+serial, with warm filesystem caches and no lock contention. Initial build,
+session seeding, snapshot preparation, and transaction seeding were excluded.
+Sources had no concurrent writer; tool executables, configuration, and relevant
+environment values were held constant throughout the experiment.
+
+| Warm path | Mean wall ms, 2.60 MiB Wasm | Mean wall ms, 17.60 MiB Wasm |
+| --- | ---: | ---: |
+| Ordinary `build_wasm_canisters_cached` | 190.75 | 211.19 |
+| Seeded `WasmBuildSession::build_batch` | 5.68 | 25.94 |
+| Prepared `WasmBuildInputSnapshot::build_batch` | 5.72 | 25.51 |
+| Seeded session with public Wasm removed before each acquisition | 14.05 | 53.51 |
+| `prepare_artifact_cache`, retained Wasm input | 16.89 | 79.39 |
+| Same transaction with `with_cargo_build_inputs` | 206.16 | 271.24 |
+
+The transaction recipe copied one retained Wasm into one public output; it did
+not run an optimizer. The seed build record stayed alive throughout processing.
+Removing the public Wasm before each rematerialization sample was outside the
+timed region. Sessions and snapshots used their full immutability contract;
+holding an unrelated mutex alone does not establish that contract.
+
+Ordinary Wasm input resolution averaged 184.79/184.45 ms: tool identity
+88.69/88.54 ms, Cargo metadata 91.90/91.62 ms, discovery 0.44/0.44 ms, and hashing
+3.74/3.83 ms. Warm leased paths reported zero input-resolution time because
+their immutable input snapshots were already prepared. Uncontended exact-lock
+wait averaged at most 0.003 ms; this does not include every lock-related filesystem
+operation or predict contended behavior.
+
+For the transaction with only a retained Wasm input, mean input capture was
+5.25/36.05 ms, cache lookup 1.90/11.58 ms, and materialization 7.45/29.21 ms.
+Adding the Cargo guard raised input capture to 193.01/226.35 ms. These guards
+check the complete Cargo identity as well as source content; they are needed
+when the external operation depends on those inputs. The remaining Wasm record
+time includes artifact verification, publication, retention, and metadata writes;
+the available successful-build timings do not isolate those costs. The installed
+`perf` launcher lacked support for this WSL kernel, so no CPU samples were taken.
+
+The measured choices are:
+
+- Reuse a session for sequential acquisition or a prepared snapshot for shared
+  readers only while the caller prevents changes to every covered executable,
+  source, manifest, configuration, additional input, and relevant environment
+  value. The ordinary path retains full revalidation when that guarantee is
+  unavailable. This experiment did not measure concurrent prepared readers.
+- For a transformation that consumes only retained Wasm, declare that Wasm,
+  transformation tools, arguments, environment, and other actual inputs. Keep
+  the build record alive. Add a Cargo-input guard when the transformation also
+  depends on the Cargo workspace or resolved build identity.
+- Preserve content checks and atomic publication. Public outputs are mutable,
+  cache contents can be corrupted, and input changes can race acquisition.
+  Larger artifacts make those costs visible; the measurements do not establish
+  a safe reason to remove them.
+
+These are controlled setup measurements, not downstream test-suite speedups.
+Savings only affect suites that repeat the measured setup operations; they do
+not reduce PocketIC query or restore latency.
+
+## 0.14.8 output-reuse comparison
+
+The output-reuse change retains the lengths and digests already
+computed while validating a transactional cache entry. On a hit, it checks
+each public output against that verified information before deciding whether
+to copy. On Unix, a matching regular file owned by the effective user, with one
+link, owner read/write permissions, and no executable or special permission bits
+remains in place. Links, foreign-owned files, restricted files, missing files,
+and changed contents still take the atomic replacement path. Cold commits always publish, and non-Unix hosts keep
+the existing replacement behavior. Cache schema and content validation, input
+revalidation, locking, and retention are unchanged. Matching files retain their
+inode, modification time, and permissions; acquisitions do not promise a fresh
+modification time on every hit.
+
+A focused probe compared release-profile binaries built from released revision
+`87d4dd2` and that revision plus the ownership-checked output fast path and
+fixed 64 KiB heap hashing buffer, before the small-file buffer-sizing and label
+ordering follow-ups below. Both used the same compiler
+and locked dependencies described above. One fixed private Wasm input and one
+public output exercised ordinary transactional acquisition without a Cargo
+guard. Both binaries reused the same private cache and input bytes. Three paired
+process runs alternated before/after, after/before, then before/after; the size
+order also alternated. Each process measured 30 acquisitions per condition, for
+90 samples per size, condition, and implementation. Cold preparation, deliberate
+destination deletion or corruption, and byte verification were outside timing.
+All 1,440 acquisitions reused the expected key and returned identical public and
+retained bytes.
+
+| Destination before acquisition | 2.60 MiB: baseline mean ms | 2.60 MiB: updated mean ms | 17.60 MiB: baseline mean ms | 17.60 MiB: updated mean ms |
+| --- | ---: | ---: | ---: | ---: |
+| Matching | 15.70 | 10.48 | 77.55 | 59.09 |
+| Missing | 15.02 | 14.76 | 73.60 | 72.99 |
+| Changed length | 15.53 | 15.04 | 75.76 | 74.39 |
+| Changed contents, same length | 15.72 | 17.32 | 77.43 | 87.56 |
+
+Matching-output acquisition was about 33%/24% faster in this probe. Missing and
+different-size repairs stayed within about 3% of baseline; these small changes
+do not establish an improvement or regression. A same-size mismatch needs an
+extra digest read before copying and was about 10%/13% slower. The fast path
+therefore benefits repeated acquisition of stable public outputs, with a measured
+cost when their contents change without changing length. No downstream suite
+speedup or concurrent throughput improvement was measured.
+
+Focused checks cover unchanged inode/time, same-length corruption, missing and
+explicitly valid empty outputs, detachment of matching symlinks and hard links,
+restricted and executable permissions, and unchanged cold publication. Existing
+checks continue to cover corrupt retained entries, Cargo input guards, process
+coordination, batch reuse, and consumption during pruning.
+
+## Streamed hashing buffer follow-up
+
+A direct hashing probe compiled the actual before/after digest modules into one
+release-profile executable and alternated their order over five pairs per file
+size. The baseline uses a 16 KiB stack buffer; the initial implementation uses a
+fixed 64 KiB heap buffer. Each small-file batch hashed 10,000 times; each artifact
+batch hashed 100 times. The final digest in every batch matched the baseline,
+and all calls completed. There were 50 timed batches and 302,000 hashing
+operations. Inputs were private, immutable during timing, and resident in warm
+filesystem caches. Both modules used the same SHA-256 implementation and framing.
+
+| File size | Mean per hash, 16 KiB buffer | Mean per hash, 64 KiB heap buffer |
+| --- | ---: | ---: |
+| Empty | 4.79 microseconds | 5.19 microseconds |
+| 1 KiB | 5.99 microseconds | 6.38 microseconds |
+| 16 KiB | 13.13 microseconds | 13.60 microseconds |
+| 2.60 MiB | 1.43 ms | 1.35 ms |
+| 17.60 MiB | 11.68 ms | 11.17 ms |
+
+The fixed larger buffer showed roughly 4–5% lower large-file hashing cost.
+Small-file hashing was 4–8% slower, an additional 0.4–0.5 microseconds per call.
+The buffer is on the heap; thread stack usage is not increased by a larger local
+array. There is no new buffer setting or digest format. These measurements cover
+Linux on this host, not cold storage,
+other platforms, or complete downstream test runs.
+
+The final implementation sizes the buffer to the opened file's declared length,
+with a one-byte minimum and a 64 KiB maximum. This avoids a full-size allocation
+for small source files while retaining large-file read sizes. The nonempty
+minimum allows empty-file growth to be detected. Reading beyond the declared
+length stops immediately and returns the existing size-mismatch error; reaching
+EOF before that length still fails. The maintained streaming regression checks
+empty and small files, the buffer boundary, and a partial final chunk. A local
+read-only probe of `/proc/self/cmdline`, which declares zero length but returns
+bytes, confirmed rejection; it is not retained as a platform-specific host-file
+test.
+
+A follow-up compiled the released, fixed-buffer, and final length-sized-buffer
+modules together and alternated them over five pairs per size. All 75 batches
+completed 453,000 hash operations and every final digest matched the released
+implementation. Timing results were highly variable: host load exceeded 98,
+and identical fixed-buffer 2.60 MiB batches varied from about 2 to 89 ms per
+hash. Those timings are excluded from performance claims. The tables above
+describe the earlier fixed-buffer experiments, not measurements of this final
+small-file refinement. The follow-up sources and raw results are retained in
+the local review bundle.
+
+Artifact-spec builders also store opaque identity and Cargo input labels in
+canonical order, as they already do for output names. Key calculation consumes
+that order directly instead of allocating and sorting temporary reference lists
+on every source check. Duplicate labels are still rejected before acquisition;
+existing key framing and Cargo source guards are preserved. Reordered identity
+and Cargo declarations now compare equal as specifications. This ownership
+cleanup has no measured performance claim.
+
+A read-only probe using a foreign-owned regular file also confirmed that
+permission bits alone allowed a false destination match. The same probe
+rejected reuse after the effective-user ownership check was added. The maintained
+tests use private fixtures; this local probe is not retained as a test that
+depends on host filesystem layout.

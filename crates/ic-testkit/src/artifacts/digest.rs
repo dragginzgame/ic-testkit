@@ -99,7 +99,11 @@ impl InputHasher {
         self.field_header(label, expected_len);
 
         let mut actual_len = 0_u64;
-        let mut buffer = [0_u8; 16 * 1024];
+        // Small sources need only their declared length; large artifacts use bounded reads.
+        // Even empty files need a nonempty read buffer to detect growth.
+        let buffer_len = usize::try_from(expected_len.clamp(1, 64 * 1024))
+            .expect("bounded artifact buffer length must fit in usize");
+        let mut buffer = vec![0_u8; buffer_len];
         loop {
             let read = file.read(&mut buffer)?;
             if read == 0 {
@@ -107,6 +111,9 @@ impl InputHasher {
             }
             actual_len = actual_len
                 .saturating_add(u64::try_from(read).expect("artifact read length must fit in u64"));
+            if actual_len > expected_len {
+                break;
+            }
             self.0.update(&buffer[..read]);
         }
         if actual_len != expected_len {
@@ -537,23 +544,34 @@ mod tests {
         let root = unique_temp_directory("streaming-digest");
         let source = root.join("source");
         let destination = root.join("destination");
-        let mut contents = vec![0_u8; 192 * 1024];
+        let mut contents = vec![0_u8; 192 * 1024 + 37];
         for (index, byte) in contents.iter_mut().enumerate() {
             *byte = u8::try_from(index % 251).expect("test byte must fit");
         }
-        fs::write(&source, &contents).expect("write source");
-
-        let (bytes, streamed) = digest_file("streaming-test-v1", &source).expect("digest file");
-        assert_eq!(
-            bytes,
-            u64::try_from(contents.len()).expect("fixture length must fit in u64")
-        );
-        assert_eq!(streamed, digest_bytes("streaming-test-v1", &contents));
+        for length in [
+            0,
+            1,
+            1024,
+            16 * 1024,
+            64 * 1024 - 1,
+            64 * 1024,
+            64 * 1024 + 1,
+            contents.len(),
+        ] {
+            let data = &contents[..length];
+            fs::write(&source, data).expect("write source");
+            let (bytes, streamed) = digest_file("streaming-test-v1", &source).expect("digest file");
+            assert_eq!(
+                bytes,
+                u64::try_from(length).expect("fixture length must fit in u64")
+            );
+            assert_eq!(streamed, digest_bytes("streaming-test-v1", data));
+        }
 
         write_atomic(&destination, b"old").expect("write original destination");
         assert_eq!(
             copy_file_atomic(&source, &destination).expect("copy source atomically"),
-            bytes
+            u64::try_from(contents.len()).expect("fixture length must fit in u64")
         );
         assert_eq!(
             fs::read(&destination).expect("read copied destination"),

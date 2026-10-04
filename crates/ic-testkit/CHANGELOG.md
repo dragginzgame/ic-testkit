@@ -4,6 +4,70 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.8
+
+This patch release avoids replacing already-correct public artifact outputs on
+Unix cache hits, improves streamed hashing of large files, and gives artifact
+builders ownership of label ordering. Public APIs and
+persisted layouts are unchanged; existing `0.14` callers need no source or cache
+migration. Repository-owned format
+identifiers remain `v1`.
+
+- Cache-entry validation returns its already computed output lengths and
+  digests for destination verification. Matching regular files owned by the
+  effective user, with one link, owner read/write permissions, and no executable
+  or special permission bits remain in place. Their inode, modification time,
+  and permissions are retained; callers must not rely on every cache hit
+  refreshing the modification time.
+- Missing, changed, linked, foreign-owned, and restricted destinations still
+  receive atomic replacement. Cold commits and non-Unix hosts retain their
+  existing copying behavior. Complete schema and content checks, input
+  revalidation, lock ordering, retention, and the responsibility to coordinate other destination
+  writers are preserved.
+- Streamed file hashing uses a heap buffer sized to the opened file's length,
+  between one byte and 64 KiB. Small sources avoid full-size buffers, and empty
+  files retain a nonempty read buffer so growth cannot pass unnoticed. Growth
+  beyond the declared length fails immediately; short reads at EOF remain
+  invalid. Digest framing, input identities, and the thread-stack budget are
+  preserved. An earlier fixed-buffer probe measured about 4–5% less hashing
+  time for 2.60/17.60 MiB files and 0.4–0.5 microseconds more for small files.
+  Length-sized-buffer follow-up timings varied under high host load, so no
+  further speedup is claimed.
+- Artifact-spec builders canonicalize identity and Cargo input label order,
+  just as they already canonicalize output names. Key calculation reads that
+  order directly instead of allocating and sorting temporary reference lists on
+  each source check. Reordered declarations now also compare equal as specs;
+  key bytes, duplicate-label rejection, and Cargo input guards are preserved.
+  No performance gain is claimed for this small ownership cleanup.
+- Paired release-profile measurements found matching-output acquisition about
+  33% faster for 2.60 MiB artifacts and 24% faster for 17.60 MiB artifacts.
+  Same-size changed outputs were 10–13% slower because they require verification
+  before copying; missing and different-size repairs stayed within about 3% of
+  baseline. These controlled component measurements do not establish downstream
+  suite speedups. The repository performance guide records the methodology and
+  the released `0.14.7` fixture and artifact baselines. These measurements precede
+  the small-file buffer-sizing and label-ordering follow-ups.
+
+Thirty-eight targeted unit and integration checks pass, including public file
+identity and timestamp preservation, missing/changed/empty outputs, detachment
+of matching symlinks and hard links, restricted permissions, cold publication,
+cache corruption, Cargo input guards, process coordination, batch reuse, and
+retention during pruning, native digest identities, exclusion semantics, and
+streaming across empty/small files, buffer boundaries, and a partial final chunk.
+Existing transaction tests also cover
+reordered identity/Cargo declarations and duplicate Cargo labels rejected before
+cache initialization. A read-only local probe also confirmed
+foreign-owned matching files take the replacement path; it is not a
+host-file-dependent CI test. Another read-only local probe verified rejection
+when a zero-length file yields bytes. The earlier 1,440-acquisition paired experiment reused the
+expected key and returned identical public and retained bytes. Fifty hashing
+batches covered 302,000 operations, with every final digest matching the baseline.
+A further 75 batches covered 453,000 operations across the released, fixed-buffer,
+and length-sized-buffer implementations with matching final digests; timings are
+excluded from performance claims because of host-load variance.
+Targeted Clippy, formatting, and diff checks pass; full pre-push validation
+remains maintainer-owned.
+
 ## 0.14.7
 
 This patch release avoids Cargo metadata copies and repeated validation of

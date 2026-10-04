@@ -82,13 +82,28 @@ fn cargo_snapshot_keys_semantic_identity_and_guards_raw_workspace_inputs() {
     let before = resolve_cargo_build_inputs(&build_spec).expect("resolve first Cargo snapshot");
     let artifact_spec = |resolved| {
         ArtifactCacheSpec::new(&root.join("cache"), "post-link", "recipe/v1")
+            .with_cargo_build_inputs("post-link", &build_spec, resolved)
             .with_cargo_build_inputs("canister", &build_spec, resolved)
             .with_output("output", &root.join("output"))
     };
     let before_spec = artifact_spec(&before);
+    let reordered = ArtifactCacheSpec::new(&root.join("cache"), "post-link", "recipe/v1")
+        .with_cargo_build_inputs("canister", &build_spec, &before)
+        .with_cargo_build_inputs("post-link", &build_spec, &before)
+        .with_output("output", &root.join("output"));
+    assert_eq!(before_spec, reordered);
     let before_key = resolve_key(&before_spec)
         .expect("resolve first artifact key")
         .key;
+    assert_eq!(before_key, resolve_key(&reordered).unwrap().key);
+    let duplicate = before_spec
+        .clone()
+        .with_cargo_build_inputs("canister", &build_spec, &before);
+    expect_invalid_spec(prepare_artifact_cache(&duplicate));
+    assert!(
+        !root.join("cache").exists(),
+        "duplicate Cargo input labels must fail before cache initialization"
+    );
 
     write_workspace("host_dep_b");
     assert!(matches!(
@@ -162,6 +177,133 @@ fn one_output_is_built_materialized_repaired_and_reused() {
     fs::remove_dir_all(root).expect("remove one-output test directory");
 }
 
+#[cfg(unix)]
+#[test]
+fn warm_outputs_preserve_matching_files_and_repair_changed_or_missing_files() {
+    use std::{fs::FileTimes, os::unix::fs::MetadataExt as _, time::UNIX_EPOCH};
+
+    let root = unique_temp_directory("matching-public-outputs");
+    let mut spec = ArtifactCacheSpec::new(&root.join("cache"), "outputs", "recipe/v1");
+    for name in ["matching", "changed", "missing"] {
+        spec = spec.with_output(name, &root.join(name));
+    }
+    spec = spec.with_output_validation(
+        "empty",
+        &root.join("empty"),
+        ArtifactOutputValidation::RegularFile,
+    );
+    let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());
+    for name in ["matching", "changed", "missing", "empty"] {
+        fs::write(
+            transaction.output_path(name).unwrap(),
+            if name == "empty" {
+                b""
+            } else {
+                b"cached".as_slice()
+            },
+        )
+        .unwrap();
+    }
+    let old_time = UNIX_EPOCH + Duration::from_secs(3600);
+    let matching = root.join("matching");
+    fs::write(&matching, b"cached").unwrap();
+    fs::File::open(&matching)
+        .unwrap()
+        .set_times(FileTimes::new().set_modified(old_time))
+        .unwrap();
+    let before_commit = fs::metadata(&matching).unwrap();
+    let built = transaction.commit().unwrap();
+    assert_ne!(fs::metadata(&matching).unwrap().ino(), before_commit.ino());
+    let unchanged = ["matching", "empty"].map(|name| {
+        let path = root.join(name);
+        fs::File::open(&path)
+            .unwrap()
+            .set_times(FileTimes::new().set_modified(old_time))
+            .unwrap();
+        (path.clone(), fs::metadata(path).unwrap())
+    });
+    // Equal length forces content verification, rather than a length-only hit.
+    fs::write(root.join("changed"), b"edited").unwrap();
+    fs::remove_file(root.join("missing")).unwrap();
+
+    let reused = prepare_artifact_cache(&spec).unwrap();
+    let record = reused
+        .reused_record()
+        .expect("reuse the verified cache entry");
+    assert_eq!(record.key(), built.record().key());
+    for (path, before) in unchanged {
+        let after = fs::metadata(path).unwrap();
+        assert_eq!((after.dev(), after.ino()), (before.dev(), before.ino()));
+        assert_eq!(after.modified().unwrap(), old_time);
+    }
+    for name in ["matching", "changed", "missing"] {
+        assert_eq!(fs::read(root.join(name)).unwrap(), b"cached");
+    }
+    assert_eq!(fs::read(root.join("empty")).unwrap(), b"");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn warm_output_repair_detaches_links_and_replaces_restricted_files() {
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    for replacement in [
+        "symlink",
+        "cache-hardlink",
+        "input-hardlink",
+        "readonly",
+        "write-only",
+        "executable",
+    ] {
+        let root = unique_temp_directory("public-output-ownership");
+        let input = root.join("input");
+        let destination = root.join("output");
+        fs::write(&input, b"cached").unwrap();
+        let spec = ArtifactCacheSpec::new(&root.join("cache"), "output", "recipe/v1")
+            .with_input("input", &input)
+            .with_output("output", &destination);
+        let built = build_output(&spec, b"cached");
+        let cached = built.record().artifacts()[0].path();
+        match replacement {
+            "symlink" | "cache-hardlink" | "input-hardlink" => {
+                fs::remove_file(&destination).unwrap();
+                match replacement {
+                    "symlink" => symlink(cached, &destination).unwrap(),
+                    "cache-hardlink" => fs::hard_link(cached, &destination).unwrap(),
+                    "input-hardlink" => fs::hard_link(&input, &destination).unwrap(),
+                    _ => unreachable!(),
+                }
+            }
+            mode => {
+                let bits = match mode {
+                    "readonly" => 0o444,
+                    "write-only" => 0o200,
+                    "executable" => 0o755,
+                    _ => unreachable!(),
+                };
+                fs::set_permissions(&destination, fs::Permissions::from_mode(bits)).unwrap();
+            }
+        }
+
+        let reused = prepare_artifact_cache(&spec).unwrap();
+        assert!(reused.reused_record().is_some(), "{replacement}");
+        let metadata = fs::symlink_metadata(&destination).unwrap();
+        assert!(metadata.file_type().is_file(), "{replacement}");
+        assert_eq!(metadata.permissions().mode() & 0o7111, 0, "{replacement}");
+        assert_eq!(
+            metadata.permissions().mode() & 0o600,
+            0o600,
+            "{replacement}"
+        );
+        assert_eq!(fs::read(&destination).unwrap(), b"cached", "{replacement}");
+        fs::write(&destination, b"mutated").unwrap();
+        assert_eq!(fs::read(cached).unwrap(), b"cached", "{replacement}");
+        assert_eq!(fs::read(&input).unwrap(), b"cached", "{replacement}");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
 #[test]
 fn multi_output_commit_is_complete_and_name_order_independent() {
     let root = unique_temp_directory("multi-output");
@@ -169,11 +311,17 @@ fn multi_output_commit_is_complete_and_name_order_independent() {
     fs::write(&input, b"source").expect("write input");
     let spec = ArtifactCacheSpec::new(&root.join("cache"), "release-set", "recipe/v1")
         .with_input("source", &input)
+        .with_identity_bytes("optimizer", b"optimize")
+        .with_identity_bytes("encoder", b"encode")
+        .with_identity_bytes("stripper", b"strip")
         .with_output("role-b.wasm", &root.join("public/role-b.wasm"))
         .with_output("metadata.json", &root.join("public/metadata.json"))
         .with_output("root.wasm", &root.join("public/root.wasm"));
     let reordered = ArtifactCacheSpec::new(&root.join("cache"), "release-set", "recipe/v1")
         .with_input("source", &input)
+        .with_identity_bytes("stripper", b"strip")
+        .with_identity_bytes("optimizer", b"optimize")
+        .with_identity_bytes("encoder", b"encode")
         .with_output("root.wasm", &root.join("public/root.wasm"))
         .with_output("role-b.wasm", &root.join("public/role-b.wasm"))
         .with_output("metadata.json", &root.join("public/metadata.json"));
@@ -203,7 +351,7 @@ fn multi_output_commit_is_complete_and_name_order_independent() {
         ["metadata.json", "role-b.wasm", "root.wasm"],
     );
     assert!(matches!(
-        prepare_artifact_cache(&spec).unwrap(),
+        prepare_artifact_cache(&reordered).unwrap(),
         ArtifactCachePreparation::Reused(_)
     ));
     fs::remove_dir_all(root).expect("remove multi-output test directory");

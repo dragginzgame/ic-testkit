@@ -61,6 +61,7 @@ pub struct ArtifactCacheSpec {
     tools: Vec<LabeledPath>,
     arguments: Vec<OsString>,
     environment: BTreeMap<OsString, Option<OsString>>,
+    // Builders keep label/name order canonical; duplicates remain for validation.
     identities: Vec<LabeledIdentity>,
     cargo_build_inputs: Vec<CargoBuildInputSet>,
     outputs: Vec<OutputSpec>,
@@ -322,12 +323,16 @@ impl ArtifactCacheSpec {
     }
 
     /// Add opaque non-secret identity bytes under a stable logical label.
+    ///
+    /// Labels are stored in canonical order; declaration order does not affect identity.
     #[must_use]
     pub fn with_identity_bytes(mut self, label: &str, value: &[u8]) -> Self {
         self.identities.push(LabeledIdentity {
             label: label.to_owned(),
             value: value.to_vec(),
         });
+        self.identities
+            .sort_by(|left, right| left.label.cmp(&right.label));
         self
     }
 
@@ -337,6 +342,7 @@ impl ArtifactCacheSpec {
     /// environment and the selected dependency closure. Its conservative
     /// Cargo-aware validation paths and exclusions are rehashed automatically
     /// during preparation, cache-hit materialization and transaction commit.
+    /// Labels are stored in canonical order; declaration order does not affect identity.
     #[must_use]
     pub fn with_cargo_build_inputs(
         mut self,
@@ -349,6 +355,8 @@ impl ArtifactCacheSpec {
             build_spec: build_spec.clone(),
             resolved: resolved.clone(),
         });
+        self.cargo_build_inputs
+            .sort_by(|left, right| left.label.cmp(&right.label));
         self
     }
 
@@ -785,7 +793,7 @@ impl ArtifactBuildTransaction {
         self.timings.publication = publication_started.elapsed();
 
         let materialization_started = Instant::now();
-        materialize_outputs(&self.spec, &self.entry_directory)?;
+        materialize_outputs(&self.spec, &self.entry_directory, None)?;
         self.timings.materialization = materialization_started.elapsed();
         record_cache_entry_use(&self.entry_directory).map_err(artifact_cache_fs_error)?;
         let (maintenance, maintenance_timing) = perform_maintenance_locked(
@@ -814,6 +822,14 @@ impl Drop for ArtifactBuildTransaction {
 }
 
 /// Verify or begin one exact external artifact-set transaction.
+///
+/// A hit validates the complete cached output set and makes every configured
+/// destination available. On Unix, a regular file owned by the effective user,
+/// with owner read/write permissions, one link, no executable or special
+/// permission bits, and matching contents is left in place. Other destinations
+/// are atomically replaced from the verified entry. Cold commits and non-Unix
+/// acquisitions always replace destinations. Callers must coordinate any other
+/// writers to these mutable paths.
 pub fn prepare_artifact_cache(
     spec: &ArtifactCacheSpec,
 ) -> Result<ArtifactCachePreparation, ArtifactCacheError> {
@@ -863,14 +879,14 @@ pub fn prepare_artifact_cache(
             lock_cache_file(&namespace_lock_path).map_err(artifact_cache_fs_error)?;
         timings.namespace_lock_wait = timings.namespace_lock_wait.saturating_add(namespace_wait);
         let lookup_started = Instant::now();
-        let reusable = cache_entry_is_valid(spec, resolved.key, &entry_directory)?;
+        let verified_outputs = validated_cache_outputs(spec, resolved.key, &entry_directory)?;
         timings.cache_lookup = timings
             .cache_lookup
             .saturating_add(lookup_started.elapsed());
 
-        if reusable {
+        if let Some(output_info) = verified_outputs {
             let materialization_started = Instant::now();
-            materialize_outputs(spec, &entry_directory)?;
+            materialize_outputs(spec, &entry_directory, Some(&output_info))?;
             timings.materialization = timings
                 .materialization
                 .saturating_add(materialization_started.elapsed());
@@ -1293,11 +1309,9 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
     let input_digest = if spec.cargo_build_inputs.is_empty() {
         declared_input_digest
     } else {
-        let mut cargo_inputs = spec.cargo_build_inputs.iter().collect::<Vec<_>>();
-        cargo_inputs.sort_by(|left, right| left.label.cmp(&right.label));
         let mut inputs = InputHasher::new("artifact-set-inputs-with-cargo-v1");
         inputs.field("declared-input-digest", declared_input_digest.as_bytes());
-        for cargo_input in cargo_inputs {
+        for cargo_input in &spec.cargo_build_inputs {
             let current = cargo_input
                 .resolved
                 .current_validation_digest()
@@ -1340,9 +1354,7 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
             None => hasher.field("environment-unset", b""),
         }
     }
-    let mut identities = spec.identities.iter().collect::<Vec<_>>();
-    identities.sort_by(|left, right| left.label.cmp(&right.label));
-    for identity in identities {
+    for identity in &spec.identities {
         hasher.field("identity-label", identity.label.as_bytes());
         hasher.field("identity-value", &identity.value);
     }
@@ -1359,14 +1371,14 @@ fn resolve_key(spec: &ArtifactCacheSpec) -> Result<ResolvedKey, ArtifactCacheErr
     })
 }
 
-fn cache_entry_is_valid(
+fn validated_cache_outputs(
     spec: &ArtifactCacheSpec,
     key: InputDigest,
     entry: &Path,
-) -> Result<bool, ArtifactCacheError> {
+) -> Result<Option<Vec<ArtifactInfo>>, ArtifactCacheError> {
     let entry_metadata = match fs::symlink_metadata(entry) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
             return Err(ArtifactCacheError::Io {
                 operation: "inspect artifact cache entry",
@@ -1376,12 +1388,12 @@ fn cache_entry_is_valid(
         }
     };
     if !entry_metadata.file_type().is_dir() || !cache_entry_root_is_valid(entry)? {
-        return Ok(false);
+        return Ok(None);
     }
     let manifest_path = entry.join(MANIFEST_FILE);
     let manifest_metadata = match fs::symlink_metadata(&manifest_path) {
         Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => {
             return Err(ArtifactCacheError::Io {
                 operation: "inspect artifact cache manifest",
@@ -1391,7 +1403,7 @@ fn cache_entry_is_valid(
         }
     };
     if !manifest_metadata.file_type().is_file() {
-        return Ok(false);
+        return Ok(None);
     }
     let manifest = fs::read(&manifest_path).map_err(|source| ArtifactCacheError::Io {
         operation: "read artifact cache manifest",
@@ -1399,12 +1411,12 @@ fn cache_entry_is_valid(
         source,
     })?;
     if !manifest.starts_with(manifest_header(key).as_bytes()) {
-        return Ok(false);
+        return Ok(None);
     }
     let Some(output_info) = inspect_cached_output_set(spec, entry)? else {
-        return Ok(false);
+        return Ok(None);
     };
-    Ok(manifest == manifest_contents(key, spec, &output_info).as_bytes())
+    Ok((manifest == manifest_contents(key, spec, &output_info).as_bytes()).then_some(output_info))
 }
 
 fn inspect_complete_output_set(
@@ -1616,8 +1628,19 @@ fn manifest_contents(
     manifest
 }
 
-fn materialize_outputs(spec: &ArtifactCacheSpec, entry: &Path) -> Result<(), ArtifactCacheError> {
+fn materialize_outputs(
+    spec: &ArtifactCacheSpec,
+    entry: &Path,
+    verified_outputs: Option<&[ArtifactInfo]>,
+) -> Result<(), ArtifactCacheError> {
     for (index, output) in spec.outputs.iter().enumerate() {
+        // Only a hit supplies the complete output set checked against its manifest.
+        // A cold commit always publishes; a hit may leave matching destinations alone.
+        if verified_outputs
+            .is_some_and(|info| destination_matches_artifact(&output.destination, &info[index]))
+        {
+            continue;
+        }
         let cached = staged_output_path(entry, index);
         copy_file_atomic(&cached, &output.destination).map_err(|source| {
             ArtifactCacheError::Io {
@@ -1628,6 +1651,44 @@ fn materialize_outputs(spec: &ArtifactCacheSpec, entry: &Path) -> Result<(), Art
         })?;
     }
     Ok(())
+}
+
+fn destination_matches_artifact(destination: &Path, expected: &ArtifactInfo) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let Ok(metadata) = fs::symlink_metadata(destination) else {
+            return false;
+        };
+        // SAFETY: geteuid takes no pointers and has no failure case.
+        let effective_uid = unsafe { libc::geteuid() };
+        // Publication must still detach links and normalize foreign-owned,
+        // restricted or executable files, even when their bytes match. A public
+        // output must not alias a retained cache artifact or another caller-owned file.
+        if !metadata.file_type().is_file()
+            || metadata.nlink() != 1
+            || metadata.uid() != effective_uid
+            || metadata.mode() & 0o600 != 0o600
+            || metadata.mode() & 0o7111 != 0
+            || metadata.len() != expected.bytes
+        {
+            return false;
+        }
+        // Failure to read a destination is not a hit. The ordinary copy path
+        // can still replace an unreadable file in a writable parent directory.
+        inspect_artifact(destination, ArtifactOutputValidation::RegularFile).is_ok_and(|info| {
+            info.is_some_and(|actual| {
+                actual.bytes == expected.bytes && actual.digest == expected.digest
+            })
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        // Preserve replacement where a portable single-link check is unavailable.
+        let _ = (destination, expected);
+        false
+    }
 }
 
 fn perform_maintenance_locked(

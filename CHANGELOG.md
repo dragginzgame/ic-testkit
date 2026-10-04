@@ -6,6 +6,75 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.8] - 2026-10-04 - Verified artifact reuse and large-file hashing
+
+### Changed
+
+- Transactional cache hits retain the output lengths and digests already
+  computed during complete cache-entry validation and use them to verify public
+  destinations. On Unix, matching regular files owned by the effective user,
+  with one link, owner read/write permissions, and no executable or special
+  permission bits stay in place, avoiding redundant atomic copies. Their inode,
+  modification time, and permissions are preserved; a hit does not guarantee a
+  new modification time.
+- Missing, changed, linked, foreign-owned, and restricted outputs still receive
+  atomic replacement. Cold commits and non-Unix acquisitions retain their
+  existing publication behavior. Complete cache schema and content validation,
+  input revalidation, lock ordering, and artifact retention are preserved.
+- Streamed file hashing uses a heap buffer sized to the opened file's length,
+  between one byte and 64 KiB, preserving the thread-stack budget and avoiding
+  a full-size buffer for small sources. Empty files still receive a nonempty
+  read buffer to detect growth. Reading past the declared length fails
+  immediately; short reads at EOF remain invalid. Digest framing and cache
+  identities are unchanged.
+- An earlier fixed-64-KiB-buffer comparison found about 4–5% lower hashing cost
+  for 2.60/17.60 MiB files and 0.4–0.5 microseconds more for empty and 1/16 KiB
+  files. Follow-up timings for the length-sized buffer varied substantially
+  under high host load, so they do not establish a further speedup.
+- The performance guide records a released `0.14.7` baseline and paired output
+  reuse measurements. Matching-output acquisitions averaged 15.70 to 10.48 ms
+  for 2.60 MiB artifacts and 77.55 to 59.09 ms for 17.60 MiB artifacts, about
+  33% and 24% faster in the controlled probe. Same-size changed outputs were
+  10–13% slower because verification precedes copying. Missing and different-size
+  repairs stayed within about 3% of baseline. These are component measurements,
+  not a measured downstream test-suite speedup, and precede the small-file
+  buffer-sizing and label-ordering follow-ups.
+- Public APIs and persisted layouts are unchanged. Repository-owned format
+  identifiers remain `v1`; existing `0.14` callers need no source or cache
+  migration. Callers remain responsible for coordinating other writers to
+  mutable public destinations.
+- Artifact-spec builders canonicalize identity and Cargo input labels alongside
+  output names. Key calculation uses their stored order without repeatedly
+  allocating and sorting reference lists. Reordered declarations now compare
+  equal as specs; key bytes, duplicate-label rejection, and Cargo input guards
+  are preserved. No performance gain is claimed for this ownership cleanup.
+
+### Testing
+
+- Thirty-eight targeted unit and integration checks pass, covering unchanged
+  public inode/time, equal-length corruption, missing and explicitly valid empty
+  outputs, matching symlinks and hard links, restricted permissions, cold
+  publication, corrupt retained entries, Cargo input guards, batch reuse,
+  cross-process coordination, retention during pruning, native digest identity,
+  exclusion semantics, and streamed hashing/copying with a partial final chunk.
+- Existing transaction tests additionally cover reordered identity and Cargo
+  input declarations and duplicate Cargo labels rejected before cache creation.
+- The streaming regression covers empty and small files, both sides of the
+  buffer-size boundary, and a partial final chunk. A local read-only probe
+  verifies that a file declaring zero length but yielding bytes fails closed.
+- A focused read-only probe of a foreign-owned matching file reproduced the
+  missing ownership check and passed after the fix. The probe is not retained as
+  a host-file-dependent CI test.
+- The earlier 1,440-acquisition paired experiment reused the expected key and
+  returned identical public and retained bytes. Fifty direct-hashing batches covered
+  302,000 operations, with every batch's final digest matching the baseline.
+  Raw measurements and probe sources are retained in local measurement bundles.
+- A further 75 hashing batches covered 453,000 operations with matching final
+  digests across released, fixed-buffer, and length-sized-buffer implementations.
+  Their timings are excluded from performance claims because of host-load variance.
+- Targeted Clippy, formatting, and diff checks pass; full pre-push validation
+  remains maintainer-owned.
+
 ## [0.14.7] - 2026-10-04 - Borrowed Cargo metadata and leaner artifact validation
 
 ### Changed
