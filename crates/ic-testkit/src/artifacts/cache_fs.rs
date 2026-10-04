@@ -1,7 +1,7 @@
 use fs2::FileExt as _;
 use std::{
     fs::{self, File, OpenOptions},
-    io,
+    io::{self, Read as _},
     path::{Component, Path, PathBuf},
     sync::Arc,
     thread,
@@ -54,7 +54,7 @@ const CACHE_DIRECTORY_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n
 # This file is a cache directory tag created by ic-testkit.\n\
 # For information about cache directory tags see https://bford.info/cachedir/\n";
 pub(super) const CACHE_DIRECTORY_TAG_SIGNATURE: &str =
-    "Signature: 8a477f597d28d172789f06886806bc55\n";
+    "Signature: 8a477f597d28d172789f06886806bc55";
 pub(super) const LAST_USED_FILE: &str = ".ic-testkit-last-used";
 const LAST_MAINTENANCE_FILE: &str = ".ic-testkit-last-maintenance";
 pub(super) const RETENTION_LOCK_FILE: &str = ".ic-testkit-retention-v1";
@@ -296,8 +296,14 @@ pub(super) struct CacheFsError {
 
 pub(super) fn ensure_cache_directory_tag(cache_root: &Path) -> Result<(), CacheFsError> {
     let path = cache_root.join("CACHEDIR.TAG");
-    if fs::read_to_string(&path)
-        .is_ok_and(|contents| contents.starts_with(CACHE_DIRECTORY_TAG_SIGNATURE))
+    // The standard recognizes the first 43 bytes, without requiring a newline
+    // or interpreting the remaining text. Symlinks are not valid tag files.
+    let mut signature = [0_u8; CACHE_DIRECTORY_TAG_SIGNATURE.len()];
+    if fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.file_type().is_file())
+        && File::open(&path)
+            .and_then(|mut file| file.read_exact(&mut signature))
+            .is_ok()
+        && signature == CACHE_DIRECTORY_TAG_SIGNATURE.as_bytes()
     {
         return Ok(());
     }
@@ -707,6 +713,56 @@ mod tests {
     use super::directory_logical_size;
     use crate::artifacts::test_support::unique_temp_directory;
     use std::fs;
+
+    #[test]
+    fn cache_directory_tags_preserve_valid_standard_signatures() {
+        let root = unique_temp_directory("cache-tag-signatures");
+        let tag = root.join("CACHEDIR.TAG");
+        let signature = "Signature: 8a477f597d28d172789f06886806bc55";
+        for contents in [
+            signature.to_owned(),
+            format!("{signature}\r\n# Created by another application\r\n"),
+            format!("{signature}\n# {}\n", "comment".repeat(100_000)),
+        ] {
+            fs::write(&tag, &contents).unwrap();
+            super::ensure_cache_directory_tag(&root).unwrap();
+            assert_eq!(fs::read_to_string(&tag).unwrap(), contents);
+        }
+        for invalid in ["", &signature[..42], "Signature: incorrect"] {
+            fs::write(&tag, invalid).unwrap();
+            super::ensure_cache_directory_tag(&root).unwrap();
+            assert_eq!(
+                fs::read_to_string(&tag).unwrap(),
+                super::CACHE_DIRECTORY_TAG
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cache_directory_tag_replaces_symlinks_without_changing_referents() {
+        let root = unique_temp_directory("cache-tag-symlink");
+        let referent = root.join("other-application-tag");
+        let contents = "Signature: 8a477f597d28d172789f06886806bc55\n# Preserve this file\n";
+        fs::write(&referent, contents).unwrap();
+        let tag = root.join("CACHEDIR.TAG");
+        std::os::unix::fs::symlink(&referent, &tag).unwrap();
+        super::ensure_cache_directory_tag(&root).unwrap();
+        assert!(fs::symlink_metadata(&tag).unwrap().file_type().is_file());
+        assert_eq!(fs::read_to_string(&referent).unwrap(), contents);
+        assert_eq!(
+            fs::read_to_string(&tag).unwrap(),
+            super::CACHE_DIRECTORY_TAG
+        );
+
+        fs::remove_file(&tag).unwrap();
+        fs::create_dir(&tag).unwrap();
+        let error = super::ensure_cache_directory_tag(&root).unwrap_err();
+        assert_eq!(error.operation, "write cache directory tag");
+        assert!(tag.is_dir());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn directory_size_sums_wide_and_nested_files() {
