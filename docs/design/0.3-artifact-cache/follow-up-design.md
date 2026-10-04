@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../../../images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+</p>
+
 # Consolidated Artifact And Fixture Cache Follow-Up
 
 ## Status

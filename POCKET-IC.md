@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+</p>
+
 # PocketIC Upstream Boundary
 
 > Status: maintained against `pocket-ic` 16 and the current ic-testkit API.

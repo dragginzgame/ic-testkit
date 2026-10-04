@@ -1,4 +1,26 @@
-# ic-testkit
+<p align="center">
+  <img src="images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+</p>
+
+<!-- helper-navigation:start -->
+<p align="center">
+  <a href="https://github.com/dragginzgame/canic"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/canic.svg" width="18" height="18" alt=""> <strong>canic</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/icydb"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/icydb.svg" width="18" height="18" alt=""> <strong>icydb</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/ic-timers"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-timers.svg" width="18" height="18" alt=""> <strong>ic-timers</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/ic-memory"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-memory.svg" width="18" height="18" alt=""> <strong>ic-memory</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/ic-query"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-query.svg" width="18" height="18" alt=""> <strong>ic-query</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/ic-backup"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-backup.svg" width="18" height="18" alt=""> <strong>ic-backup</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/ic-blob-storage"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-blob-storage.svg" width="18" height="18" alt=""> <strong>ic-blob-storage</strong></a>
+  &nbsp;&middot;&nbsp;
+  <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-testkit.svg" width="18" height="18" alt=""> <strong>ic-testkit</strong></a>
+</p>
+<!-- helper-navigation:end -->
 
 <p align="center">
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/v/ic-testkit.svg" alt="Crates.io"></a>
@@ -10,10 +32,6 @@
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-16.0-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
-</p>
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/cave.png" alt="ic-testkit banner" width="640">
 </p>
 
 `ic-testkit` helps teams check that an Internet Computer application works as a
@@ -61,19 +79,15 @@ that change something outside that reset contract can use a fresh environment
 instead. If a run fails, structured diagnostics help distinguish an application
 rejection from a broken simulator connection or setup failure.
 
+<p align="center">
+  <img src="images/ic-testkit-game-topology.svg" alt="A purchase test exercises accounts, inventory, and payment canisters inside PocketIC while ic-testkit manages the shared baseline around the system." width="900">
+</p>
+
 The core lifecycle is:
 
-```text
-Build exact Wasm files
-        ↓
-Start PocketIC and install the application
-        ↓
-Seed and verify a known-good starting point
-        ↓
-Run a test → collect diagnostics and performance data
-        ↓
-Restore and verify the starting point, or rebuild when reuse is unsafe
-```
+<p align="center">
+  <img src="images/ic-testkit-core-lifecycle.svg" alt="Run a test, validate whether its environment is safe to reuse, and then restore or rebuild before the next test." width="900">
+</p>
 
 This is most useful for applications with multiple canisters, expensive setup,
 many integration tests, intermittent CI failures, or performance budgets. A
@@ -102,6 +116,10 @@ also available when compiling for `wasm32`.
 ## What ic-testkit provides
 
 The pieces can be used separately or combined into a complete test workflow:
+
+<p align="center">
+  <img src="images/ic-testkit-capabilities.svg" alt="Six ic-testkit capabilities: system testing, safe reuse, reproducible builds, diagnostics, timings, and performance." width="900">
+</p>
 
 | Test-suite need | What ic-testkit does | Practical benefit |
 | --- | --- | --- |
@@ -139,6 +157,10 @@ examples for complete developer-facing recipes.
 
 Not every test should use a cache. Choose the narrowest fixture that preserves
 the behavior under test:
+
+<p align="center">
+  <img src="images/ic-testkit-isolation-decision-tree.svg" alt="Decision tree for choosing a fresh PocketIC, standalone fixture, standalone fixture pool, or multi-canister baseline pool." width="900">
+</p>
 
 | Fixture | Best fit |
 | --- | --- |

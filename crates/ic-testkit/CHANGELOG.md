@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+</p>
+
 # ic-testkit package changelog and migration guide
 
 This file ships in the crate archive so upgrades can be completed without the
