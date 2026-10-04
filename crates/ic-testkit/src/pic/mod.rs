@@ -38,9 +38,9 @@ pub use baseline_pool::{
     BaselinePoolPreparationError, BaselinePoolTimings, BaselinePreparationStage,
     CachedPocketIcBaselinePool, CachedPocketIcBaselinePoolGuard, CanisterRestoreReceipt,
     CycleResetPolicy, ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId,
-    PocketIcBaselineRecipe, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetAchievement,
-    ResetDomainKind, ResetReceipt, ResetRequirement, ResetRequirements, StateResetPolicy,
-    TimeResetPolicy, ValidationReceipt,
+    PocketIcBaselineRecipe, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetDomainKind,
+    ResetDomainPolicy, ResetReceipt, ResetRequirements, StateResetPolicy, TimeResetPolicy,
+    ValidationReceipt,
 };
 pub use calls::CandidCallExt;
 pub use diagnostics::{

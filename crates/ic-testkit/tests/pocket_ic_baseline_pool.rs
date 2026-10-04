@@ -17,9 +17,8 @@ use ic_testkit::pic::{
     CachedPocketIcBaselinePool, CanisterRestoreReceipt, ControllerSnapshotError, CycleResetPolicy,
     ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe,
     PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig, PocketIcStartupError,
-    PreparedBaseline, ReadinessReceipt, RebuildReason, ResetAchievement, ResetReceipt,
-    ResetRequirement, ResetRequirements, TimeResetPolicy, ValidationReceipt,
-    is_dead_pocket_ic_transport_error,
+    PreparedBaseline, ReadinessReceipt, RebuildReason, ResetDomainPolicy, ResetReceipt,
+    ResetRequirements, TimeResetPolicy, ValidationReceipt, is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -88,7 +87,7 @@ impl TwoCanisterRecipe {
             GuardedDomain::Time => (
                 "ic-testkit/two-empty-canisters-time-guarded/v1",
                 CycleResetPolicy::PreserveCurrent,
-                vec![ResetRequirement::PocketIcTime(
+                vec![ResetDomainPolicy::PocketIcTime(
                     TimeResetPolicy::RebuildOnMutation,
                 )],
             ),
@@ -100,7 +99,7 @@ impl TwoCanisterRecipe {
             GuardedDomain::ExtraCanisters => (
                 "ic-testkit/two-empty-canisters-extra-guarded/v1",
                 CycleResetPolicy::PreserveCurrent,
-                vec![ResetRequirement::ExtraCanisters(
+                vec![ResetDomainPolicy::ExtraCanisters(
                     ExtraCanisterPolicy::RebuildOnChange,
                 )],
             ),
@@ -247,7 +246,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
                 {
                     return Err(TestRecipeError::DomainMutation("pocket-ic-time"));
                 }
-                ResetReceipt::try_new([ResetAchievement::PocketIcTime(
+                ResetReceipt::try_new([ResetDomainPolicy::PocketIcTime(
                     TimeResetPolicy::RebuildOnMutation,
                 )])
                 .map_err(Into::into)
@@ -266,7 +265,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
                 }) {
                     return Err(TestRecipeError::DomainMutation("extra-canister"));
                 }
-                ResetReceipt::try_new([ResetAchievement::ExtraCanisters(
+                ResetReceipt::try_new([ResetDomainPolicy::ExtraCanisters(
                     ExtraCanisterPolicy::RebuildOnChange,
                 )])
                 .map_err(Into::into)

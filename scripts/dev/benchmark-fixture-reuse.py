@@ -125,31 +125,52 @@ def positive(value):
     return number
 
 
-def main():
+def parse_arguments(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server", type=Path, required=True, help="exact PocketIC 16 binary")
     parser.add_argument("--iterations", type=positive, default=100, help="total tasks per mode/run")
     parser.add_argument("--workers", type=positive, default=2, help="same concurrency in all modes")
     parser.add_argument("--repeats", type=positive, default=3)
     parser.add_argument(
-        "--modes", nargs="+", choices=["fresh", "pooled-1", "pooled-2"],
-        default=["fresh", "pooled-1", "pooled-2"],
-        help="modes to compare; select pooled modes to skip the fresh-fixture control",
+        "--modes", nargs="+", choices=["fresh", "pooled"],
+        default=["fresh", "pooled"],
+        help="flows to compare; select pooled to skip the fresh-fixture control",
+    )
+    parser.add_argument(
+        "--capacities", nargs="+", type=positive, default=[1, 2],
+        help="pool capacities to compare with the same worker count",
     )
     parser.add_argument("--state-bytes", type=int, default=1024 * 1024, help="heap bytes per canister")
     parser.add_argument("--profile", choices=["release", "dev"], default="release")
     parser.add_argument("--output", type=Path, help="save provenance, raw samples, and summaries as JSON")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not sys.platform.startswith("linux"):
         parser.error("process-tree RSS sampling requires Linux /proc")
     if args.workers > args.iterations or not 0 <= args.state_bytes <= 0xFFFFFFFF:
         parser.error("workers must not exceed iterations; state-bytes must fit u32")
     if len(set(args.modes)) != len(args.modes):
         parser.error("each mode must be selected only once")
+    if len(set(args.capacities)) != len(args.capacities):
+        parser.error("each capacity must be selected only once")
+    return args
+
+
+def benchmark_cases(args):
+    cases = []
+    for mode in args.modes:
+        if mode == "fresh":
+            cases.append(("fresh", mode, args.workers))
+        else:
+            cases.extend((f"pooled-{capacity}", mode, capacity) for capacity in args.capacities)
+    return cases
+
+
+def main():
+    args = parse_arguments()
     server = args.server.resolve(strict=True)
     version = subprocess.check_output([server, "--version"], text=True).strip()
     if not re.fullmatch(r"pocket-ic-server 16\.\d+\.\d+", version):
-        parser.error(f"expected PocketIC 16, got {version!r}")
+        raise SystemExit(f"expected PocketIC 16, got {version!r}")
     metadata = json.loads(subprocess.check_output(
         ["cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"], cwd=ROOT
     ))
@@ -164,13 +185,12 @@ def main():
     ], cwd=ROOT, check=True)
     worker = target / ("debug" if args.profile == "dev" else args.profile) / "examples/fixture_reuse_benchmark"
     wasm = target / "wasm32-unknown-unknown/debug/ic_testkit_perf_probe.wasm"
-    modes = {"fresh": ("fresh", args.workers), "pooled-1": ("pooled", 1), "pooled-2": ("pooled", 2)}
-    runs = {label: [] for label in args.modes}
+    cases = benchmark_cases(args)
+    runs = {label: [] for label, _, _ in cases}
     for repeat in range(args.repeats):
-        # Rotate mode order to avoid always giving one mode the first run.
-        offset = repeat % len(args.modes)
-        for label in args.modes[offset:] + args.modes[:offset]:
-            mode, capacity = modes[label]
+        # Rotate all cases, including capacities, across repeats.
+        offset = repeat % len(cases)
+        for label, mode, capacity in cases[offset:] + cases[:offset]:
             print(f"Run {repeat + 1}/{args.repeats}: {label}", file=sys.stderr, flush=True)
             runs[label].append(measure([
                 str(worker), mode, str(capacity), str(args.iterations), str(args.workers),
@@ -190,6 +210,7 @@ def main():
             "iterations": args.iterations, "workers": args.workers,
             "repeats": args.repeats, "state_bytes_per_canister": args.state_bytes,
             "modes": args.modes,
+            "pool_capacities": args.capacities if "pooled" in args.modes else [],
         },
         "runs": runs,
         "summary": {label: summarize(items) for label, items in runs.items()},

@@ -1,11 +1,16 @@
 use std::{
     collections::VecDeque,
     num::NonZeroUsize,
-    sync::{Condvar, Mutex, MutexGuard},
+    sync::{Condvar, Mutex, MutexGuard, OnceLock},
     time::{Duration, Instant},
 };
 
 pub(super) struct BoundedSlotPool<T> {
+    capacity: NonZeroUsize,
+    state: OnceLock<PoolState<T>>,
+}
+
+struct PoolState<T> {
     slots: Box<[Mutex<Slot<T>>]>,
     coordinator: Mutex<Coordinator>,
     slot_available: Condvar,
@@ -37,47 +42,35 @@ impl<T> Slot<T> {
 }
 
 pub(super) struct BoundedSlotLease<'a, T> {
-    pool: &'a BoundedSlotPool<T>,
+    pool: &'a PoolState<T>,
     slot_index: usize,
     slot: Option<MutexGuard<'a, Slot<T>>>,
     wait: Duration,
 }
 
 struct WaitTicket<'a, T> {
-    pool: &'a BoundedSlotPool<T>,
+    pool: &'a PoolState<T>,
     ticket: Option<u64>,
 }
 
 impl<T> BoundedSlotPool<T> {
-    pub(super) fn new(capacity: NonZeroUsize) -> Self {
-        let slots = (0..capacity.get())
-            .map(|_| Mutex::new(Slot::Empty))
-            .collect::<Vec<_>>()
-            .into_boxed_slice();
-        let available = (0..capacity.get()).collect();
-
+    pub(super) const fn new(capacity: NonZeroUsize) -> Self {
         Self {
-            slots,
-            coordinator: Mutex::new(Coordinator {
-                available,
-                waiters: VecDeque::new(),
-                next_ticket: 0,
-            }),
-            slot_available: Condvar::new(),
+            capacity,
+            state: OnceLock::new(),
         }
     }
 
     pub(super) fn acquire(&self) -> BoundedSlotLease<'_, T> {
+        // First-use slot allocation is setup, not capacity-queue wait.
+        let pool = self.state();
         let started = Instant::now();
         // Declare the ticket guard before taking the coordinator lock so an
         // unwind releases the lock before cancellation tries to acquire it.
-        let mut ticket_guard = WaitTicket {
-            pool: self,
-            ticket: None,
-        };
+        let mut ticket_guard = WaitTicket { pool, ticket: None };
 
         let slot_index = {
-            let mut coordinator = self
+            let mut coordinator = pool
                 .coordinator
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -92,35 +85,51 @@ impl<T> BoundedSlotPool<T> {
                     let removed = coordinator.waiters.pop_front();
                     debug_assert_eq!(removed, Some(ticket));
                     ticket_guard.ticket = None;
-                    self.slot_available.notify_all();
+                    pool.slot_available.notify_all();
                     break slot_index;
                 }
 
-                coordinator = self
+                coordinator = pool
                     .slot_available
                     .wait(coordinator)
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
             }
         };
 
-        let slot = self.slots[slot_index]
+        let slot = pool.slots[slot_index]
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         BoundedSlotLease {
-            pool: self,
+            pool,
             slot_index,
             slot: Some(slot),
             wait: started.elapsed(),
         }
     }
 
-    pub(super) fn capacity(&self) -> NonZeroUsize {
-        NonZeroUsize::new(self.slots.len()).expect("bounded slot pool capacity is non-zero")
+    pub(super) const fn capacity(&self) -> NonZeroUsize {
+        self.capacity
+    }
+
+    fn state(&self) -> &PoolState<T> {
+        self.state.get_or_init(|| PoolState {
+            slots: (0..self.capacity.get())
+                .map(|_| Mutex::new(Slot::Empty))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+            coordinator: Mutex::new(Coordinator {
+                available: (0..self.capacity.get()).collect(),
+                waiters: VecDeque::new(),
+                next_ticket: 0,
+            }),
+            slot_available: Condvar::new(),
+        })
     }
 
     #[cfg(test)]
     fn waiting_count(&self) -> usize {
-        self.coordinator
+        self.state()
+            .coordinator
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .waiters
@@ -240,12 +249,45 @@ mod tests {
     use std::{
         num::NonZeroUsize,
         panic::{AssertUnwindSafe, catch_unwind},
-        sync::{Arc, mpsc},
+        sync::{Arc, Barrier, mpsc},
         thread,
         time::{Duration, Instant},
     };
 
     const TIMEOUT: Duration = Duration::from_secs(5);
+
+    #[test]
+    fn concurrent_first_acquisitions_share_one_lazy_capacity() {
+        let capacity = NonZeroUsize::new(4).unwrap();
+        let pool = Arc::new(BoundedSlotPool::<usize>::new(capacity));
+        assert_eq!(pool.capacity(), capacity);
+        assert!(pool.state.get().is_none());
+
+        let barrier = Arc::new(Barrier::new(capacity.get()));
+        let (acquired_tx, acquired_rx) = mpsc::channel();
+        let workers = (0..capacity.get())
+            .map(|_| {
+                let pool = Arc::clone(&pool);
+                let barrier = Arc::clone(&barrier);
+                let acquired_tx = acquired_tx.clone();
+                thread::spawn(move || {
+                    barrier.wait();
+                    let lease = pool.acquire();
+                    acquired_tx.send(lease.slot_index()).unwrap();
+                    barrier.wait();
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(acquired_tx);
+        let mut slots = (0..capacity.get())
+            .map(|_| acquired_rx.recv_timeout(TIMEOUT).unwrap())
+            .collect::<Vec<_>>();
+        slots.sort_unstable();
+        assert_eq!(slots, [0, 1, 2, 3]);
+        for worker in workers {
+            worker.join().expect("first acquisition should not panic");
+        }
+    }
 
     #[test]
     fn capacity_allows_independent_leases() {
@@ -317,12 +359,12 @@ mod tests {
         // Represent an interrupted acquisition at the head of the queue. A
         // slot is available, so cancellation must itself wake the next caller.
         let cancelled = {
-            let mut coordinator = pool.coordinator.lock().unwrap();
+            let mut coordinator = pool.state().coordinator.lock().unwrap();
             let ticket = coordinator.next_ticket;
             coordinator.next_ticket += 1;
             coordinator.waiters.push_back(ticket);
             WaitTicket {
-                pool: &pool,
+                pool: pool.state(),
                 ticket: Some(ticket),
             }
         };

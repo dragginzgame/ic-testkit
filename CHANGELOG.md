@@ -6,6 +6,53 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.0] - 2026-10-04 - Runtime fixture capacity and one reset-policy model
+
+### Changed
+
+- **Breaking:** `CachedStandaloneCanisterFixturePool` takes a runtime
+  `NonZeroUsize` capacity through `new(capacity, builder)`. Its capacity const
+  generic is removed; capturing builders use the remaining builder type
+  parameter. `capacity()` exposes the configured limit. Static construction
+  stays const and fixture construction stays lazy.
+- Standalone and multi-canister pools allocate slots through one lazy shared
+  scheduler. The standalone initialization wrapper and duplicate capacity field
+  are removed. `CachedPocketIcBaselinePool::new` and `capacity` are now const;
+  unused pools do not allocate slot storage. FIFO waiting, unwind invalidation,
+  phase timings, and each pool's distinct restore/recovery contract are preserved.
+- **Breaking:** `ResetDomainPolicy` replaces both `ResetRequirement` and
+  `ResetAchievement`. Required declarations and achieved receipts remain distinct
+  `ResetRequirements` and `ResetReceipt` types. One constructor helper owns
+  duplicate-domain checks, and verification still rejects missing domains,
+  mismatched policies, and incorrect cycle or canister restore evidence.
+- The opt-in fixture benchmark selects flows with `--modes fresh pooled` and
+  arbitrary positive pool limits with `--capacities 1 2 4 8`. All cases retain
+  the same task and worker counts, rotate across repeats, validate restored state,
+  and report wait, preparation-inclusive time, throughput, and sampled process-tree
+  RSS. The defaults still compare fresh fixtures with capacities one and two.
+- Dependencies and persisted cache layouts are unchanged; repository-owned
+  format identifiers remain `v1`. These are hard source/API cuts without aliases
+  or compatibility adapters; the package changelog contains migration examples.
+
+### Fixed
+
+- Cache-directory tag checks read only the standard signature prefix from an
+  ordinary file. Valid tags are preserved, including CRLF and additional comments;
+  invalid tags and symlinks are replaced without changing linked referents.
+  Oversized tag contents no longer require an unbounded allocation.
+
+### Testing
+
+- Targeted scheduler and fixture checks cover concurrent first acquisition,
+  bounded overlap, FIFO waiting, waiter cancellation, explicit invalidation,
+  panic propagation, and failed restoration/recovery. Reset checks cover all five
+  non-snapshot domains, matching and missing receipts, policy mismatches, duplicate
+  declarations/receipts, and exact restore evidence.
+- Live PocketIC 16 capacity sweeps validate restored state and subsequent
+  mutations. These are development smoke checks, not downstream performance
+  claims. Rust 1.88 compilation, focused Clippy, formatting, and diff checks pass;
+  full pre-push validation remains maintainer-owned.
+
 ## [0.14.12] - 2026-10-04 - Consistent Cargo inputs and bounded startup readiness
 
 ### Fixed

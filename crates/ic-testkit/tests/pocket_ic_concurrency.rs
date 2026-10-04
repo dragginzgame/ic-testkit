@@ -1,4 +1,5 @@
 use std::{
+    num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
@@ -21,14 +22,21 @@ const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
 
-static STANDALONE_RESTORE_POOL: CachedStandaloneCanisterFixturePool<1> =
-    CachedStandaloneCanisterFixturePool::new(build_empty_standalone_fixture);
-static STANDALONE_OVERLAP_POOL: CachedStandaloneCanisterFixturePool<2> =
-    CachedStandaloneCanisterFixturePool::new(build_empty_standalone_fixture);
-static STANDALONE_CAPACITY_POOL: CachedStandaloneCanisterFixturePool<1> =
-    CachedStandaloneCanisterFixturePool::new(build_empty_standalone_fixture);
-static STANDALONE_PANIC_POOL: CachedStandaloneCanisterFixturePool<1> =
-    CachedStandaloneCanisterFixturePool::new(build_counted_empty_standalone_fixture);
+static STANDALONE_RESTORE_POOL: CachedStandaloneCanisterFixturePool =
+    CachedStandaloneCanisterFixturePool::new(
+        NonZeroUsize::new(1).unwrap(),
+        build_empty_standalone_fixture,
+    );
+static STANDALONE_CAPACITY_POOL: CachedStandaloneCanisterFixturePool =
+    CachedStandaloneCanisterFixturePool::new(
+        NonZeroUsize::new(1).unwrap(),
+        build_empty_standalone_fixture,
+    );
+static STANDALONE_PANIC_POOL: CachedStandaloneCanisterFixturePool =
+    CachedStandaloneCanisterFixturePool::new(
+        NonZeroUsize::new(1).unwrap(),
+        build_counted_empty_standalone_fixture,
+    );
 static STANDALONE_PANIC_BUILDS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Clone, Copy)]
@@ -171,14 +179,21 @@ fn bounded_standalone_pool_restores_and_reuses_one_slot() {
 
 #[test]
 fn bounded_standalone_pool_allows_capacity_scoped_overlap() {
-    let (first, first_outcome) = STANDALONE_OVERLAP_POOL
+    let capacity = NonZeroUsize::new(2).unwrap();
+    let pool = Arc::new(CachedStandaloneCanisterFixturePool::new(
+        capacity,
+        build_empty_standalone_fixture,
+    ));
+    assert_eq!(pool.capacity(), capacity);
+    let (first, first_outcome) = pool
         .acquire()
         .expect("first overlapping fixture should capture");
     assert!(!first_outcome.is_reused(), "first pool slot should be new");
 
     let (ready_tx, ready_rx) = mpsc::channel();
+    let worker_pool = Arc::clone(&pool);
     let worker = thread::spawn(move || {
-        let (second, second_outcome) = STANDALONE_OVERLAP_POOL
+        let (second, second_outcome) = worker_pool
             .acquire()
             .expect("second overlapping fixture should capture");
         ready_tx
@@ -285,7 +300,10 @@ fn bounded_standalone_pool_rebuilds_after_a_leased_test_panics() {
 
 #[test]
 fn structured_standalone_acquisition_error_retains_build_timings() {
-    let pool = CachedStandaloneCanisterFixturePool::<1>::new(build_deleted_standalone_fixture);
+    let pool = CachedStandaloneCanisterFixturePool::new(
+        NonZeroUsize::new(1).unwrap(),
+        build_deleted_standalone_fixture,
+    );
     let Err(error) = pool.acquire() else {
         panic!("capturing a deleted fixture canister must fail");
     };
@@ -307,7 +325,7 @@ fn structured_standalone_acquisition_error_retains_build_timings() {
 fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
     let builds = Arc::new(AtomicUsize::new(0));
     let builder_count = Arc::clone(&builds);
-    let pool = CachedStandaloneCanisterFixturePool::<1, _>::new(move || {
+    let pool = CachedStandaloneCanisterFixturePool::new(NonZeroUsize::new(1).unwrap(), move || {
         builder_count.fetch_add(1, Ordering::SeqCst);
         build_empty_standalone_fixture()
     });

@@ -4,6 +4,119 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.0
+
+This minor release makes standalone fixture capacity configurable at runtime and
+consolidates reset policies into one model. It contains hard source/API cuts.
+Dependencies and persisted cache layouts are unchanged; owned format identifiers
+remain `v1`. Existing repository-owned cache entries need no migration.
+
+| Previous API | Replacement |
+| --- | --- |
+| `CachedStandaloneCanisterFixturePool<N>` | `CachedStandaloneCanisterFixturePool`, passing `NonZeroUsize` to `new`. |
+| `CachedStandaloneCanisterFixturePool::<N, _>::new(builder)` | `CachedStandaloneCanisterFixturePool::new(capacity, builder)`; the builder type is inferred. |
+| `ResetRequirement::Domain(policy)` | `ResetDomainPolicy::Domain(policy)` in `ResetRequirements`. |
+| `ResetAchievement::Domain(policy)` | `ResetDomainPolicy::Domain(policy)` in `ResetReceipt`. |
+
+A standalone pool can still be initialized statically without constructing any
+fixtures or allocating slots:
+
+```rust
+use std::num::NonZeroUsize;
+use ic_testkit::pic::{CachedStandaloneCanisterFixturePool, StandaloneCanisterFixture};
+
+static POOL: CachedStandaloneCanisterFixturePool =
+    CachedStandaloneCanisterFixturePool::new(
+        NonZeroUsize::new(2).unwrap(),
+        build_fixture,
+    );
+
+// Supply the same fixture recipe on every invocation.
+fn build_fixture() -> StandaloneCanisterFixture {
+    // Existing application-owned construction, installation, and seeding.
+    todo!()
+}
+```
+
+Local pools can use runtime capacity and a capturing builder:
+
+```rust
+let capacity = std::thread::available_parallelism()?;
+let pool = CachedStandaloneCanisterFixturePool::new(
+    capacity,
+    move || build_fixture_with_config(&config),
+);
+```
+
+Capacity is an explicit host resource budget; CPU availability alone does not
+establish that enough memory exists for that many PocketIC instances. Callers
+still decide which tests can safely reuse snapshots.
+
+When a statically typed function-pointer pool also selects restore funding,
+coerce the builder before chaining the policy method:
+
+```rust
+use ic_testkit::pic::SnapshotRestoreFunding;
+
+static FUNDED_POOL: CachedStandaloneCanisterFixturePool = {
+    let pool: CachedStandaloneCanisterFixturePool =
+        CachedStandaloneCanisterFixturePool::new(
+            NonZeroUsize::new(2).unwrap(),
+            build_fixture,
+        );
+    pool.with_restore_funding(SnapshotRestoreFunding::TopUpTo {
+        minimum_cycles: 5_000_000_000_000,
+    })
+};
+```
+
+Standalone and multi-canister pools now share lazy slot allocation.
+`CachedPocketIcBaselinePool::new` and both pools' `capacity()` accessors are
+const. The scheduler still enforces exclusive leases, FIFO waiting, cancellation,
+and unwind invalidation. Snapshot funding, non-snapshot reset, readiness,
+validation, and recovery behavior are preserved.
+
+Reset policy declarations and completion evidence use one domain-policy enum:
+
+```rust
+use ic_testkit::pic::{
+    CycleResetPolicy, ResetDomainPolicy, ResetReceipt, ResetRequirements,
+    TimeResetPolicy,
+};
+
+let requirements = ResetRequirements::try_new(
+    CycleResetPolicy::PreserveCurrent,
+    [ResetDomainPolicy::PocketIcTime(TimeResetPolicy::PreserveCurrent)],
+)?;
+
+// Report the policy actually achieved by the recipe's reset operation.
+let receipt = ResetReceipt::try_new([
+    ResetDomainPolicy::PocketIcTime(TimeResetPolicy::PreserveCurrent),
+])?;
+```
+
+`ResetRequirements` and `ResetReceipt` remain distinct types. Both reject
+repeated domains. Warm preparation still checks every required domain and policy,
+cycle policy, the exact captured canister set, readiness, and recipe validation.
+The change introduces no automatic reset or implicit fresh-instance guarantee.
+
+Cache-directory tag validation now reads only the standard signature prefix.
+Valid ordinary tags are preserved, including CRLF and additional comments.
+Invalid tags and symlinks are replaced without changing linked referents.
+
+The repository's opt-in benchmark now uses `--modes fresh pooled` and accepts
+`--capacities 1 2 4 8`; replace `--modes pooled-1 pooled-2` with
+`--modes pooled --capacities 1 2`. Default comparisons remain fresh fixtures and
+capacities one/two, with the same task and worker counts across cases. Each warm
+acquisition still validates restored state. Capacity sweeps are recorded with
+phase timings and sampled process-tree RSS; development smoke results do not
+establish downstream speedups.
+
+Focused scheduler, fixture recovery, and reset-contract checks pass, including
+all five non-snapshot policy domains. Rust 1.88 compilation, focused Clippy,
+formatting, and diff checks pass. Full pre-push validation remains
+maintainer-owned.
+
 ## 0.14.12
 
 This patch release aligns Cargo input discovery with execution and bounds
