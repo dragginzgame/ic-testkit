@@ -10,6 +10,128 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.1] - 2026-10-04 - Transport recovery and bounded freshness checks
+
+### Fixed
+
+- PocketIC transport classification follows the contained error inside
+  `std::io::Error`, including nested wrappers. Contextual typed Candid failures
+  now retain their transport classification when callers wrap them for reporting.
+- Diagnostic failures already classified as `InstanceUnavailable` are recognized
+  by the shared transport classifier, both directly and through error wrappers.
+  Controller rejections, decode failures, and unrelated application panics remain
+  distinct from transport failures.
+- Watched-input freshness and Wasm-cache validation use one bounded stamp
+  reader, reading at most the expected stamp length plus one byte. Oversized
+  sidecars are stale without reading or allocating their full contents. Exact
+  matching, artifact-content verification, and reconstruction from verified
+  public outputs remain intact. Watched-input checks preserve missing-stamp
+  handling, I/O errors, and `InvalidData` for invalid UTF-8 within the size limit.
+  Truncated Wasm stamps are rejected before scanning artifact contents.
+
+### Testing
+
+- Both classification gaps were reproduced before fixing. Focused unit tests,
+  a refused-server subprocess check, and live PocketIC 16 diagnostic authorization
+  checks pass. Rust 1.88 compilation, Clippy, documentation, formatting, and diff
+  checks pass; full pre-push validation remains maintainer-owned.
+- Focused artifact checks cover missing, truncated, mismatched, invalid UTF-8,
+  and oversized stamps, plus normal stamp publication and input changes.
+  Wasm-cache recovery from an oversized stamp reuses verified public outputs
+  without running Cargo; warm publication and copied-byte verification are checked.
+- Public APIs, dependencies, and persisted cache formats are unchanged.
+
+## [0.15.0] - 2026-10-04 - Runtime fixture capacity and one reset-policy model
+
+### Changed
+
+- **Breaking:** `CachedStandaloneCanisterFixturePool` takes a runtime
+  `NonZeroUsize` capacity through `new(capacity, builder)`. Its capacity const
+  generic is removed; capturing builders use the remaining builder type
+  parameter. `capacity()` exposes the configured limit. Static construction
+  stays const and fixture construction stays lazy.
+- Standalone and multi-canister pools allocate slots through one lazy shared
+  scheduler. The standalone initialization wrapper and duplicate capacity field
+  are removed. `CachedPocketIcBaselinePool::new` and `capacity` are now const;
+  unused pools do not allocate slot storage. FIFO waiting, unwind invalidation,
+  phase timings, and each pool's distinct restore/recovery contract are preserved.
+- **Breaking:** `ResetDomainPolicy` replaces both `ResetRequirement` and
+  `ResetAchievement`. Required declarations and achieved receipts remain distinct
+  `ResetRequirements` and `ResetReceipt` types. One constructor helper owns
+  duplicate-domain checks, and verification still rejects missing domains,
+  mismatched policies, and incorrect cycle or canister restore evidence.
+- The opt-in fixture benchmark selects flows with `--modes fresh pooled` and
+  arbitrary positive pool limits with `--capacities 1 2 4 8`. All cases retain
+  the same task and worker counts, rotate across repeats, validate restored state,
+  and report wait, preparation-inclusive time, throughput, and sampled process-tree
+  RSS. The defaults still compare fresh fixtures with capacities one and two.
+- Dependencies and persisted cache layouts are unchanged; repository-owned
+  format identifiers remain `v1`. These are hard source/API cuts without aliases
+  or compatibility adapters; the package changelog contains migration examples.
+
+### Fixed
+
+- Cache-directory tag checks read only the standard signature prefix from an
+  ordinary file. Valid tags are preserved, including CRLF and additional comments;
+  invalid tags and symlinks are replaced without changing linked referents.
+  Oversized tag contents no longer require an unbounded allocation.
+
+### Testing
+
+- Targeted scheduler and fixture checks cover concurrent first acquisition,
+  bounded overlap, FIFO waiting, waiter cancellation, explicit invalidation,
+  panic propagation, and failed restoration/recovery. Reset checks cover all five
+  non-snapshot domains, matching and missing receipts, policy mismatches, duplicate
+  declarations/receipts, and exact restore evidence.
+- Live PocketIC 16 capacity sweeps validate restored state and subsequent
+  mutations. These are development smoke checks, not downstream performance
+  claims. Rust 1.88 compilation, focused Clippy, formatting, and diff checks pass;
+  full pre-push validation remains maintainer-owned.
+
+## [0.14.12] - 2026-10-04 - Consistent Cargo inputs and bounded startup readiness
+
+### Fixed
+
+- Managed PocketIC startup reads at most 65 bytes from its port file and rejects
+  files larger than 64 bytes with bounded diagnostics. Missing files and partial
+  writes remain pending; valid nonzero ports, UTF-8 errors, owned-child teardown,
+  and private startup-file cleanup retain their behavior.
+- Cargo metadata recognizes grouped short feature options such as `-qFextra`,
+  `-rF=extra`, and `-vF extra`. Enabled optional dependencies enter input discovery
+  and mutation guards, and batched resolution uses the same feature context.
+- Symlinked Cargo configuration resolves relative includes beside the configured
+  entry, matching Cargo, rather than beside its referent. Each lookup location
+  retains its nested include paths; guards detect file and directory symlink
+  replacement even when the top-level configuration bytes remain identical.
+  Duplicate lookup paths are suppressed and recursive cycles terminate.
+
+### Changed
+
+- `WasmBuildSpec` rejects profile arguments that override its workspace, package
+  selection, compilation target, or configuration before input resolution or
+  cache acquisition. Long, attached, and grouped short options are covered.
+  Use the specification's workspace/packages, `with_target`, discovered Cargo
+  configuration files, and `with_extra_env`; `--config` overrides are unsupported.
+  Existing target-directory ownership checks remain enforced.
+- Startup unit fixtures share the artifact tests' executable-script writer,
+  which finishes writes in a child process before execution. This removes a
+  separate fixture-writing path exposed to parallel Unix `ETXTBSY` failures.
+- Public API signatures, dependencies, and persisted layouts are unchanged;
+  owned format identifiers remain `v1`. Corrected feature/configuration inputs
+  can change fingerprints and cause a fresh build without a cache migration.
+
+### Testing
+
+- Oversized readiness files, Cargo input-override validation, and symlinked
+  configuration discovery regressions were reproduced before fixing them.
+  Focused checks cover partial writes, bounded diagnostics, child cleanup,
+  grouped features, optional dependency mutation, shared config referents,
+  nested directory aliases, duplicate discovery, and cycle termination.
+- Existing observed-output fixtures, executable resolution, batched input reuse,
+  semantic workspace projection, and warm source-mutation rejection pass targeted
+  checks. Clippy, formatting, and diff checks pass. No performance improvement
+  has been measured; full pre-push validation remains maintainer-owned.
+
 ## [0.14.11] - 2026-10-04 - Canonical package selection and reliable discovery
 
 ### Fixed

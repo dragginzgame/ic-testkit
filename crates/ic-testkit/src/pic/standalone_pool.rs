@@ -2,7 +2,6 @@ use std::{
     num::NonZeroUsize,
     ops::Deref,
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::OnceLock,
     time::{Duration, Instant},
 };
 
@@ -120,12 +119,12 @@ pub enum StandaloneFixturePoolError {
     },
 }
 
-/// Caller-owned bounded pool of independently restorable standalone fixtures.
+/// Caller-owned runtime-capacity pool of independently restorable standalone fixtures.
 ///
 /// Each slot owns one PocketIC instance, one installed canister, and one
 /// captured baseline snapshot. Acquiring a populated slot restores that
-/// snapshot before returning it. At most `CAPACITY` leases can overlap; a
-/// caller waits only when every slot is in use.
+/// snapshot before returning it. At most [`Self::capacity`] leases can overlap;
+/// a caller waits only when every slot is in use.
 ///
 /// One pool owns one fixture builder. The builder must produce the same Wasm,
 /// init arguments, topology, and seeded baseline each time it runs. It is not
@@ -139,12 +138,9 @@ pub enum StandaloneFixturePoolError {
 /// capacity that fits their host and keep lifecycle-sensitive tests on fresh
 /// [`StandaloneCanisterFixture`] values when snapshot restoration is not the
 /// intended isolation boundary.
-pub struct CachedStandaloneCanisterFixturePool<
-    const CAPACITY: usize,
-    B = fn() -> StandaloneCanisterFixture,
-> {
+pub struct CachedStandaloneCanisterFixturePool<B = fn() -> StandaloneCanisterFixture> {
     build: B,
-    slots: OnceLock<BoundedSlotPool<StandaloneFixtureBaseline>>,
+    slots: BoundedSlotPool<StandaloneFixtureBaseline>,
     restore_funding: SnapshotRestoreFunding,
 }
 
@@ -156,25 +152,44 @@ pub struct CachedStandaloneCanisterFixtureGuard<'a> {
     slot: BoundedSlotLease<'a, StandaloneFixtureBaseline>,
 }
 
-impl<const CAPACITY: usize, B> CachedStandaloneCanisterFixturePool<CAPACITY, B>
+impl<B> CachedStandaloneCanisterFixturePool<B>
 where
     B: Fn() -> StandaloneCanisterFixture,
 {
-    /// Create an empty pool that owns its fixture builder.
+    /// Create a runtime-capacity pool that owns its fixture builder.
     ///
-    /// # Panics
+    /// Construction is const and lazy: slots are allocated on first acquisition,
+    /// and the builder runs only when a slot needs a fixture.
     ///
-    /// Panics at compile time for a statically initialized zero-capacity pool,
-    /// or at runtime if constructed dynamically with zero capacity.
+    /// ```no_run
+    /// use std::num::NonZeroUsize;
+    /// use ic_testkit::pic::{CachedStandaloneCanisterFixturePool, StandaloneCanisterFixture};
+    /// # fn build_fixture() -> StandaloneCanisterFixture { unimplemented!() }
+    ///
+    /// static POOL: CachedStandaloneCanisterFixturePool =
+    ///     CachedStandaloneCanisterFixturePool::new(
+    ///         NonZeroUsize::new(2).unwrap(),
+    ///         build_fixture,
+    ///     );
+    ///
+    /// // Local pools can choose their capacity at runtime.
+    /// let capacity = std::thread::available_parallelism()?;
+    /// let pool = CachedStandaloneCanisterFixturePool::new(capacity, build_fixture);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
     #[must_use]
-    pub const fn new(build: B) -> Self {
-        assert!(CAPACITY > 0, "fixture pool capacity must be non-zero");
-
+    pub const fn new(capacity: NonZeroUsize, build: B) -> Self {
         Self {
             build,
-            slots: OnceLock::new(),
+            slots: BoundedSlotPool::new(capacity),
             restore_funding: SnapshotRestoreFunding::Preserve,
         }
+    }
+
+    /// Maximum number of simultaneously leased standalone fixtures.
+    #[must_use]
+    pub const fn capacity(&self) -> NonZeroUsize {
+        self.slots.capacity()
     }
 
     /// Select the cycle-funding policy applied immediately before each
@@ -212,7 +227,7 @@ where
         StandaloneFixturePoolError,
     > {
         let total_started = Instant::now();
-        self.prepare_slot_with_outcome(self.slots().acquire(), total_started)
+        self.prepare_slot_with_outcome(self.slots.acquire(), total_started)
     }
 
     fn prepare_slot_with_outcome<'a>(
@@ -352,14 +367,6 @@ where
             let _ = catch_unwind(AssertUnwindSafe(|| drop(stale)));
         }
         timings.stale_teardown = Some(started.elapsed());
-    }
-
-    fn slots(&self) -> &BoundedSlotPool<StandaloneFixtureBaseline> {
-        self.slots.get_or_init(|| {
-            BoundedSlotPool::new(
-                NonZeroUsize::new(CAPACITY).expect("fixture pool capacity must be non-zero"),
-            )
-        })
     }
 }
 
@@ -507,20 +514,27 @@ impl std::error::Error for StandaloneFixturePoolError {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
     use super::{
         CachedStandaloneCanisterFixturePool, SnapshotRestoreFunding, StandaloneCanisterFixture,
     };
 
-    const _: CachedStandaloneCanisterFixturePool<1> =
-        CachedStandaloneCanisterFixturePool::<1>::new(build_fixture)
-            .with_restore_funding(SnapshotRestoreFunding::TopUpTo { minimum_cycles: 1 });
+    const _: CachedStandaloneCanisterFixturePool = {
+        let pool: CachedStandaloneCanisterFixturePool =
+            CachedStandaloneCanisterFixturePool::new(NonZeroUsize::new(1).unwrap(), build_fixture);
+        pool.with_restore_funding(SnapshotRestoreFunding::TopUpTo { minimum_cycles: 1 })
+    };
 
     fn build_fixture() -> StandaloneCanisterFixture {
         panic!("constructing an empty pool must not invoke its builder")
     }
 
     #[test]
-    fn nonzero_pool_constructs() {
-        let _pool = CachedStandaloneCanisterFixturePool::<2>::new(build_fixture);
+    fn runtime_capacity_preserves_lazy_fixture_construction() {
+        for capacity in [1, 2, 4, 8].map(|value| NonZeroUsize::new(value).unwrap()) {
+            let pool = CachedStandaloneCanisterFixturePool::new(capacity, build_fixture);
+            assert_eq!(pool.capacity(), capacity);
+        }
     }
 }

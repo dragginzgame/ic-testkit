@@ -38,10 +38,10 @@ task. All slots are prepared and mutated before timing begins, so the first
 measured restore must also prove it resets state.
 
 Every mode runs the same total task count with the same number of worker
-threads. Capacity one serializes leases and measures waiting; capacity two
-permits overlap. Each mode/repeat has a separate worker process and one explicit
-managed PocketIC server. Instances share that server within the run. Repeat
-order rotates between fresh, pooled-one, and pooled-two.
+threads. Capacity one serializes leases and measures waiting; larger capacities
+permit overlap up to the worker count. Each case/repeat has a separate worker
+process and one explicit managed PocketIC server. Instances share that server
+within the run. Repeat order rotates over all selected cases.
 
 On Ctrl-C, the driver waits for the current worker to finish so its owned server
 can be torn down normally; it does not start another mode.
@@ -117,12 +117,33 @@ Repeat this comparison without rebuilding fresh fixtures for every task:
 ```sh
 python3 scripts/dev/benchmark-fixture-reuse.py \
   --server /absolute/path/to/pocket-ic \
-  --modes pooled-1 pooled-2 --iterations 100 --workers 2 --repeats 3 \
+  --modes pooled --capacities 1 2 --iterations 100 --workers 2 --repeats 3 \
   --state-bytes 1048576 --output /tmp/fixture-reuse-long.json
 ```
 
-The default still measures all three modes. Selected modes and their raw samples
-are recorded in the JSON; repeat ordering rotates over the selected modes.
+The default measures fresh fixtures and pooled capacities one and two. Selected
+flows and pool capacities are recorded in the JSON, with raw samples grouped by
+case (`fresh`, `pooled-1`, `pooled-2`, and so on).
+
+## Capacity sweeps
+
+Compare any positive pool capacities with one shared worker budget:
+
+```sh
+python3 scripts/dev/benchmark-fixture-reuse.py \
+  --server /absolute/path/to/pocket-ic \
+  --modes pooled --capacities 1 2 4 8 \
+  --iterations 100 --workers 8 --repeats 3 \
+  --state-bytes 1048576 --output /tmp/fixture-reuse-capacities.json
+```
+
+Use enough workers to exercise the largest capacity. A capacity above the worker
+count still prepares every slot, but cannot increase simultaneous task execution.
+Compare capacity wait, throughput, preparation-inclusive time, and sampled RSS
+together. The driver does not choose a capacity automatically. Every warm
+acquisition still validates restored state before running the task. The earlier
+tables retain their original two-worker measurements; they do not predict the
+results of this eight-worker sweep.
 
 ## Query latency investigation
 

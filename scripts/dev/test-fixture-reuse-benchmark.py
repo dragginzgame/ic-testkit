@@ -1,12 +1,47 @@
 #!/usr/bin/env python3
 """Focused measurement-boundary checks; no PocketIC or Cargo work."""
 
+from contextlib import redirect_stderr
+import io
 from pathlib import Path
 import runpy
 import tempfile
 import unittest
 
 BENCH = runpy.run_path(str(Path(__file__).with_name("benchmark-fixture-reuse.py")))
+
+
+class CapacitySelectionTests(unittest.TestCase):
+    def test_capacity_sweep_preserves_order_and_one_fresh_control(self):
+        args = BENCH["parse_arguments"]([
+            "--server", "/unused/pocket-ic", "--iterations", "8", "--workers", "8",
+            "--modes", "pooled", "fresh", "--capacities", "1", "2", "4", "8",
+        ])
+        self.assertEqual(BENCH["benchmark_cases"](args), [
+            ("pooled-1", "pooled", 1), ("pooled-2", "pooled", 2),
+            ("pooled-4", "pooled", 4), ("pooled-8", "pooled", 8),
+            ("fresh", "fresh", 8),
+        ])
+
+    def test_default_and_fresh_only_selection(self):
+        args = BENCH["parse_arguments"](["--server", "/unused/pocket-ic"])
+        self.assertEqual(BENCH["benchmark_cases"](args), [
+            ("fresh", "fresh", 2), ("pooled-1", "pooled", 1), ("pooled-2", "pooled", 2),
+        ])
+        args = BENCH["parse_arguments"]([
+            "--server", "/unused/pocket-ic", "--modes", "fresh", "--capacities", "8",
+        ])
+        self.assertEqual(BENCH["benchmark_cases"](args), [("fresh", "fresh", 2)])
+
+    def test_invalid_selections_fail_before_launching_tools(self):
+        for selection in [
+            ["--capacities", "0"], ["--capacities", "-1"],
+            ["--capacities", "2", "2"], ["--modes", "pooled", "pooled"],
+        ]:
+            with self.subTest(selection=selection), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as error:
+                    BENCH["parse_arguments"](["--server", "/unused/pocket-ic", *selection])
+                self.assertEqual(error.exception.code, 2)
 
 
 class MeasurementTests(unittest.TestCase):

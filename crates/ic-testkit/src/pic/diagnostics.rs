@@ -707,8 +707,35 @@ mod tests {
     use super::{
         CanisterDiagnosticFailure, CanisterDiagnosticsBatchContractError,
         CanisterDiagnosticsReport, CanisterDiagnosticsRequest, CanisterLogRenderLimits,
-        LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt, render_log_records,
+        LabeledCanisterDiagnosticsRequest, PocketIcDiagnosticsExt, capture_diagnostic_call,
+        render_log_records,
     };
+
+    #[test]
+    fn diagnostic_transport_classification_survives_context_and_io_wrapping() {
+        const REFUSED: &str = "HTTP failure: reqwest::Error { kind: Request, url: \"http://127.0.0.1:1234/instances/0/read/get_time\", source: ConnectError(\"tcp connect error\", Os { code: 111, kind: ConnectionRefused, message: \"Connection refused\" }) }";
+        for message in [REFUSED, "application worker channel closed"] {
+            let error = capture_diagnostic_call::<()>(|| panic!("{message}"))
+                .expect_err("diagnostic operation should capture the panic");
+            let expected = message == REFUSED;
+            assert_eq!(
+                matches!(
+                    &error,
+                    CanisterDiagnosticFailure::InstanceUnavailable { .. }
+                ),
+                expected,
+            );
+            assert_eq!(
+                super::super::is_dead_pocket_ic_transport_error(&error),
+                expected,
+            );
+            let wrapped = std::io::Error::other(error);
+            assert_eq!(
+                super::super::is_dead_pocket_ic_transport_error(&wrapped),
+                expected,
+            );
+        }
+    }
 
     struct PanickingThenReporting {
         calls: Cell<usize>,
