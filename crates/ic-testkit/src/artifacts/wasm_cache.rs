@@ -118,8 +118,7 @@ pub enum WasmBuildOutcome {
 pub struct WasmBuildRecord {
     fingerprint: InputDigest,
     input_digest: InputDigest,
-    exact_cache_path: PathBuf,
-    _retention: RetainedCacheEntry,
+    retention: RetainedCacheEntry,
     artifacts: Vec<PathBuf>,
     timings: WasmBuildTimings,
     maintenance: Option<ArtifactCacheMaintenance>,
@@ -1139,7 +1138,7 @@ impl WasmBuildRecord {
     /// does not retain ownership. Treat the contents as read-only.
     #[must_use]
     pub fn exact_cache_path(&self) -> &Path {
-        &self.exact_cache_path
+        self.retention.path()
     }
 
     /// Exact, read-only Wasm paths retained until this record and its clones drop.
@@ -3162,9 +3161,8 @@ fn complete_build_record(
     Ok(WasmBuildRecord {
         fingerprint: input.fingerprint,
         input_digest: input.input_digest,
-        exact_cache_path: input.active_entry.to_owned(),
         artifacts: expected_artifacts(spec, input.active_entry),
-        _retention: retention,
+        retention,
         timings: WasmBuildTimings {
             lock_wait: input.lock_wait,
             shared_incremental_lock_wait: input.shared_incremental.lock_wait,

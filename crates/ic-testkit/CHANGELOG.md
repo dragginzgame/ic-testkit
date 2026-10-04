@@ -4,6 +4,33 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.2
+
+This patch release simplifies fixture and artifact ownership and adds opt-in
+fixture performance measurements. Public library APIs and persisted layouts are
+unchanged; existing `0.14` callers need no source migration. Repository-owned
+format identifiers remain `v1`.
+
+- Standalone fixture pools derive rebuild reasons from shared slot state,
+  removing duplicated invalidation metadata while preserving restore-failure
+  rebuilding and distinct panic recovery outcomes.
+- Wasm build records expose the cache path held by their retention owner instead
+  of allocating a second copy. Cloned records continue retaining immutable
+  artifacts until their last drop.
+- The repository includes a Linux benchmark comparing fresh fixtures with
+  baseline pools of capacity one and two using a caller-supplied PocketIC 16
+  binary. It validates every task and reports phase timings, setup/teardown,
+  sampled process-tree RSS, raw samples, and provenance. The workload and
+  measured capacity tradeoffs are documented in the repository's
+  [fixture benchmark guide](https://github.com/dragginzgame/ic-testkit/blob/main/docs/fixture-reuse-benchmark.md).
+  This tooling is outside ordinary tests/CI.
+
+Seven targeted PocketIC checks and four artifact handoff checks pass, covering
+reuse, capacity, restore failures, panic recovery, cloned records, cross-process
+retention, pruning, and terminated consumers. Two Python sampler checks,
+targeted Clippy, and formatting also pass. The measurements compare fixture
+strategies; they do not establish a library-version or downstream suite speedup.
+
 ## 0.14.1
 
 This patch release reduces artifact acquisition and fixture-pool overhead without

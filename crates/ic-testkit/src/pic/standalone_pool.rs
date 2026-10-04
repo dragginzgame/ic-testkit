@@ -16,7 +16,6 @@ use super::{
 struct StandaloneFixtureBaseline {
     fixture: StandaloneCanisterFixture,
     snapshots: ControllerSnapshots,
-    invalidation_reason: Option<StandaloneFixturePoolRebuildReason>,
 }
 
 impl StandaloneFixtureBaseline {
@@ -26,11 +25,7 @@ impl StandaloneFixtureBaseline {
             .pocket_ic()
             .capture_controller_snapshots(canister_id, [canister_id])?;
 
-        Ok(Self {
-            fixture,
-            snapshots,
-            invalidation_reason: None,
-        })
+        Ok(Self { fixture, snapshots })
     }
 
     fn restore(&self, funding: SnapshotRestoreFunding) -> Result<(), ControllerSnapshotError> {
@@ -275,9 +270,6 @@ where
         timings.restore = Some(restore_started.elapsed());
         match restore {
             Ok(()) => {
-                slot.get_mut()
-                    .expect("restored fixture pool slot must remain present")
-                    .invalidation_reason = None;
                 timings.total = total_started.elapsed();
                 Ok((
                     CachedStandaloneCanisterFixtureGuard { slot },
@@ -312,10 +304,6 @@ where
                 ))
             }
             Err(source) => {
-                if let Some(baseline) = slot.get_mut() {
-                    baseline.invalidation_reason =
-                        Some(StandaloneFixturePoolRebuildReason::PreviousRestoreFailure);
-                }
                 // Restoration may have changed an earlier canister before a
                 // later snapshot failed. Preserve the current error while
                 // preventing a partially restored slot from being reused.
@@ -336,12 +324,9 @@ where
         if slot.invalidated_by_unwind() {
             Some(StandaloneFixturePoolRebuildReason::UnwindWhileLeased)
         } else {
-            slot.get()
-                .and_then(|baseline| baseline.invalidation_reason)
-                .or_else(|| {
-                    slot.is_populated()
-                        .then_some(StandaloneFixturePoolRebuildReason::PreviousRestoreFailure)
-                })
+            // Non-unwind invalidation only follows a failed restore.
+            slot.is_populated()
+                .then_some(StandaloneFixturePoolRebuildReason::PreviousRestoreFailure)
         }
     }
 

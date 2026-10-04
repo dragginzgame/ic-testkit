@@ -6,6 +6,49 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.2] - 2026-10-04 - Fixture reuse measurements and simpler ownership
+
+### Added
+
+- An opt-in Linux fixture benchmark compares fresh PocketIC instances with
+  baseline pools of capacity one and two. Each task validates restored state,
+  mutates two canisters, and checks the result; pooled measurements require warm
+  restores and stop on unexpected rebuilding or recovery.
+- The benchmark records phase timings, setup and teardown costs, sampled
+  process-tree RSS, raw samples, and build/workload provenance. Selected modes
+  and rotating repeat order support longer pooled comparisons. It uses a
+  caller-supplied PocketIC 16 binary and runs outside the ordinary test/CI gate.
+
+### Changed
+
+- Standalone pools derive rebuild reasons from the shared slot state instead of
+  storing a second invalidation reason. Restore failures still invalidate the
+  slot, and panic invalidation retains its distinct rebuild outcome.
+- Wasm build records obtain their exact cache path from the retention owner,
+  removing a duplicated path allocation. Records and their clones retain the
+  same immutable artifacts until their last drop.
+- Public library APIs and persisted layouts are unchanged. Repository-owned
+  format identifiers remain `v1`; existing `0.14` callers need no migration.
+
+### Documentation
+
+- Documents the benchmark workload, measurement boundaries, memory tradeoffs,
+  and controlled PocketIC 16 results. With 100 tasks, two workers, and three
+  repeats, median fixture time including preparation and teardown was 10.93 s
+  at capacity one and 7.38 s at capacity two; sampled peak process-tree RSS was
+  559 MiB and 770 MiB respectively. These compare pool capacities, not library
+  versions or downstream suite performance.
+
+### Testing
+
+- Seven targeted live PocketIC 16 checks pass for standalone reuse, overlapping
+  leases, capacity waits, restore-failure rebuilding, and panic recovery.
+- Four artifact handoff checks pass, covering cloned cold/warm records,
+  cross-process retention, terminated consumers, pruning, and batch failures.
+  Two focused Python checks verify process-tree RSS boundaries and kernel stat
+  parsing. Targeted Clippy and formatting checks pass; full pre-push validation
+  remains maintainer-owned.
+
 ## [0.14.1] - 2026-10-03 - Leaner artifact validation and pool acquisition
 
 ### Changed

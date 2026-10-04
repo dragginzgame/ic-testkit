@@ -70,11 +70,17 @@ fn isolated_build_records_retain_cold_and_warm_artifacts() {
     let root = fixture();
     let first = build_wasm_canisters_cached(&isolated_wasm_spec(&root, "A")).unwrap();
     assert!(!first.is_reused());
+    let entry = first.record().exact_cache_path().to_owned();
+    assert!(first.record().artifacts()[0].starts_with(&entry));
     let other = build_wasm_canisters_cached(&isolated_wasm_spec(&root, "B")).unwrap();
+    assert_ne!(other.record().exact_cache_path(), entry);
     let reused = build_wasm_canisters_cached(&isolated_wasm_spec(&root, "A")).unwrap();
     assert!(reused.is_reused());
-    let path = reused.record().artifacts()[0].clone();
+    let record = reused.record().clone();
+    assert_eq!(record.exact_cache_path(), entry);
+    let path = record.artifacts()[0].clone();
     drop(first);
+    drop(reused);
     prune_wasm_build_cache(
         &root.join("wasm"),
         ArtifactCachePrunePolicy::new().with_max_size_bytes(0),
@@ -82,13 +88,14 @@ fn isolated_build_records_retain_cold_and_warm_artifacts() {
     .unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"A");
     assert_eq!(fs::read(&other.record().artifacts()[0]).unwrap(), b"B");
-    drop(reused);
+    drop(record);
     prune_wasm_build_cache(
         &root.join("wasm"),
         ArtifactCachePrunePolicy::new().with_max_size_bytes(0),
     )
     .unwrap();
     assert!(!path.exists());
+    assert!(!entry.exists());
     drop(other);
     fs::remove_dir_all(root).unwrap();
 }

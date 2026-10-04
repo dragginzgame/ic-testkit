@@ -76,6 +76,10 @@ impl PartialEq for RetainedCacheEntry {
 impl Eq for RetainedCacheEntry {}
 
 impl RetainedCacheEntry {
+    pub(super) fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub(super) fn acquire(path: &Path) -> Result<Self, CacheFsError> {
         let file = open_cache_lock_file(&path.join(RETENTION_LOCK_FILE))?;
         fs2::FileExt::lock_shared(&file).map_err(|source| CacheFsError {
