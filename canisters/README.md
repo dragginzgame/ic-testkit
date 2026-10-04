@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="../images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+</p>
+
 # Test Canisters
 
 Small canisters used by `ic-testkit` to test its own PocketIC harness behavior.
