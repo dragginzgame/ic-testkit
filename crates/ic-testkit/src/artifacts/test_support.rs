@@ -5,11 +5,7 @@ use std::{
 };
 
 #[cfg(unix)]
-#[path = "../../tests/support/executable.rs"]
-mod executable;
-
-#[cfg(unix)]
-pub(super) use executable::write_executable_script;
+pub(super) use crate::test_executable::write_executable_script;
 
 static TEMP_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 

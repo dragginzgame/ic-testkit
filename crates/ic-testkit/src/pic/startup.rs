@@ -18,6 +18,9 @@ use super::transport;
 
 const STARTUP_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const SERVER_OUTPUT_LIMIT: usize = 16 * 1024;
+// PocketIC publishes a decimal u16 and a newline. Leave whitespace room
+// without allowing readiness polling to read an arbitrary-size file.
+const SERVER_PORT_FILE_LIMIT: usize = 64;
 
 static STARTUP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -95,7 +98,7 @@ pub enum PocketIcStartupError {
         stderr: String,
         termination_error: Option<String>,
     },
-    /// The managed server published an invalid port-file value.
+    /// The managed server published an invalid or oversized port-file value.
     InvalidServerPort {
         server_binary: PathBuf,
         value: String,
@@ -208,6 +211,8 @@ impl PocketIcStartupConfig {
     /// This requires a configuration created by [`Self::spawn`]. Readiness is
     /// bounded by [`Self::timeout`]. No hard TTL is passed by default; an
     /// explicit [`Self::with_server_hard_ttl`] value is passed to the child.
+    /// Readiness requires a nonzero decimal port followed by a newline in a
+    /// UTF-8 file of at most 64 bytes; oversized files fail with bounded diagnostics.
     /// The returned handle terminates the child on drop; use its URL with
     /// [`Self::connect`] to construct bounded instances.
     pub fn start_managed_server(self) -> Result<PocketIcManagedServer, PocketIcStartupError> {
@@ -516,8 +521,12 @@ impl ManagedServer {
 
     fn read_port(&self) -> Result<PortFileState, PocketIcStartupError> {
         let port_path = &self.files.port;
-        let contents = match fs::read_to_string(port_path) {
-            Ok(contents) => contents,
+        let mut contents = String::new();
+        match File::open(port_path).and_then(|file| {
+            file.take((SERVER_PORT_FILE_LIMIT + 1) as u64)
+                .read_to_string(&mut contents)
+        }) {
+            Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(PortFileState::Pending);
             }
@@ -528,7 +537,13 @@ impl ManagedServer {
                     source,
                 });
             }
-        };
+        }
+        if contents.len() > SERVER_PORT_FILE_LIMIT {
+            return Ok(PortFileState::Invalid(format!(
+                "{} (port file exceeds {SERVER_PORT_FILE_LIMIT} bytes)",
+                contents.trim()
+            )));
+        }
         if !contents.contains('\n') {
             return Ok(PortFileState::Pending);
         }
@@ -885,7 +900,7 @@ mod tests {
     use pocket_ic::PocketIcBuilder;
 
     #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt as _;
+    use crate::test_executable::write_executable_script;
 
     #[cfg(unix)]
     #[test]
@@ -903,6 +918,69 @@ mod tests {
             size - super::SERVER_OUTPUT_LIMIT as u64
         )));
         assert!(output.len() < super::SERVER_OUTPUT_LIMIT + 100);
+    }
+
+    #[test]
+    fn port_file_readiness_preserves_partial_writes_and_rejects_oversized_contents() {
+        let (files, _, _) = StartupFiles::create().expect("allocate startup files");
+        let server = super::ManagedServer {
+            child: None,
+            binary: PathBuf::from("unused-server"),
+            files,
+            started: Instant::now(),
+        };
+        assert!(matches!(
+            server.read_port().unwrap(),
+            super::PortFileState::Pending
+        ));
+        for contents in ["", "34567"] {
+            fs::write(&server.files.port, contents).unwrap();
+            assert!(matches!(
+                server.read_port().unwrap(),
+                super::PortFileState::Pending
+            ));
+        }
+        for (contents, expected) in [("1\n", 1), ("65535\n", 65535), (" 34567\r\n", 34567)] {
+            fs::write(&server.files.port, contents).unwrap();
+            assert!(matches!(
+                server.read_port().unwrap(),
+                super::PortFileState::Ready(port) if port == expected
+            ));
+        }
+        for contents in ["0\n", "65536\n", "invalid\n", "1\n2\n"] {
+            fs::write(&server.files.port, contents).unwrap();
+            assert!(matches!(
+                server.read_port().unwrap(),
+                super::PortFileState::Invalid(_)
+            ));
+        }
+        fs::write(&server.files.port, [0xff, b'\n']).unwrap();
+        assert!(matches!(
+            server.read_port(),
+            Err(PocketIcStartupError::Io { source, .. })
+                if source.kind() == std::io::ErrorKind::InvalidData
+        ));
+        for contents in ["1\n".to_owned() + &" ".repeat(128), "0".repeat(128)] {
+            fs::write(&server.files.port, contents).unwrap();
+            assert!(
+                matches!(
+                    server.read_port().unwrap(),
+                    super::PortFileState::Invalid(_)
+                ),
+                "oversized port contents must fail even without a newline",
+            );
+        }
+        // A large backing file must not enlarge the returned diagnostic.
+        fs::File::options()
+            .write(true)
+            .open(&server.files.port)
+            .unwrap()
+            .set_len(1024 * 1024)
+            .unwrap();
+        assert!(matches!(
+            server.read_port().unwrap(),
+            super::PortFileState::Invalid(value) if value.len() < 256
+        ));
     }
 
     #[test]
@@ -986,6 +1064,30 @@ mod tests {
         assert_eq!(status.code(), Some(23));
         assert_eq!(stdout, "synthetic server stdout");
         assert_eq!(stderr, "synthetic bind failure");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn managed_startup_rejects_oversized_port_files_and_cleans_up() {
+        let script = TestServerScript::new(
+            "oversized-port",
+            "#!/bin/sh\nprintf '%s\\n%s\\n' \"$$\" \"$2\"\nprintf '34567\\n%064s' '' > \"$2.pending\"\nmv \"$2.pending\" \"$2\"\nexec sleep 30\n",
+        );
+        let result = PocketIcStartupConfig::spawn(script.path(), Duration::from_secs(2))
+            .start_managed_server();
+        let Err(PocketIcStartupError::InvalidServerPort { value, stdout, .. }) = result else {
+            panic!("oversized port publication must fail readiness");
+        };
+        assert!(value.contains("port file exceeds"));
+        assert!(value.len() < 256);
+        let mut lines = stdout.lines();
+        let pid = lines.next().unwrap().parse::<u32>().unwrap();
+        let port_path = PathBuf::from(lines.next().unwrap());
+        assert!(!port_path.parent().unwrap().exists());
+        #[cfg(target_os = "linux")]
+        assert!(!PathBuf::from(format!("/proc/{pid}")).exists());
+        #[cfg(not(target_os = "linux"))]
+        let _ = pid;
     }
 
     #[cfg(unix)]
@@ -1192,13 +1294,7 @@ mod tests {
                 std::process::id(),
                 super::STARTUP_FILE_SEQUENCE.fetch_add(1, super::Ordering::Relaxed),
             ));
-            fs::write(&path, contents).expect("write synthetic PocketIC server script");
-            let mut permissions = fs::metadata(&path)
-                .expect("read synthetic server script metadata")
-                .permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&path, permissions)
-                .expect("make synthetic server script executable");
+            write_executable_script(&path, contents);
             Self { path }
         }
 

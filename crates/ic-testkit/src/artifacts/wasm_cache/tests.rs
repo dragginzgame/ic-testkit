@@ -190,7 +190,7 @@ fn compact_feature_arguments_watch_enabled_optional_dependencies() {
     write_projection_package(
         &root,
         "fixture",
-        "[features]\nextra = [\"dep:optional_dep\"]\n\
+        "[features]\nextra = [\"dep:optional_dep\"]\nmap = [\"dep:optional_dep\"]\n\
          [dependencies]\noptional_dep = { path = \"../optional_dep\", optional = true }\n",
     );
     write_projection_package(&root, "optional_dep", "");
@@ -198,17 +198,25 @@ fn compact_feature_arguments_watch_enabled_optional_dependencies() {
     let dependency_source = dependency.join("src/lib.rs");
     let base = WasmBuildSpec::new(&root, &root.join("target"), &["fixture"], "debug");
 
-    for feature in ["-Fextra", "-F=extra"] {
+    for arguments in [
+        vec!["-Fextra"],
+        vec!["-F=extra"],
+        vec!["-qFextra"],
+        vec!["-qFmap"],
+        vec!["-rF=extra"],
+        vec!["-vF", "extra"],
+    ] {
         fs::write(&dependency_source, "pub fn optional_dep() -> u8 { 1 }\n")
             .expect("reset optional dependency source");
-        let spec = base.clone().with_cargo_profile_args([feature]);
+        let spec = base.clone().with_cargo_profile_args(&arguments);
+        validate_spec(&spec).expect("accept feature selection without input overrides");
         let snapshot = resolve_cargo_build_inputs(&spec).expect("resolve enabled dependency");
         assert!(
             snapshot
                 .inputs()
                 .iter()
                 .any(|input| input.path() == dependency),
-            "{feature} must include the enabled optional dependency",
+            "{arguments:?} must include the enabled optional dependency",
         );
         assert!(
             snapshot
@@ -232,7 +240,7 @@ fn compact_feature_arguments_watch_enabled_optional_dependencies() {
             !snapshot
                 .is_content_current()
                 .expect("detect dependency change"),
-            "{feature} must watch the enabled optional dependency",
+            "{arguments:?} must watch the enabled optional dependency",
         );
     }
     fs::remove_dir_all(root).expect("remove compact feature fixture");
@@ -273,6 +281,50 @@ fn cargo_target_overrides_are_rejected_before_acquisition() {
     }
     assert!(!root.join("exact").exists());
     fs::remove_dir_all(root).expect("remove Cargo target override fixture");
+}
+
+#[test]
+fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
+    use super::build_wasm_canisters_cached;
+
+    let root = unique_temp_directory("cargo-input-overrides");
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program(root.join("missing-cargo"));
+    for arguments in [
+        vec!["--manifest-path", "other/Cargo.toml"],
+        vec!["--manifest-path=other/Cargo.toml"],
+        vec!["-m", "other/Cargo.toml"],
+        vec!["-mother/Cargo.toml"],
+        vec!["-qmother/Cargo.toml"],
+        vec!["-C", "other"],
+        vec!["-vCother"],
+        vec!["--target", "other-target"],
+        vec!["--target=other-target"],
+        vec!["--package", "other"],
+        vec!["--package=other"],
+        vec!["-p", "other"],
+        vec!["-pother"],
+        vec!["-qpother"],
+        vec!["--workspace"],
+        vec!["--all"],
+        vec!["--exclude", "fixture"],
+        vec!["--exclude=fixture"],
+        vec!["--config", "other.toml"],
+        vec!["--config=build.rustflags=['--cfg=other']"],
+    ] {
+        let override_spec = spec.clone().with_cargo_profile_args(&arguments);
+        for result in [
+            resolve_cargo_build_inputs(&override_spec).map(|_| ()),
+            build_wasm_canisters_cached(&override_spec).map(|_| ()),
+        ] {
+            assert!(
+                matches!(result, Err(WasmBuildError::InvalidSpec { .. })),
+                "{arguments:?} must fail before launching Cargo: {result:?}",
+            );
+        }
+    }
+    assert!(!root.join("exact").exists());
+    fs::remove_dir_all(root).expect("remove Cargo input override fixture");
 }
 
 #[cfg(unix)]
@@ -1795,6 +1847,141 @@ fn cargo_configuration_discovery_matches_cargo_search_and_include_rules() {
     assert!(!paths.contains(&canonical_fixture(&workspace_cargo.join("config.toml"))));
     assert_eq!(paths.len(), 5);
     fs::remove_dir_all(root).expect("remove Cargo-configuration test directory");
+}
+
+#[test]
+#[cfg(unix)]
+fn cargo_configuration_symlinks_preserve_include_locations_and_mutation_guards() {
+    use std::os::unix::fs::symlink;
+
+    let root = unique_temp_directory("cargo-configuration-symlinks");
+    let workspace = root.join("workspace");
+    let workspace_cargo = workspace.join(".cargo");
+    let ancestor_cargo = root.join(".cargo");
+    let external = root.join("external");
+    for directory in [&workspace_cargo, &ancestor_cargo, &external] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    write_projection_package(&workspace, "fixture", "");
+    let shared_config = external.join("config.toml");
+    fs::write(&shared_config, "include = [\"fragment.toml\"]\n").unwrap();
+    let workspace_config = workspace_cargo.join("config.toml");
+    let ancestor_config = ancestor_cargo.join("config.toml");
+    symlink(&shared_config, &workspace_config).unwrap();
+    symlink(&shared_config, &ancestor_config).unwrap();
+    let workspace_fragment = workspace_cargo.join("fragment.toml");
+    let ancestor_fragment = ancestor_cargo.join("fragment.toml");
+    let fragments = [&workspace_fragment, &ancestor_fragment];
+    for fragment in fragments {
+        fs::write(fragment, "[build]\nrustflags = []\n").unwrap();
+    }
+    // This decoy exists so resolving beside the referent can silently watch
+    // the wrong input instead of failing on a missing include.
+    let decoy = external.join("fragment.toml");
+    fs::write(&decoy, "[build]\nrustflags = []\n").unwrap();
+    let spec = WasmBuildSpec::new(&workspace, &root.join("exact"), &["fixture"], "debug")
+        .with_extra_env([("CARGO_HOME", &ancestor_cargo)]);
+    let snapshot = resolve_cargo_build_inputs(&spec).expect("resolve symlinked Cargo configs");
+    assert_eq!(
+        snapshot
+            .inputs()
+            .iter()
+            .map(super::CargoBuildInput::path)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        snapshot.inputs().len(),
+        "Cargo home and ancestor discovery must not duplicate the same lookup path",
+    );
+    assert!(snapshot.is_content_current().unwrap());
+    for fragment in fragments {
+        fs::write(fragment, "[build]\nrustflags = ['--cfg=changed']\n").unwrap();
+        assert!(
+            !snapshot.is_content_current().unwrap(),
+            "Cargo's include at {} must be watched",
+            fragment.display(),
+        );
+        fs::write(fragment, "[build]\nrustflags = []\n").unwrap();
+        assert!(snapshot.is_content_current().unwrap());
+    }
+    fs::write(&decoy, "[build]\nrustflags = ['--cfg=unused']\n").unwrap();
+    assert!(snapshot.is_content_current().unwrap());
+
+    // Retargeting the configured entry must be observed, even while the
+    // previous referent remains unchanged.
+    let replacement = external.join("replacement.toml");
+    fs::write(&replacement, "[build]\nrustflags = ['--cfg=replaced']\n").unwrap();
+    fs::remove_file(&workspace_config).unwrap();
+    symlink(&replacement, &workspace_config).unwrap();
+    assert!(!snapshot.is_content_current().unwrap());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn cargo_configuration_guards_follow_each_directory_alias() {
+    use std::os::unix::fs::symlink;
+
+    let root = unique_temp_directory("cargo-configuration-directory-aliases");
+    let workspace = root.join("workspace");
+    let cargo_dir = workspace.join(".cargo");
+    fs::create_dir_all(&cargo_dir).unwrap();
+    fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fixture\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    write_projection_package(&workspace, "fixture", "");
+    fs::write(
+        cargo_dir.join("config.toml"),
+        "include = [\"first/config.toml\", \"second/config.toml\"]\n",
+    )
+    .unwrap();
+    let original = root.join("original");
+    let replacement = root.join("replacement");
+    for directory in [&original, &replacement] {
+        fs::create_dir_all(directory).unwrap();
+        fs::write(
+            directory.join("config.toml"),
+            "include = [\"fragment.toml\"]\n",
+        )
+        .unwrap();
+        fs::write(directory.join("fragment.toml"), "[build]\nrustflags = []\n").unwrap();
+    }
+    symlink(&original, cargo_dir.join("first")).unwrap();
+    let second = cargo_dir.join("second");
+    symlink(&original, &second).unwrap();
+    let spec = WasmBuildSpec::new(&workspace, &root.join("exact"), &["fixture"], "debug")
+        .with_extra_env([("CARGO_HOME", root.join("cargo-home"))]);
+    let snapshot = resolve_cargo_build_inputs(&spec).unwrap();
+    assert!(snapshot.is_content_current().unwrap());
+    fs::write(
+        replacement.join("fragment.toml"),
+        "[build]\nrustflags = ['--cfg=replaced']\n",
+    )
+    .unwrap();
+    assert!(snapshot.is_content_current().unwrap());
+    fs::remove_file(&second).unwrap();
+    symlink(&replacement, &second).unwrap();
+    assert!(
+        !snapshot.is_content_current().unwrap(),
+        "the second alias's nested include must be guarded even when config bytes match",
+    );
+
+    // Directory-alias cycles must terminate discovery even for callers using
+    // a custom Cargo program that does not reject them in metadata.
+    fs::write(
+        cargo_dir.join("config.toml"),
+        "include = [\"loop/config.toml\"]\n",
+    )
+    .unwrap();
+    symlink(&cargo_dir, cargo_dir.join("loop")).unwrap();
+    append_cargo_configuration_inputs(&mut Vec::new(), &spec, &workspace).unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

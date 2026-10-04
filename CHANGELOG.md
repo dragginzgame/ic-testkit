@@ -6,6 +6,50 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.12] - 2026-10-04 - Consistent Cargo inputs and bounded startup readiness
+
+### Fixed
+
+- Managed PocketIC startup reads at most 65 bytes from its port file and rejects
+  files larger than 64 bytes with bounded diagnostics. Missing files and partial
+  writes remain pending; valid nonzero ports, UTF-8 errors, owned-child teardown,
+  and private startup-file cleanup retain their behavior.
+- Cargo metadata recognizes grouped short feature options such as `-qFextra`,
+  `-rF=extra`, and `-vF extra`. Enabled optional dependencies enter input discovery
+  and mutation guards, and batched resolution uses the same feature context.
+- Symlinked Cargo configuration resolves relative includes beside the configured
+  entry, matching Cargo, rather than beside its referent. Each lookup location
+  retains its nested include paths; guards detect file and directory symlink
+  replacement even when the top-level configuration bytes remain identical.
+  Duplicate lookup paths are suppressed and recursive cycles terminate.
+
+### Changed
+
+- `WasmBuildSpec` rejects profile arguments that override its workspace, package
+  selection, compilation target, or configuration before input resolution or
+  cache acquisition. Long, attached, and grouped short options are covered.
+  Use the specification's workspace/packages, `with_target`, discovered Cargo
+  configuration files, and `with_extra_env`; `--config` overrides are unsupported.
+  Existing target-directory ownership checks remain enforced.
+- Startup unit fixtures share the artifact tests' executable-script writer,
+  which finishes writes in a child process before execution. This removes a
+  separate fixture-writing path exposed to parallel Unix `ETXTBSY` failures.
+- Public API signatures, dependencies, and persisted layouts are unchanged;
+  owned format identifiers remain `v1`. Corrected feature/configuration inputs
+  can change fingerprints and cause a fresh build without a cache migration.
+
+### Testing
+
+- Oversized readiness files, Cargo input-override validation, and symlinked
+  configuration discovery regressions were reproduced before fixing them.
+  Focused checks cover partial writes, bounded diagnostics, child cleanup,
+  grouped features, optional dependency mutation, shared config referents,
+  nested directory aliases, duplicate discovery, and cycle termination.
+- Existing observed-output fixtures, executable resolution, batched input reuse,
+  semantic workspace projection, and warm source-mutation rejection pass targeted
+  checks. Clippy, formatting, and diff checks pass. No performance improvement
+  has been measured; full pre-push validation remains maintainer-owned.
+
 ## [0.14.11] - 2026-10-04 - Canonical package selection and reliable discovery
 
 ### Fixed

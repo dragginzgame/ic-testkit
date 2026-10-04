@@ -4,6 +4,50 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.12
+
+This patch release aligns Cargo input discovery with execution and bounds
+managed PocketIC readiness-file reads. Public API signatures, dependencies,
+and persisted layouts are unchanged; owned format identifiers remain `v1`.
+
+- Managed startup reads at most 65 bytes and rejects port files larger than
+  64 bytes with bounded diagnostics. Missing files and partial writes remain
+  pending. Nonzero decimal ports, UTF-8 errors, owned-child teardown, and private
+  startup-file cleanup retain their behavior.
+- Grouped short feature arguments such as `-qFextra`, `-rF=extra`, and `-vF extra`
+  reach Cargo metadata. Enabled optional dependencies are watched, and batch
+  resolution shares the same feature context.
+- Cargo configuration includes resolve beside the configured entry when that
+  entry is a symlink. Input paths preserve file and directory lookups, so guards
+  observe link replacement and nested include changes. Separate aliases retain
+  their include paths; duplicate lookup paths and recursive cycles are handled.
+- Startup unit fixtures use the same child-process executable writer as artifact
+  tests, removing a separate writing path susceptible to parallel Unix
+  `ETXTBSY` launch failures.
+
+`with_cargo_profile_args` can no longer redirect inputs outside the build
+specification's discovery context. These options return `InvalidSpec` before
+resolution or acquisition, including their attached and grouped short forms:
+
+| Previously supplied argument | Required replacement |
+| --- | --- |
+| `--manifest-path`, `-m`, or `-C` | Set the invocation directory through `WasmBuildSpec::new`'s `workspace_root`. |
+| `--package`, `-p`, `--workspace`, `--all`, or `--exclude` | Supply the exact package list to `WasmBuildSpec::new`. |
+| `--target` | Use `with_target`. |
+| `--config` | Use discovered Cargo configuration files or explicit `with_extra_env` values. |
+
+Existing target-directory ownership checks remain enforced. Corrected feature
+and configuration inputs can change fingerprints and trigger fresh builds;
+no persisted-cache migration is required.
+
+Readiness, input-override validation, and symlink discovery regressions were
+reproduced before fixing them. Focused tests cover partial writes and child
+cleanup, grouped features and dependency mutation, configuration lookup and
+alias replacement, duplicate discovery, cycles, batched reuse, workspace
+projection, warm mutation rejection, and observed Cargo diagnostics. Targeted
+checks, Clippy, formatting, and diff checks pass. No performance improvement
+has been measured. Full pre-push validation remains maintainer-owned.
+
 ## 0.14.11
 
 This patch release fixes executable and benchmark-run discovery and consolidates

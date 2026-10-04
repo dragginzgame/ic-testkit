@@ -895,8 +895,11 @@ impl WasmBuildSpec {
 
     /// Set Cargo profile and feature arguments used for the build and fingerprint.
     ///
-    /// `--target-dir` overrides are rejected during acquisition; target
-    /// directories are selected by this specification's cache configuration.
+    /// Workspace, package, compilation target, and target-directory overrides
+    /// are rejected before resolution or acquisition; use this specification's
+    /// corresponding fields and builders. `--config` overrides are also
+    /// rejected: use Cargo's discovered configuration files or explicit
+    /// environment overrides so resolution and execution share tracked inputs.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -1356,6 +1359,9 @@ impl CargoBuildInput {
     }
 
     /// Resolved file or directory read by the Cargo build.
+    ///
+    /// Configuration inputs preserve their lookup paths so mutation guards
+    /// observe replaced symlinks as well as changed file contents.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
@@ -3379,6 +3385,30 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "Cargo target directories are owned by the build specification; use target_dir or with_shared_incremental_target instead of command overrides".to_owned(),
         });
     }
+    if spec.cargo_profile_args.iter().any(|argument| {
+        let option = argument
+            .as_encoded_bytes()
+            .split(|byte| *byte == b'=')
+            .next()
+            .unwrap_or_default();
+        matches!(
+            option,
+            b"--manifest-path"
+                | b"--target"
+                | b"--package"
+                | b"--workspace"
+                | b"--all"
+                | b"--exclude"
+                | b"--config"
+        ) || matches!(
+            short_cargo_value_option(argument),
+            Some((b'm' | b'p' | b'C', _))
+        )
+    }) {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "Cargo workspace, package, target, and configuration inputs are owned by the build specification; use workspace_root, packages, with_target, and discovered Cargo configuration files or with_extra_env instead of command overrides".to_owned(),
+        });
+    }
     if matches!(
         &spec.cache_mode,
         WasmBuildCacheMode::SharedIncremental { target_dir } if target_dir.as_os_str().is_empty()
@@ -3543,19 +3573,34 @@ fn metadata_arguments(arguments: &[OsString]) -> Vec<OsString> {
     let mut selected = Vec::new();
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
+        if let Some((b'F', index)) = short_cargo_value_option(argument) {
+            // Cargo accepts clusters such as -qFextra and -rF=extra. Profile
+            // and output flags do not belong in metadata's resolution context.
+            // Valid feature names are UTF-8; preserve malformed arguments for
+            // Cargo to diagnose instead of replacing their bytes.
+            selected.push(argument.to_str().map_or_else(
+                || argument.clone(),
+                |text| OsString::from(format!("-F{}", &text[index + 1..])),
+            ));
+            if index + 1 == argument.as_encoded_bytes().len()
+                && let Some(value) = arguments.next()
+            {
+                selected.push(value.clone());
+            }
+            continue;
+        }
         let argument_text = argument.to_string_lossy();
         match argument_text.as_ref() {
             "--all-features" | "--no-default-features" | "--locked" | "--offline" | "--frozen" => {
                 selected.push(argument.clone());
             }
-            "--features" | "-F" | "--filter-platform" => {
+            "--features" | "--filter-platform" => {
                 selected.push(argument.clone());
                 if let Some(value) = arguments.next() {
                     selected.push(value.clone());
                 }
             }
             _ if argument_text.starts_with("--features=")
-                || argument_text.starts_with("-F")
                 || argument_text.starts_with("--filter-platform=") =>
             {
                 selected.push(argument.clone());
@@ -3564,6 +3609,24 @@ fn metadata_arguments(arguments: &[OsString]) -> Vec<OsString> {
         }
     }
     selected
+}
+
+// Return the first value-taking short option and its byte position. Remaining
+// bytes are its value, so letters in feature names or paths are not switches.
+// Unknown options remain Cargo's responsibility to reject.
+fn short_cargo_value_option(argument: &OsStr) -> Option<(u8, usize)> {
+    let bytes = argument.as_encoded_bytes();
+    if !bytes.starts_with(b"-") || bytes.starts_with(b"--") {
+        return None;
+    }
+    for (index, byte) in bytes.iter().copied().enumerate().skip(1) {
+        match byte {
+            b'v' | b'q' | b'r' | b'h' => {}
+            b'F' | b'j' | b'Z' | b'm' | b'p' | b'C' => return Some((byte, index)),
+            _ => return None,
+        }
+    }
+    None
 }
 
 struct MetadataPackage<'a> {
@@ -4135,15 +4198,9 @@ fn append_cargo_configuration_inputs(
         roots.push(config);
     }
 
-    let mut visited = BTreeSet::new();
+    let mut active = BTreeSet::new();
     for config in roots {
-        append_cargo_configuration_tree(
-            inputs,
-            &config,
-            &canonical_workspace,
-            &mut visited,
-            false,
-        )?;
+        append_cargo_configuration_tree(inputs, &config, &canonical_workspace, &mut active, false)?;
     }
     Ok(())
 }
@@ -4200,57 +4257,68 @@ fn append_cargo_configuration_tree(
     inputs: &mut Vec<(PathBuf, PathBuf)>,
     config: &Path,
     workspace_root: &Path,
-    visited: &mut BTreeSet<PathBuf>,
+    active: &mut BTreeSet<PathBuf>,
     optional: bool,
 ) -> Result<(), WasmBuildError> {
-    let canonical = match config.canonicalize() {
-        Ok(canonical) => canonical,
+    let contents = match fs::read_to_string(config) {
+        Ok(contents) => contents,
         Err(error) if optional && error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(source) => {
             return Err(WasmBuildError::Io {
-                operation: "resolve Cargo configuration",
+                operation: "read Cargo configuration",
                 path: config.to_owned(),
                 source,
             });
         }
     };
-    if !visited.insert(canonical.clone()) {
+    let parent = config
+        .parent()
+        .ok_or_else(|| WasmBuildError::InvalidCargoConfiguration {
+            path: config.to_owned(),
+            message: "configuration path has no parent directory".to_owned(),
+        })?;
+    // Normalize the containing directory, preserving the configured file
+    // entry. Cargo resolves includes beside that entry, not its referent.
+    let location = parent
+        .canonicalize()
+        .map_err(|source| WasmBuildError::Io {
+            operation: "resolve Cargo configuration directory",
+            path: parent.to_owned(),
+            source,
+        })?
+        .join(config.file_name().ok_or_else(|| {
+            invalid_cargo_configuration(config, "configuration path has no file name")
+        })?);
+    // Only active recursion is suppressed. Separate directory aliases must
+    // each retain their nested lookup paths even when they currently agree.
+    if !active.insert(location.clone()) {
         return Ok(());
     }
-
-    let contents = fs::read_to_string(&canonical).map_err(|source| WasmBuildError::Io {
-        operation: "read Cargo configuration",
-        path: canonical.clone(),
-        source,
-    })?;
     let configuration = toml::from_str::<TomlValue>(&contents).map_err(|error| {
         WasmBuildError::InvalidCargoConfiguration {
-            path: canonical.clone(),
+            path: config.to_owned(),
             message: error.to_string(),
         }
     })?;
-    inputs.push((
-        cargo_configuration_label(&canonical, workspace_root),
-        canonical.clone(),
-    ));
-
-    let Some(include) = configuration.get("include") else {
-        return Ok(());
-    };
-    let parent = canonical
-        .parent()
-        .ok_or_else(|| WasmBuildError::InvalidCargoConfiguration {
-            path: canonical.clone(),
-            message: "configuration path has no parent directory".to_owned(),
-        })?;
-    for (included, optional) in cargo_configuration_includes(include, &canonical)? {
-        let included = if included.is_absolute() {
-            included
-        } else {
-            parent.join(included)
-        };
-        append_cargo_configuration_tree(inputs, &included, workspace_root, visited, optional)?;
+    // Keep the lookup path so rehashing observes replaced file or directory
+    // symlinks. A shared referent can have different includes at each location.
+    if !inputs.iter().any(|(_, path)| path == config) {
+        inputs.push((
+            cargo_configuration_label(&location, workspace_root),
+            config.to_owned(),
+        ));
     }
+    if let Some(include) = configuration.get("include") {
+        for (included, optional) in cargo_configuration_includes(include, config)? {
+            let included = if included.is_absolute() {
+                included
+            } else {
+                parent.join(included)
+            };
+            append_cargo_configuration_tree(inputs, &included, workspace_root, active, optional)?;
+        }
+    }
+    active.remove(&location);
     Ok(())
 }
 
