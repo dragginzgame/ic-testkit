@@ -651,6 +651,30 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
             _ => {}
         }
     }
+
+    let mut duplicated_previous = previous.rows;
+    let mut duplicate = duplicated_previous
+        .iter()
+        .find(|row| !row.is_all_suites() && row.span_label == "common")
+        .unwrap()
+        .clone();
+    duplicate.total.instructions = 600;
+    duplicate.runs = 2;
+    duplicated_previous.push(duplicate);
+    let comparison = compare_benchmark_aggregates(&current.rows, &duplicated_previous);
+    assert_eq!(comparison.rows[0].previous_runs, Some(2));
+    assert_eq!(
+        comparison.rows[0].instructions_avg_change_percent,
+        Some(0.0)
+    );
+    assert_eq!(
+        comparison.rows[3].instructions_avg_change_percent,
+        Some(50.0)
+    );
+    assert_eq!(
+        compare_benchmark_aggregates(&[], &[]).rows,
+        [] as [ic_testkit::benchmark::BenchmarkComparisonRow; 0],
+    );
 }
 
 #[test]

@@ -638,26 +638,22 @@ pub fn compare_benchmark_aggregates(
     current: &[BenchmarkAggregateRow],
     previous: &[BenchmarkAggregateRow],
 ) -> BenchmarkComparisonReport {
-    let current_by_key = aggregate_rows_by_key(current);
-    let previous_by_key = aggregate_rows_by_key(previous);
-    let mut keys = current_by_key.keys().copied().collect::<Vec<_>>();
-
-    for key in previous_by_key.keys() {
-        if !current_by_key.contains_key(key) {
-            keys.push(*key);
-        }
+    let mut rows = BTreeMap::new();
+    for row in current {
+        rows.insert((&row.scope, row.span_label.as_str()), (Some(row), None));
+    }
+    for row in previous {
+        rows.entry((&row.scope, row.span_label.as_str()))
+            .or_insert((None, None))
+            .1 = Some(row);
     }
 
-    keys.sort();
-
     BenchmarkComparisonReport {
-        rows: keys
+        rows: rows
             .into_iter()
-            .map(|(scope, span_label)| {
-                let current_row = current_by_key.get(&(scope, span_label));
-                let previous_row = previous_by_key.get(&(scope, span_label));
-                let current_average = current_row.map(|row| row.average());
-                let previous_average = previous_row.map(|row| row.average());
+            .map(|((scope, span_label), (current_row, previous_row))| {
+                let current_average = current_row.map(BenchmarkAggregateRow::average);
+                let previous_average = previous_row.map(BenchmarkAggregateRow::average);
                 BenchmarkComparisonRow {
                     span_label: span_label.to_owned(),
                     current_runs: current_row.map(|row| row.runs),
@@ -983,14 +979,6 @@ fn averages(total: BenchmarkCounters, runs: u64) -> BenchmarkAverages {
         memory_bytes: total.memory_bytes as f64 / runs,
         total_allocation: total.total_allocation as f64 / runs,
     }
-}
-
-fn aggregate_rows_by_key(
-    rows: &[BenchmarkAggregateRow],
-) -> BTreeMap<(&AggregateScope, &str), &BenchmarkAggregateRow> {
-    rows.iter()
-        .map(|row| ((&row.scope, row.span_label.as_str()), row))
-        .collect()
 }
 
 fn compare_average(current: Option<f64>, previous: Option<f64>) -> Option<f64> {

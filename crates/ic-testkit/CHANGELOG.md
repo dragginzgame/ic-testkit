@@ -8,6 +8,33 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.3
+
+This patch prevents help-only Cargo invocations from publishing stale Wasm and
+simplifies benchmark comparison. Public API signatures, dependencies, and
+persisted layouts are unchanged. Repository-owned formats remain `v1`.
+
+- Cargo help flags now return `WasmBuildError::InvalidSpec` before resolution
+  or cache acquisition. Previously, a successful `cargo build --help` could
+  publish an existing shared-target output under a new fingerprint. Remove help
+  flags from build specifications; long and clustered short forms are rejected.
+  Feature values containing `h`, including compact forms, remain accepted.
+- Benchmark comparison uses one ordered map instead of two indexes, a key list,
+  and explicit sorting. Ordering, missing rows, last-duplicate handling on both
+  sides, averages from current totals and runs, and the distinction between named
+  `ALL` suites and all-suites aggregates remain intact.
+- Observed Cargo output uses a bounded pending-chunk queue. Slow callbacks can
+  delay Cargo's writes instead of growing an unbounded forwarding backlog.
+  Raw stream contents and complete failure diagnostics are preserved, including
+  when output forwarding is disabled; diagnostic capture itself is not truncated.
+
+The stale-publication regression was reproduced using real Cargo before fixing.
+Focused argument, feature-resolution, and benchmark checks pass, along with
+large-stream, disabled-forwarding, reader-disconnection, read-error, and failing
+Cargo checks. Rust 1.88 compilation, Clippy, documentation, formatting, and diff
+checks also pass.
+Full pre-push validation remains maintainer-owned.
+
 ## 0.15.2
 
 This patch bounds cache metadata reads and simplifies benchmark marker parsing.

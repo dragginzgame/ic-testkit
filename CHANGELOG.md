@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
-</p>
-
 # Changelog
 
 All notable, and occasionally less notable changes to this project will be
@@ -9,6 +5,43 @@ documented in this file.
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
+
+## [0.15.3] - 2026-10-04 - Build validation, bounded progress, and simpler comparisons
+
+### Fixed
+
+- Wasm acquisition rejects Cargo help flags before input resolution or cache
+  acquisition. A help-only invocation can exit successfully without building;
+  previously, shared-target acquisition could publish an existing Wasm output
+  under that invocation's fingerprint. Long and clustered short help flags are
+  rejected, while feature values containing `h` remain accepted.
+
+### Changed
+
+- Benchmark comparison uses one ordered map for current and previous rows,
+  removing duplicate indexes, a temporary key list, and a separate sorting pass.
+  Ordering, missing rows, last-duplicate handling on both sides, and averages
+  derived from current totals and run counts are preserved. Named `ALL` suites
+  remain distinct from the all-suites aggregate.
+- Observed Cargo builds use a bounded queue between stdout/stderr readers and
+  the progress observer. Slow callbacks apply backpressure instead of allowing
+  an unbounded pending-chunk backlog. Both streams continue to drain, raw bytes
+  remain intact, and full diagnostics are captured even with forwarding disabled.
+  Diagnostic capture itself is not truncated.
+- Public API signatures, dependencies, and persisted layouts are unchanged;
+  repository-owned formats remain `v1`.
+
+### Testing
+
+- A real-Cargo regression reproduced stale shared-target publication before the
+  fix. Focused checks cover early argument rejection, compact feature arguments,
+  dependency resolution, benchmark ordering, duplicates, missing and empty rows,
+  updated averages, and comparison CSV scope handling.
+- Output checks cover streams larger than the queue, disabled forwarding,
+  consumer disconnection, interrupted reads, permanent read errors, quiet-period
+  progress events, and complete failing-Cargo diagnostics with exit code 23.
+- Rust 1.88 compilation, Clippy, documentation, formatting, and diff checks pass.
+  Full pre-push validation remains maintainer-owned.
 
 ## [0.15.2] - 2026-10-04 - Bounded cache metadata and marker parsing
 

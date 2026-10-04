@@ -298,6 +298,33 @@ fn cargo_target_overrides_are_rejected_before_acquisition() {
 }
 
 #[test]
+#[cfg(unix)]
+fn cargo_help_cannot_publish_existing_shared_target_outputs() {
+    use super::{build_wasm_canisters_cached, expected_artifacts};
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, spec) = fake_wasm_build_spec("cargo-help-shared-output");
+    let shared = root.join("incremental");
+    // Use real Cargo: --help succeeds without building or inspecting the target.
+    let spec = spec
+        .with_cargo_program(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .with_cargo_profile_args(["--help"])
+        .with_shared_incremental_target(&shared);
+    let existing = expected_artifacts(&spec, &shared);
+    fs::create_dir_all(existing[0].parent().unwrap()).unwrap();
+    fs::write(&existing[0], b"\0asm\x01\0\0\0").unwrap();
+
+    let result = build_wasm_canisters_cached(&spec);
+    assert!(
+        matches!(result, Err(WasmBuildError::InvalidSpec { .. })),
+        "help-only Cargo invocation must not publish existing output: {result:?}",
+    );
+    assert!(!spec.target_dir.exists());
+    assert_eq!(fs::read(&existing[0]).unwrap(), b"\0asm\x01\0\0\0");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
     use super::build_wasm_canisters_cached;
 
@@ -325,6 +352,12 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
         vec!["--exclude=fixture"],
         vec!["--config", "other.toml"],
         vec!["--config=build.rustflags=['--cfg=other']"],
+        vec!["--help"],
+        vec!["-h"],
+        vec!["-qh"],
+        vec!["-rh"],
+        vec!["-vh"],
+        vec!["-vrhFextra"],
     ] {
         let override_spec = spec.clone().with_cargo_profile_args(&arguments);
         for result in [
@@ -336,6 +369,18 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
                 "{arguments:?} must fail before launching Cargo: {result:?}",
             );
         }
+    }
+    // Compact feature values containing 'h' are values, not help switches.
+    for arguments in [
+        vec!["-Fh"],
+        vec!["-qFhighlights"],
+        vec!["-rF=highlights"],
+        vec!["-F", "highlights"],
+        vec!["--features=highlights"],
+        vec!["--features", "highlights"],
+    ] {
+        let feature_spec = spec.clone().with_cargo_profile_args(&arguments);
+        super::validate_spec(&feature_spec).expect("accept feature values containing 'h'");
     }
     assert!(!root.join("exact").exists());
     fs::remove_dir_all(root).expect("remove Cargo input override fixture");
@@ -1273,7 +1318,7 @@ fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
         contents: b"failure-stdout",
         attempts: 0,
     };
-    let (sender, chunks) = mpsc::channel();
+    let (sender, chunks) = mpsc::sync_channel(8);
     super::read_process_output(reader, WasmBuildOutputStream::Stdout, sender)
         .expect("interrupted output reads must retry");
     let captured = super::capture_observed_cargo_output(
@@ -1283,6 +1328,77 @@ fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
     );
     assert_eq!(captured.stdout, b"failure-stdout");
     assert_eq!(captured.stderr, [] as [u8; 0]);
+}
+
+#[test]
+fn observed_output_drains_both_streams_through_a_bounded_queue() {
+    let stdout = (0_u8..=255).cycle().take(128 * 1024).collect::<Vec<_>>();
+    let stderr = b"diagnostic\0\xff\n".repeat(16 * 1024);
+    for emit in [true, false] {
+        let mut forwarded_stdout = Vec::new();
+        let mut forwarded_stderr = Vec::new();
+        let captured = thread::scope(|scope| {
+            let (sender, chunks) = mpsc::sync_channel(1);
+            let stdout_sender = sender.clone();
+            let stdout_reader = scope.spawn(|| {
+                super::read_process_output(
+                    stdout.as_slice(),
+                    WasmBuildOutputStream::Stdout,
+                    stdout_sender,
+                )
+            });
+            let stderr_reader = scope.spawn(|| {
+                super::read_process_output(stderr.as_slice(), WasmBuildOutputStream::Stderr, sender)
+            });
+            let mut observer = |event| {
+                if let WasmBuildProgressEvent::CargoOutput { stream, bytes } = event {
+                    match stream {
+                        WasmBuildOutputStream::Stdout => forwarded_stdout.extend(bytes),
+                        WasmBuildOutputStream::Stderr => forwarded_stderr.extend(bytes),
+                    }
+                }
+            };
+            let mut progress = ProgressReporter::observed(
+                WasmBuildProgressConfig::new()
+                    .without_heartbeats()
+                    .with_cargo_output(emit),
+                &mut observer,
+            );
+            let captured = super::capture_observed_cargo_output(
+                chunks,
+                &mut progress,
+                std::time::Instant::now(),
+            );
+            stdout_reader.join().unwrap().unwrap();
+            stderr_reader.join().unwrap().unwrap();
+            captured
+        });
+        assert_eq!(captured.stdout, stdout);
+        assert_eq!(captured.stderr, stderr);
+        assert_eq!(
+            forwarded_stdout.as_slice(),
+            if emit { stdout.as_slice() } else { &[] }
+        );
+        assert_eq!(
+            forwarded_stderr.as_slice(),
+            if emit { stderr.as_slice() } else { &[] }
+        );
+    }
+}
+
+#[test]
+fn observed_output_reader_stops_when_the_consumer_disconnects() {
+    let (sender, chunks) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        let mut reader = std::io::Cursor::new(vec![0; 128 * 1024]);
+        super::read_process_output(&mut reader, WasmBuildOutputStream::Stdout, sender)
+            .expect("disconnected consumers release output readers");
+        reader
+    });
+    chunks.recv().expect("receive output before disconnecting");
+    drop(chunks);
+    let reader = worker.join().expect("join disconnected output reader");
+    assert!(reader.position() < reader.get_ref().len() as u64);
 }
 
 #[test]
@@ -1297,7 +1413,7 @@ fn observed_output_reader_propagates_permanent_errors() {
         }
     }
 
-    let (sender, _chunks) = mpsc::channel();
+    let (sender, _chunks) = mpsc::sync_channel(8);
     let error = super::read_process_output(FailedReader, WasmBuildOutputStream::Stderr, sender)
         .expect_err("permanent output errors must propagate");
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
@@ -1307,48 +1423,63 @@ fn observed_output_reader_propagates_permanent_errors() {
 #[cfg(unix)]
 fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     let root = unique_temp_directory("observed-cargo-failure");
+    // Each stream exceeds both the pipe buffer and the forwarding queue.
+    let expected_stdout = "failure-stdout".repeat(16 * 1024);
+    let expected_stderr = "failure-stderr".repeat(16 * 1024);
+    fs::write(root.join("stdout"), &expected_stdout).unwrap();
+    fs::write(root.join("stderr"), &expected_stderr).unwrap();
     // `sh build` reads the fixture without executing the freshly written file.
     fs::write(
         root.join("build"),
-        "printf 'failure-stdout'\nprintf 'failure-stderr' >&2\nexit 23\n",
+        "set -eu\ncat stdout\ncat stderr >&2\nexit 23\n",
     )
     .expect("write failing observed Cargo fixture");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
         .with_cargo_program("/bin/sh");
-    let mut events = Vec::new();
-    let error = {
-        let mut observer = |event| events.push(event);
-        let mut progress = ProgressReporter::observed(
-            WasmBuildProgressConfig::new().without_heartbeats(),
-            &mut observer,
+    for emit in [true, false] {
+        let mut events = Vec::new();
+        let error = {
+            let mut observer = |event| events.push(event);
+            let mut progress = ProgressReporter::observed(
+                WasmBuildProgressConfig::new()
+                    .without_heartbeats()
+                    .with_cargo_output(emit),
+                &mut observer,
+            );
+
+            run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
+                .expect_err("Cargo fixture must fail")
+        };
+
+        assert!(
+            matches!(
+                &error,
+                WasmBuildError::CommandFailed {
+                    status,
+                    stdout,
+                    stderr,
+                    ..
+                } if status.code() == Some(23)
+                    && stdout == &expected_stdout
+                    && stderr == &expected_stderr
+            ),
+            "unexpected Cargo fixture failure: {error:?}"
         );
-
-        run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
-            .expect_err("Cargo fixture must fail")
-    };
-
-    assert!(
-        matches!(
-            &error,
-            WasmBuildError::CommandFailed {
-                status,
-                stdout,
-                stderr,
+        assert!(events.iter().any(|event| matches!(
+            event,
+            WasmBuildProgressEvent::CargoFinished {
+                success: false,
+                code: Some(23),
                 ..
-            } if status.code() == Some(23)
-                && stdout == "failure-stdout"
-                && stderr == "failure-stderr"
-        ),
-        "unexpected Cargo fixture failure: {error:?}"
-    );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        WasmBuildProgressEvent::CargoFinished {
-            success: false,
-            code: Some(23),
-            ..
-        }
-    )));
+            }
+        )));
+        assert_eq!(
+            events
+                .iter()
+                .any(|event| matches!(event, WasmBuildProgressEvent::CargoOutput { .. })),
+            emit,
+        );
+    }
     fs::remove_dir_all(root).expect("remove failing observed Cargo fixture");
 }
 
