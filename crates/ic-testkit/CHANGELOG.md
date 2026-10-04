@@ -4,6 +4,38 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.14.11
+
+This patch release fixes executable and benchmark-run discovery and consolidates
+Wasm package selection. Public API signatures, dependencies,
+fingerprints, and persisted layouts are unchanged; repository-owned format
+identifiers remain `v1`.
+
+- `resolve_executable` skips non-directory `PATH` components and continues to
+  later executable candidates. Missing, non-executable, and directory candidates
+  also remain skippable during search.
+- Absolute executable paths no longer require a readable current directory.
+  Relative paths still depend on it, and explicitly supplied invalid paths
+  retain their errors without falling back to `PATH`.
+- Benchmark run discovery reads directories directly. Missing roots still begin
+  at index one or have no previous run; other directory errors propagate rather
+  than being concealed by an existence probe.
+- `WasmBuildSpec` sorts and deduplicates package names once. Fingerprints,
+  resolved inputs, artifact paths, and Cargo commands use that canonical list;
+  `packages()` returns sorted, unique names. Keep a separate caller-owned list
+  if original request ordering is needed. Fingerprint bytes and artifact ordering
+  remain unchanged, and repeated packages produce only one `-p` argument each.
+
+Existing callers need no source or cache migration. Both executable-resolution
+regressions were reproduced before fixing them. Three focused Unix tests cover
+search-entry semantics, invalid candidates, explicit-path errors, and removed-directory
+handling in an isolated child process. A benchmark root-path regression was
+also reproduced before fixing it. Focused checks preserve run ordering and
+allocation, package identity and Cargo arguments, workspace projections,
+batched input reuse, empty selections, and cold/warm acquisitions.
+Targeted tests, Clippy, formatting, and diff checks pass. No performance gain
+has been measured. Full pre-push validation remains maintainer-owned.
+
 ## 0.14.10
 
 This patch release fixes artifact publication and repair failures. Public APIs,

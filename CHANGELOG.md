@@ -6,6 +6,49 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.14.11] - 2026-10-04 - Canonical package selection and reliable discovery
+
+### Fixed
+
+- `resolve_executable` continues searching `PATH` when a search component is a
+  regular file rather than a directory. Missing, non-executable, and directory
+  candidates also leave later valid executable candidates eligible.
+- Absolute executable paths resolve independently of the current directory,
+  including when that directory has been removed. Relative paths still require
+  the current directory, and explicitly supplied invalid paths retain their
+  errors instead of falling back to `PATH`.
+- Benchmark run allocation and previous-run discovery inspect the runs directory
+  directly instead of probing existence first. Missing roots still begin at
+  index one or return no previous run. Directory errors other than `NotFound`,
+  including non-directory parents on Unix, propagate instead of being silently
+  treated as missing roots.
+
+### Changed
+
+- `WasmBuildSpec` owns sorted, unique package names. Fingerprinting and artifact
+  discovery no longer clone and normalize the package list separately; input
+  resolution and Cargo invocation use the same list. `packages()` now returns
+  canonical order, and repeated names produce only one `-p` argument per package.
+  Existing fingerprint bytes and artifact ordering are preserved.
+
+### Testing
+
+- Both executable-resolution regressions were reproduced against the released
+  implementation before fixing them. Three focused Unix tests cover absolute,
+  relative, and empty `PATH` entries, unusable search components, missing programs, explicit-path
+  errors, and a removed current directory in an isolated child process.
+- A benchmark root-path regression was reproduced before fixing it. Focused
+  checks distinguish missing roots from invalid directory paths and preserve
+  previous-run selection and numeric index allocation. Package-selection checks
+  use real Cargo input resolution and capture actual arguments in both silent
+  and observed builds; existing checks cover workspace projection, batched input
+  reuse, empty selections, and cold/warm artifact acquisition.
+- Targeted tests, Clippy, formatting, and diff checks pass. Public API signatures,
+  dependencies, fingerprints, and persisted layouts are unchanged; owned format
+  identifiers remain `v1`. Existing callers need no source or cache migration.
+  No performance improvement has been measured. Full pre-push validation
+  remains maintainer-owned.
+
 ## [0.14.10] - 2026-10-04 - Safer atomic artifact publication
 
 ### Fixed

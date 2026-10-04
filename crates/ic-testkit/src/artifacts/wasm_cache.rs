@@ -859,6 +859,8 @@ impl WasmBuildSpec {
     /// `release`, or the name supplied to `--profile`.
     /// Relative `workspace_root` and exact `target_dir` paths are resolved from
     /// the caller's working directory. Shared targets are workspace-relative.
+    /// Package names are sorted and deduplicated for identity, discovery,
+    /// Cargo invocation, and artifact paths.
     #[must_use]
     pub fn new(
         workspace_root: &Path,
@@ -866,13 +868,16 @@ impl WasmBuildSpec {
         packages: &[&str],
         profile_target_dir: &str,
     ) -> Self {
+        let mut packages = packages
+            .iter()
+            .map(|package| (*package).to_owned())
+            .collect::<Vec<_>>();
+        packages.sort();
+        packages.dedup();
         Self {
             workspace_root: workspace_root.to_owned(),
             target_dir: target_dir.to_owned(),
-            packages: packages
-                .iter()
-                .map(|package| (*package).to_owned())
-                .collect(),
+            packages,
             profile_target_dir: profile_target_dir.to_owned(),
             cargo_profile_args: Vec::new(),
             extra_env: BTreeMap::new(),
@@ -1063,7 +1068,7 @@ impl WasmBuildSpec {
         &self.target_dir
     }
 
-    /// Selected Cargo package names.
+    /// Selected Cargo package names in sorted order, without duplicates.
     #[must_use]
     pub fn packages(&self) -> &[String] {
         &self.packages
@@ -3467,10 +3472,7 @@ fn finish_build_fingerprint(
     input_digest: InputDigest,
 ) -> InputDigest {
     let mut hasher = InputHasher::new(CACHE_FORMAT_VERSION);
-    let mut packages = spec.packages.clone();
-    packages.sort();
-    packages.dedup();
-    for package in packages {
+    for package in &spec.packages {
         hasher.field("package", package.as_bytes());
     }
     hasher.field("target", spec.target.as_bytes());
@@ -4762,11 +4764,8 @@ fn ensure_command_success(phase: WasmBuildPhase, output: Output) -> Result<Outpu
 }
 
 fn expected_artifacts(spec: &WasmBuildSpec, target_dir: &Path) -> Vec<PathBuf> {
-    let mut packages = spec.packages.iter().map(String::as_str).collect::<Vec<_>>();
-    packages.sort_unstable();
-    packages.dedup();
-    packages
-        .into_iter()
+    spec.packages
+        .iter()
         .map(|package| {
             if spec.target == DEFAULT_TARGET {
                 wasm_path(target_dir, package, &spec.profile_target_dir)

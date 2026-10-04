@@ -400,6 +400,7 @@ pub fn benchmark_run_directory_name(
 /// This function does not create or reserve the returned directory. Callers
 /// allocating the same prefix concurrently must synchronize that shared
 /// resource or provide unique timestamps.
+/// A missing runs root starts at index one; other directory errors are returned.
 pub fn next_benchmark_run_directory(
     runs_root: impl AsRef<Path>,
     timestamp: &str,
@@ -433,6 +434,7 @@ pub fn next_benchmark_run_directory(
 /// metadata timestamp, directory prefix, then numeric index. An invalid current
 /// name returns [`io::ErrorKind::InvalidInput`]. Unreadable or malformed
 /// candidates are skipped.
+/// A missing runs root has no previous run; other directory errors are returned.
 pub fn find_latest_previous_run(
     runs_root: impl AsRef<Path>,
     current_run_directory_name: &str,
@@ -447,11 +449,12 @@ pub fn find_latest_previous_run(
     })?;
     let mut latest: Option<((String, String, u32), PathBuf)> = None;
 
-    if !runs_root.exists() {
-        return Ok(None);
-    }
-
-    for entry in fs::read_dir(runs_root)? {
+    let entries = match fs::read_dir(runs_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
             continue;
@@ -1191,12 +1194,13 @@ fn metadata_json(metadata: &BenchmarkRunMetadata) -> String {
 }
 
 fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> {
-    if !runs_root.exists() {
-        return Ok(1);
-    }
-
+    let entries = match fs::read_dir(runs_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(1),
+        Err(error) => return Err(error),
+    };
     let mut max_index = 0;
-    for entry in fs::read_dir(runs_root)? {
+    for entry in entries {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
             continue;

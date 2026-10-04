@@ -57,6 +57,65 @@ fn write_projection_package(root: &Path, package: &str, manifest_suffix: &str) {
 }
 
 #[test]
+#[cfg(unix)]
+fn package_selection_agrees_across_identity_artifacts_and_cargo_invocation() {
+    let root = unique_temp_directory("canonical-wasm-packages");
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"alpha\", \"zeta\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    write_projection_package(&root, "alpha", "");
+    write_projection_package(&root, "zeta", "");
+    let target = root.join("exact");
+    let ordered = WasmBuildSpec::new(&root, &target, &["alpha", "zeta"], "debug");
+    let redundant =
+        WasmBuildSpec::new(&root, &target, &["zeta", "alpha", "zeta", "alpha"], "debug");
+    assert_eq!(redundant.packages(), ordered.packages());
+    assert_eq!(redundant, ordered);
+
+    let ordered_inputs = resolve_cargo_build_inputs(&ordered).unwrap();
+    let redundant_inputs = resolve_cargo_build_inputs(&redundant).unwrap();
+    assert_eq!(redundant_inputs.fingerprint(), ordered_inputs.fingerprint());
+    assert_eq!(redundant_inputs.inputs(), ordered_inputs.inputs());
+    assert_eq!(
+        super::expected_artifacts(&redundant, &target),
+        ["alpha.wasm", "zeta.wasm"]
+            .map(|name| target.join("wasm32-unknown-unknown/debug").join(name)),
+    );
+
+    // Read a script through the shell, avoiding execution of a newly written
+    // fixture. Capture the actual arguments in both command-output modes.
+    fs::write(
+        root.join("build"),
+        "printf '%s\\n' \"$@\" > \"$IC_TESTKIT_PACKAGE_ARGUMENTS\"\n",
+    )
+    .unwrap();
+    let arguments = root.join("arguments");
+    let spec = redundant
+        .with_cargo_program("/bin/sh")
+        .with_extra_env([("IC_TESTKIT_PACKAGE_ARGUMENTS", arguments.as_os_str())]);
+    for observed in [false, true] {
+        let mut observer = |_| {};
+        let mut progress = if observed {
+            ProgressReporter::observed(
+                WasmBuildProgressConfig::new().without_heartbeats(),
+                &mut observer,
+            )
+        } else {
+            ProgressReporter::silent()
+        };
+        run_cargo_build(&spec, &root.join("cargo-target"), &mut progress).unwrap();
+        assert_eq!(
+            fs::read_to_string(&arguments).unwrap(),
+            "--target\nwasm32-unknown-unknown\n-p\nalpha\n-p\nzeta\n",
+        );
+        fs::remove_file(&arguments).unwrap();
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn metadata_receives_only_resolution_arguments() {
     let arguments = [
         OsString::from("--profile"),

@@ -693,6 +693,47 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
 }
 
 #[test]
+#[cfg(unix)]
+fn run_discovery_distinguishes_missing_roots_from_invalid_paths() {
+    let root = unique_temp_dir("ic-testkit-benchmark-root-errors");
+    let timestamp = "2026-05-24T162600Z";
+    let current = benchmark_run_directory_name(timestamp, None, 1);
+    let missing = root.join("missing/nested");
+    assert_eq!(
+        next_benchmark_run_directory(&missing, timestamp, None)
+            .expect("missing roots begin at the first index")
+            .run_index,
+        1,
+    );
+    assert_eq!(
+        find_latest_previous_run(&missing, &current, None)
+            .expect("missing roots have no prior runs"),
+        None,
+    );
+
+    let file = root.join("file");
+    fs::write(&file, b"not a directory").unwrap();
+    for invalid in [&file, &file.join("nested")] {
+        // Compare with the platform's directory error, including non-directory
+        // parents, rather than allowing an existence probe to hide that error.
+        let expected = fs::read_dir(invalid).unwrap_err().kind();
+        assert_eq!(
+            next_benchmark_run_directory(invalid, timestamp, None)
+                .expect_err("invalid run roots must fail allocation")
+                .kind(),
+            expected,
+        );
+        assert_eq!(
+            find_latest_previous_run(invalid, &current, None)
+                .expect_err("invalid run roots must fail discovery")
+                .kind(),
+            expected,
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn run_directory_helpers_choose_next_index_for_commit_and_timestamp() {
     let root = unique_temp_dir("ic-testkit-benchmark-runs");
     fs::create_dir_all(root.join("2026-05-24T162600Z-a1b2c3d-0001")).expect("first dir");
