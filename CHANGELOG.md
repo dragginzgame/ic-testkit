@@ -6,6 +6,21 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.18.0]
+
+### Breaking
+
+- Maintainer releases now use one reviewed workflow through `make release-patch`,
+  `make release-minor` and `make release-major`. It runs the same complete gate
+  for all three, finalizes both changelog views, stages explicit metadata, and
+  atomically pushes only the selected branch and exact tag. Separate bump,
+  stage, commit and push entry points are removed. Interrupted releases resume
+  with `make release-resume VERSION=X.Y.Z`, retaining their exact version,
+  destination, validation logs and prepared metadata. See
+  [#7](https://github.com/dragginzgame/ic-testkit/issues/7) and the
+  [package migration notes](crates/ic-testkit/CHANGELOG.md#0180). Use
+  `make release-minor` for this batch.
+
 ## [0.17.3] - 2026-10-05 - Installation documentation consistency
 
 ### Fixed

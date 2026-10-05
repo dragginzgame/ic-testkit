@@ -7,8 +7,8 @@ if [[ "$#" -gt 1 ]]; then
   exit 2
 fi
 
-# Release preparation supplies the selected target through CHANGELOG_VERSION;
-# ordinary CI checks the current workspace package authority.
+# Ordinary CI checks the current workspace package authority; the release
+# adapter checks its exact prepared target before staging.
 version="${1:-}"
 if [[ -z "${version}" ]]; then
   version="$(/bin/bash "${script_dir}/../release/read-workspace-version.sh" --stable Cargo.toml)"

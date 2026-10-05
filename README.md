@@ -1530,37 +1530,60 @@ including earlier pre-1.0 hard cuts.
 
 ### Publishing a release
 
-Commit the changelog entry for the target version and align both current README
-installation examples with its major/minor line. Start from a clean
-worktree, then run:
+Maintain one numbered, undated pending release, `## [X.Y.Z]`, in both changelog
+views. Derive it from the latest finalized release and the complete pending
+batch: compatible changes select the next patch; breaking changes before 1.0
+select the next minor. Reuse that entry until released and keep its links aligned.
+This chooses release notes without changing package metadata. Select the matching
+release command; a conflicting pending version is rejected during preparation.
+Commit implementation changes before releasing; only the declared release
+metadata may remain dirty.
+Prepare the selected offline dependency cache and both supported Rust toolchains,
+then select exactly one maintainer command:
 
 ```bash
 make release-patch
 # or: make release-minor
+# or: make release-major
 ```
 
-The guarded flow runs the local `make ci` gate before bumping the version,
-then bumps and stages the version files, creates the release commit and tag,
-and pushes both. GitHub Actions runs CI for the pushed tag. After tag CI
+All three commands use the reviewed [common release workflow](docs/releases.md)
+and the same complete `make release-check` gate, including MSRV, before changing
+metadata. They finalize both changelog views with the selected version and UTC
+date, update both installation examples, preserve dependency selections, stage
+the explicit release files, and create the maintainer-owned commit and annotated
+tag. They atomically push only the selected branch and exact tag. Defaults are
+`RELEASE_REMOTE=origin` and `RELEASE_BRANCH=main`; override these explicitly when
+using another destination. GitHub Actions runs CI for the pushed tag. After tag CI
 succeeds:
 
 ```bash
 make publish
 ```
 
-Release CI invokes the ordinary `make ci` gate with the caller's environment;
-it preserves Cargo artifacts and does not create or remove a private temporary
-directory around upstream background servers. Managed PocketIC handles retain
+Release validation runs offline and retains its full log. It preserves Cargo
+artifacts and does not remove temporary files around upstream background servers.
+Managed PocketIC handles retain
 ownership of their child processes. See
 [temporary-directory ownership](POCKET-IC.md#temporary-directory-ownership)
 and the [host matrix](docs/hosts.md) for portable checks and qualification gaps.
-The version helper checks offline dependency availability and updates workspace
-lockfile versions without regenerating external dependency selections.
+The release file set is Cargo.toml, Cargo.lock, both changelogs and both READMEs.
+An interruption retains its exact plan and prepared old/new metadata under the
+repository's Git directory. Inspect the recorded state and resume that release:
+
+```bash
+make release-resume VERSION=X.Y.Z
+```
+
+Resume verifies the saved source, version, commit, branch and destination; it
+does not choose another version or recreate an existing release commit or tag.
+An occupied release lock requires inspection of its recorded owner before
+manual removal. Agents prepare and inspect changes but never invoke these
+one-shot commands, which create commits.
 
 `make installation-check` verifies the root and packaged README dependency
-examples against the current workspace version. Release preparation passes
-the selected target through `CHANGELOG_VERSION`, so a minor release checks its
-new installation line before the manifest bump. Historical migration notes
+examples against the current workspace version. Release preparation checks its
+exact prepared installation line before staging. Historical migration notes
 are outside this check.
 
 Publication requires a clean worktree and a matching `v<version>` tag at

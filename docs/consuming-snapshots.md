@@ -93,6 +93,10 @@ the required verifiers, adding any selected tools to the same command:
 /path/to/shared-tooling/scripts/distribution/refresh-consumer.sh \
   --consumer /path/to/consumer \
   --file DRAGGINZGAME.md \
+  --file docs/releases.md \
+  --file scripts/ci/run-release.sh \
+  --file scripts/ci/next-release-version.sh \
+  --file scripts/ci/finalize-release-changelog.awk \
   --file docs/principles/README.md \
   --file docs/principles/decision-artifact-discipline.md \
   --file docs/principles/reviewable-changes.md \
@@ -105,7 +109,8 @@ the required verifiers, adding any selected tools to the same command:
 ```
 
 For an existing snapshot, update its declared file set through the reviewed
-manifest procedure above. The local `AGENTS.md` must direct contributors to
+manifest procedure above, including `docs/releases.md`, the release runner and its version/changelog
+helpers when adopting the release command contract. The local `AGENTS.md` must direct contributors to
 `DRAGGINZGAME.md`, identify `.shared-tooling.snapshot` as its source record, and
 state local product contracts, commands and approved exceptions. Resolve local
 conflicts before claiming adoption. Do not edit a vendored shared document in

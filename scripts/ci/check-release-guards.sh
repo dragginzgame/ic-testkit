@@ -85,6 +85,7 @@ cp "${repo_root}/scripts/ci/check-installation-version.sh" \
 cp "${repo_root}/scripts/release/read-workspace-version.sh" \
   "${installation_case}/scripts/release/"
 printf '[workspace.package]\nversion = "0.8.3"\n' >"${installation_case}/Cargo.toml"
+# shellcheck disable=SC2016 # Markdown fences are literal fixture data.
 for scenario in current patch target-minor whitespace stale-root stale-package \
   missing duplicate malformed outside-toml invalid-version; do
   target_version=""
@@ -124,8 +125,7 @@ for scenario in current patch target-minor whitespace stale-root stale-package \
   status=0
   (
     cd "${installation_case}"
-    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
-      CHANGELOG_VERSION="${target_version}" installation-check
+    /bin/bash scripts/ci/check-installation-version.sh "${target_version}"
   ) >/dev/null 2>&1 || status="$?"
   if [[ "${expected_status}" -eq 0 ]]; then
     [[ "${status}" -eq 0 ]] || fail "installation check rejected ${scenario}"
@@ -158,225 +158,6 @@ clean_status="$?"
 set -e
 [[ "${clean_status}" -ne 0 ]] || fail "ensure-clean accepted an untracked file"
 
-bump_case="${work_dir}/bump"
-mkdir -p "${bump_case}/bin"
-printf '[workspace.package]\nversion = "0.8.0"\n' >"${bump_case}/Cargo.toml"
-cat >"${bump_case}/bin/git" <<'EOF'
-#!/bin/bash
-if [[ "${1:-}" == "rev-parse" ]]; then
-  exit 1
-fi
-exit 2
-EOF
-cat >"${bump_case}/bin/bash" <<'EOF'
-#!/bin/bash
-printf 'changelog %s\n' "$*" >>"${TRACE_FILE}"
-exit "${CHANGELOG_STATUS:-0}"
-EOF
-cat >"${bump_case}/bin/make" <<'EOF'
-#!/bin/bash
-printf 'make %s\n' "$*" >>"${TRACE_FILE}"
-case "${*: -1}" in
-  ensure-clean) exit "${CLEAN_STATUS:-0}" ;;
-  release-ci)
-    [[ "${CHANGELOG_VERSION:-}" == "${EXPECTED_CHANGELOG_VERSION:-0.8.1}" ]] || exit 42
-    exit "${CI_STATUS:-0}"
-    ;;
-  *) exit 2 ;;
-esac
-EOF
-cat >"${bump_case}/bin/cargo" <<'EOF'
-#!/bin/bash
-case "$*" in
-  "metadata --locked --offline --format-version 1") exit "${METADATA_STATUS:-0}" ;;
-  "metadata --offline --format-version 1") exit 0 ;;
-  *) exit 2 ;;
-esac
-EOF
-chmod +x "${bump_case}/bin/git" "${bump_case}/bin/bash" \
-  "${bump_case}/bin/make" "${bump_case}/bin/cargo"
-before_bump="$(<"${bump_case}/Cargo.toml")"
-
-set +e
-(
-  cd "${bump_case}"
-  PATH="${bump_case}/bin:${PATH}" TRACE_FILE="${bump_case}/trace" CHANGELOG_STATUS=29 \
-    /bin/bash "${repo_root}/scripts/release/bump-version.sh" patch
-) >/dev/null 2>&1
-changelog_status="$?"
-set -e
-[[ "${changelog_status}" -eq 29 ]] \
-  || fail "the bump script did not preserve a changelog failure"
-[[ "$(<"${bump_case}/Cargo.toml")" == "${before_bump}" ]] \
-  || fail "the bump script edited version metadata after a failed changelog gate"
-changelog_trace=()
-trace_count=0
-while IFS= read -r trace_line; do
-  changelog_trace[trace_count]="$trace_line"
-  trace_count=$((trace_count + 1))
-done <"${bump_case}/trace"
-[[ "${changelog_trace[0]:-}" == "changelog scripts/ci/check-changelog-version.sh 0.8.1" ]] \
-  || fail "the bump script did not check the target-version changelog first"
-[[ "${#changelog_trace[@]}" -eq 1 ]] \
-  || fail "the bump script continued after a failed changelog gate"
-
-: >"${bump_case}/trace"
-set +e
-(
-  cd "${bump_case}"
-  PATH="${bump_case}/bin:${PATH}" TRACE_FILE="${bump_case}/trace" CI_STATUS=23 \
-    /bin/bash "${repo_root}/scripts/release/bump-version.sh" patch
-) >/dev/null 2>&1
-ci_status="$?"
-set -e
-[[ "${ci_status}" -eq 23 ]] || fail "the bump script did not preserve a CI failure"
-[[ "$(<"${bump_case}/Cargo.toml")" == "${before_bump}" ]] \
-  || fail "the bump script edited version metadata before CI passed"
-ci_trace=()
-trace_count=0
-while IFS= read -r trace_line; do
-  ci_trace[trace_count]="$trace_line"
-  trace_count=$((trace_count + 1))
-done <"${bump_case}/trace"
-[[ "${ci_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
-  || fail "the bump script did not check cleanliness before CI"
-[[ "${ci_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
-  || fail "the bump script did not run release CI before editing version metadata"
-
-: >"${bump_case}/trace"
-(
-  cd "${bump_case}"
-  PATH="${bump_case}/bin:${PATH}" TRACE_FILE="${bump_case}/trace" \
-    EXPECTED_CHANGELOG_VERSION=0.9.0 \
-    /bin/bash "${repo_root}/scripts/release/bump-version.sh" minor
-) >/dev/null 2>&1
-[[ "$(<"${bump_case}/Cargo.toml")" == $'[workspace.package]\nversion = "0.9.0"' ]] \
-  || fail "the minor bump script did not reset the patch component"
-minor_trace=()
-trace_count=0
-while IFS= read -r trace_line; do
-  minor_trace[trace_count]="$trace_line"
-  trace_count=$((trace_count + 1))
-done <"${bump_case}/trace"
-[[ "${minor_trace[0]:-}" == "changelog scripts/ci/check-changelog-version.sh 0.9.0" ]] \
-  || fail "the minor bump script did not check the target-version changelog first"
-[[ "${minor_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
-  || fail "the minor bump script did not check cleanliness before CI"
-[[ "${minor_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
-  || fail "the minor bump script did not run release CI before editing version metadata"
-
-# An unprepared offline cache must fail before version metadata is changed.
-printf '[workspace.package]\nversion = "0.8.0"\n' >"${bump_case}/Cargo.toml"
-set +e
-(
-  cd "${bump_case}"
-  PATH="${bump_case}/bin:${PATH}" TRACE_FILE="${bump_case}/trace" METADATA_STATUS=31 \
-    /bin/bash "${repo_root}/scripts/release/bump-version.sh" patch
-) >/dev/null 2>&1
-metadata_status="$?"
-set -e
-[[ "${metadata_status}" -eq 31 ]] || fail "the bump script hid an offline metadata failure"
-[[ "$(<"${bump_case}/Cargo.toml")" == "${before_bump}" ]] \
-  || fail "the bump script edited version metadata before offline dependency readiness"
-
-commit_case="${work_dir}/commit"
-mkdir -p "${commit_case}/bin"
-printf '[workspace.package]\nversion = "0.8.1"\n' >"${commit_case}/Cargo.toml"
-cat >"${commit_case}/bin/git" <<'EOF'
-#!/usr/bin/env bash
-case "${1:-}" in
-  rev-parse) exit 1 ;;
-  commit) exit 37 ;;
-  tag)
-    : >"${TAG_MARKER}"
-    exit 0
-    ;;
-  *) exit 2 ;;
-esac
-EOF
-chmod +x "${commit_case}/bin/git"
-set +e
-(
-  cd "${commit_case}"
-  PATH="${commit_case}/bin:${PATH}" TAG_MARKER="${commit_case}/tagged" \
-    make --no-print-directory -f "${repo_root}/Makefile" release-commit
-) >/dev/null 2>&1
-commit_status="$?"
-set -e
-[[ "${commit_status}" -ne 0 ]] || fail "release-commit hid a failed commit"
-[[ ! -e "${commit_case}/tagged" ]] || fail "release-commit tagged after a failed commit"
-
-push_case="${work_dir}/push"
-mkdir -p "${push_case}/bin"
-printf '[workspace.package]\nversion = "0.8.1"\n' >"${push_case}/Cargo.toml"
-cat >"${push_case}/bin/git" <<'EOF'
-#!/usr/bin/env bash
-printf 'git %s\n' "$*" >>"${TRACE_FILE}"
-case "${1:-}" in
-  diff-index) exit "${CLEAN_STATUS:-0}" ;;
-  ls-files)
-    [[ -z "${UNTRACKED_FILE:-}" ]] || printf '%s\n' "${UNTRACKED_FILE}"
-    ;;
-  rev-parse)
-    case "${2:-}" in
-      'v0.8.1^{}') printf '%s\n' "${TAG_COMMIT}" ;;
-      HEAD) printf '%s\n' "${HEAD_COMMIT}" ;;
-      *) exit 2 ;;
-    esac
-    ;;
-  push)
-    exit "${PUSH_STATUS:-0}"
-    ;;
-  *) exit 2 ;;
-esac
-EOF
-# A push may not start another build or validation stage. These command
-# doubles make such a regression harmless and visible in the trace.
-for program in make cargo; do
-  cat >"${push_case}/bin/${program}" <<'EOF'
-#!/usr/bin/env bash
-printf 'unexpected %s %s\n' "${0##*/}" "$*" >>"${TRACE_FILE}"
-exit 97
-EOF
-  chmod +x "${push_case}/bin/${program}"
-done
-chmod +x "${push_case}/bin/git"
-
-for push_scenario in success stale-tag dirty untracked push-failure; do
-  : >"${push_case}/trace"
-  clean_status=0
-  push_status=0
-  tag_commit=release
-  untracked_file=""
-  expected_trace=$'git diff-index --quiet HEAD --\ngit ls-files --others --exclude-standard'
-  case "${push_scenario}" in
-    stale-tag) tag_commit=stale ;;
-    dirty) clean_status=23; expected_trace='git diff-index --quiet HEAD --' ;;
-    untracked) untracked_file=untracked-release-note.md ;;
-    push-failure) push_status=37 ;;
-  esac
-  if [[ "${clean_status}" -eq 0 && -z "${untracked_file}" ]]; then
-    expected_trace+=$'\ngit rev-parse v0.8.1^{}\ngit rev-parse HEAD'
-    [[ "${tag_commit}" != release ]] || expected_trace+=$'\ngit push --follow-tags'
-  fi
-  status=0
-  (
-    cd "${push_case}"
-    PATH="${push_case}/bin:${PATH}" TRACE_FILE="${push_case}/trace" \
-      TAG_COMMIT="${tag_commit}" HEAD_COMMIT=release CLEAN_STATUS="${clean_status}" \
-      UNTRACKED_FILE="${untracked_file}" PUSH_STATUS="${push_status}" \
-      "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
-      MAKE="${push_case}/bin/make" release-push
-  ) >/dev/null 2>&1 || status="$?"
-  if [[ "${push_scenario}" == success ]]; then
-    [[ "${status}" -eq 0 ]] || fail "release-push rejected a clean release tag"
-  else
-    [[ "${status}" -ne 0 ]] || fail "release-push hid ${push_scenario}"
-  fi
-  [[ "$(<"${push_case}/trace")" == "${expected_trace}" ]] \
-    || fail "release-push ran unexpected commands for ${push_scenario}"
-done
-
 sequence_case="${work_dir}/sequence"
 mkdir -p "${sequence_case}/bin"
 cat >"${sequence_case}/bin/make" <<'EOF'
@@ -405,7 +186,7 @@ check_make_sequence() {
       PATH="${sequence_case}/bin:${PATH}" TRACE_FILE="${sequence_case}/trace" \
         FAIL_STAGE="${failed_stage}" \
         "${make_bin}" --no-print-directory --jobs=4 -f "${repo_root}/Makefile" \
-        MAKE="${sequence_case}/bin/make" CI_TARGETS="${stages}" "${target}"
+        MAKE="${sequence_case}/bin/make" CI_TARGETS="${stages}" RELEASE_CHECK_TARGETS="${stages}" "${target}"
     ) >/dev/null 2>&1 || status="$?"
     if [[ -z "${failed_stage}" ]]; then
       [[ "${status}" -eq 0 ]] || fail "${target} failed with successful stages"
@@ -422,7 +203,36 @@ check_make_sequence() {
   done
 }
 
-check_make_sequence release-patch "patch release-stage release-commit release-push"
-check_make_sequence release-minor "minor release-stage release-commit release-push"
 check_make_sequence ci "check-first check-second check-third"
-check_make_sequence release-ci "ci"
+check_make_sequence release-check "check-first check-second check-third"
+
+entry_case="${work_dir}/entry-points"
+mkdir -p "${entry_case}/scripts/ci"
+cat >"${entry_case}/scripts/ci/run-release.sh" <<'EOF'
+#!/bin/bash
+printf '%s\n' "$*" >> entry-trace
+EOF
+for kind in patch minor major; do
+  (
+    cd "${entry_case}"
+    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
+      RELEASE_REMOTE=fixture-remote RELEASE_BRANCH=fixture-branch "release-${kind}"
+  ) >/dev/null
+done
+(
+  cd "${entry_case}"
+  "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
+    RELEASE_REMOTE=fixture-remote RELEASE_BRANCH=fixture-branch VERSION=0.2.0 release-resume
+) >/dev/null
+expected=$'patch fixture-remote fixture-branch\nminor fixture-remote fixture-branch\nmajor fixture-remote fixture-branch\nresume 0.2.0 fixture-remote fixture-branch'
+[[ "$(<"${entry_case}/entry-trace")" == "$expected" ]] || fail "release entry points bypassed the shared owner"
+if (
+  cd "${entry_case}"
+  "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" release-patch release-major
+) >/dev/null 2>&1; then
+  fail "multiple release selections were accepted"
+fi
+[[ "$(<"${entry_case}/entry-trace")" == "$expected" ]] || fail "conflicting selections dispatched a release"
+
+/bin/bash "${repo_root}/scripts/ci/test-release-runner.sh"
+/bin/bash "${repo_root}/scripts/ci/check-release-metadata.sh"

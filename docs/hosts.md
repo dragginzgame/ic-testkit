@@ -84,8 +84,10 @@ documentation guard.
 - Publishing additionally requires Cargo registry credentials. Mocked release
   and publish guard checks do not use credentials or perform remote writes.
 
-Release CI runs `make ci` with the caller's temporary-directory environment.
-It preserves Cargo artifacts and does not remove temporary files underneath
+All three maintainer release commands run the same complete `make release-check`
+gate offline, including MSRV, with the caller's temporary-directory environment.
+They retain full validation logs and prepared metadata in the Git directory.
+Release validation preserves Cargo artifacts and does not remove temporary files underneath
 upstream background servers. Managed server handles own their process cleanup.
 
 ## Focused qualification
@@ -95,11 +97,11 @@ inputs. The shell guards use fixtures and mock external commands:
 
 ```bash
 /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
+cargo fetch --locked
 /bin/bash scripts/ci/check-release-guards.sh
 /bin/bash scripts/ci/check-installation-version.sh
 /bin/bash scripts/ci/check-publish-guards.sh
 /bin/bash scripts/ci/check-github-actions-pinned.sh
-cargo fetch --locked
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
 cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
 cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
@@ -135,3 +137,12 @@ declared native hosts. For LOC tooling after installing its prerequisites:
 
 The maintainer owns full pre-push, release and publication gates. Agents run
 only checks affected by their authorized changes.
+
+The adopted release runner comes from reviewed Shared Tooling revision
+`b8537873ac124ad17b30e32aa23e9006a3e6ec21`. Release guard checks exercise its
+patch/minor/major ordering, explicit staging, atomic branch/tag push and exact
+resume with command stubs. Consumer metadata checks use isolated workspaces,
+real offline Cargo metadata, and substituted Git/validation commands, so they
+do not commit, tag, push or publish. Native Linux/ARM64/Intel qualification of
+this adoption remains pending matching portable-host CI; the earlier release
+passes do not qualify this new workflow.

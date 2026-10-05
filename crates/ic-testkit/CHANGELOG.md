@@ -8,6 +8,32 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.18.0]
+
+The repository's maintainer release CLI makes a hard cut to the reviewed
+Shared Tooling runner ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+Use `make release-patch`, `make release-minor` or `make release-major`; all run
+the complete release gate, including MSRV, before changing metadata. The old
+`patch`, `minor`, `release-ci`, `release-stage`, `release-commit`, `release-push`
+and `changelog-check` targets are removed. Library APIs and runtime behavior
+are unchanged. The command changes require a minor release before 1.0.
+
+Maintain one numbered, undated pending release in both changelog views. Infer
+its version from the latest finalized release and the complete pending batch;
+these command changes select 0.18.0 from 0.17.3. Use `make release-minor` for
+this batch. The workflow rejects a conflicting candidate and finalizes both
+views with its saved version and UTC date, updates both installation
+examples, and stages only Cargo.toml, Cargo.lock, both changelogs and both READMEs.
+It preserves dependency selections and build artifacts. Commits and tags remain
+maintainer-owned; agents do not invoke the one-shot release commands.
+
+`make release-resume VERSION=X.Y.Z` reconciles the exact retained plan, source,
+commit, branch and remote rather than bumping again. Prepared old/new metadata
+and validation logs remain in the Git directory. Atomic pushes use the selected
+branch and tag with `--no-follow-tags --atomic`; package publication remains a
+separate `make publish` action. Native qualification is documented in the
+[host matrix](https://github.com/dragginzgame/ic-testkit/blob/main/docs/hosts.md).
+
 ## 0.17.3
 
 The root and packaged README installation examples now select

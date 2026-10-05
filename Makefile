@@ -1,16 +1,25 @@
 .PHONY: \
-	actions-check build-test-canisters changelog-check check check-wasm ci clean \
-	clippy docs-check ensure-clean fmt fmt-check help installation-check msrv package patch publish \
-	minor publish-dry-run publish-guards-check release-check release-commit \
-	release-ci release-guards-check release-minor release-patch release-push release-stage \
+	actions-check build-test-canisters check check-wasm ci clean \
+	clippy docs-check ensure-clean fmt fmt-check help installation-check msrv package publish \
+	publish-dry-run publish-guards-check release-check \
+	release-guards-check release-minor release-patch release-major release-resume \
+	release-version release-preflight release-verify release-prepare-version \
+	release-prepared-check release-files release-commit-check release-committed-check \
+	release-tagged-check release-push-check \
 	release-tag-check shared-tooling-check tags test test-canisters version
 
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 MSRV ?= 1.88.0
-CHANGELOG_VERSION ?=
+.DEFAULT_GOAL := help
+RELEASE_REMOTE ?= origin
+RELEASE_BRANCH ?= main
 
-CI_TARGETS := shared-tooling-check changelog-check installation-check actions-check publish-guards-check \
+ifneq ($(word 2,$(filter release-patch release-minor release-major release-resume,$(MAKECMDGOALS))),)
+$(error Select exactly one release target)
+endif
+
+CI_TARGETS := shared-tooling-check installation-check actions-check publish-guards-check \
 	release-guards-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
@@ -35,10 +44,10 @@ help:
 	@echo "  release-check   Run the complete release gate, including MSRV"
 	@echo "  version         Show the current workspace package version"
 	@echo "  tags            List recent version tags"
-	@echo "  patch           Run CI, then bump patch-version files"
-	@echo "  minor           Run CI, then bump minor-version files"
 	@echo "  release-patch   Verify, then bump, stage, commit, tag, and push a patch release"
 	@echo "  release-minor   Verify, then bump, stage, commit, tag, and push a minor release"
+	@echo "  release-major   Verify, then bump, stage, commit, tag, and push a major release"
+	@echo "  release-resume VERSION=X.Y.Z Resume the exact saved release"
 	@echo "  publish         Publish the tagged release to crates.io"
 
 ensure-clean:
@@ -89,11 +98,8 @@ msrv:
 actions-check:
 	bash scripts/ci/check-github-actions-pinned.sh
 
-changelog-check:
-	bash scripts/ci/check-changelog-version.sh $(CHANGELOG_VERSION)
-
 installation-check:
-	bash scripts/ci/check-installation-version.sh $(CHANGELOG_VERSION)
+	bash scripts/ci/check-installation-version.sh
 
 publish-guards-check:
 	bash scripts/ci/check-publish-guards.sh
@@ -117,48 +123,47 @@ release-check:
 		$(MAKE) --no-print-directory "$$target"; \
 	done
 
-release-ci:
-	+$(MAKE) --no-print-directory ci
-
 publish: ensure-clean release-tag-check
 	bash scripts/release/publish-workspace.sh
 
-patch:
-	bash scripts/release/bump-version.sh patch
+release-patch release-minor release-major:
+	+@bash scripts/ci/run-release.sh "$(@:release-%=%)" "$(RELEASE_REMOTE)" "$(RELEASE_BRANCH)"
 
-minor:
-	bash scripts/release/bump-version.sh minor
+release-resume:
+	+@bash scripts/ci/run-release.sh resume "$(VERSION)" "$(RELEASE_REMOTE)" "$(RELEASE_BRANCH)"
 
-release-patch:
-	+$(MAKE) --no-print-directory patch
-	+$(MAKE) --no-print-directory release-stage
-	+$(MAKE) --no-print-directory release-commit
-	+$(MAKE) --no-print-directory release-push
+release-version:
+	@bash scripts/release/read-workspace-version.sh --stable Cargo.toml
 
-release-minor:
-	+$(MAKE) --no-print-directory minor
-	+$(MAKE) --no-print-directory release-stage
-	+$(MAKE) --no-print-directory release-commit
-	+$(MAKE) --no-print-directory release-push
+release-preflight:
+	@bash scripts/release/metadata.sh preflight
 
-release-stage:
-	git add Cargo.toml Cargo.lock
+release-verify:
+	+@bash scripts/release/metadata.sh verify
 
-release-commit:
-	@set -eu; \
-	version="$$(bash "$(REPO_ROOT)scripts/release/read-workspace-version.sh" --stable Cargo.toml)"; \
-	if git rev-parse "v$$version" >/dev/null 2>&1; then \
-		echo "error: tag v$$version already exists; aborting" >&2; \
-		exit 1; \
-	fi; \
-	git commit -m "Release $$version"; \
-	git tag -a "v$$version" -m "Release $$version"
+release-prepare-version:
+	@bash scripts/release/metadata.sh prepare
+
+release-prepared-check:
+	@bash scripts/release/metadata.sh prepared
+
+release-files:
+	@bash scripts/release/metadata.sh files
+
+release-commit-check:
+	@bash scripts/release/metadata.sh commit
+
+release-committed-check:
+	@bash scripts/release/metadata.sh committed
+
+release-tagged-check:
+	@bash scripts/release/metadata.sh tagged
+
+release-push-check:
+	@bash scripts/release/metadata.sh push
 
 release-tag-check:
 	bash "$(REPO_ROOT)scripts/release/check-tag-at-head.sh"
-
-release-push: ensure-clean release-tag-check
-	git push --follow-tags
 
 clean:
 	cargo clean

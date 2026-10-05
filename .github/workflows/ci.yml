@@ -86,6 +86,8 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Prepare selected dependencies
+        run: cargo fetch --locked
       - name: Verify portable operator tooling with the system Bash
         shell: /bin/bash {0}
         run: |
@@ -94,8 +96,6 @@ jobs:
           /bin/bash scripts/ci/check-installation-version.sh
           /bin/bash scripts/ci/check-publish-guards.sh
           /bin/bash scripts/ci/check-github-actions-pinned.sh
-      - name: Prepare selected dependencies
-        run: cargo fetch --locked
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
       - name: Check synthetic PocketIC transport and teardown
