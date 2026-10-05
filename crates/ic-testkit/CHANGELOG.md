@@ -27,6 +27,14 @@ context. Explicit relative `CARGO`/`RUSTC` overrides resolve from the caller's
 directory, and the selected compiler feeds both builds and provenance. Invalid
 explicit tools propagate failures without selecting another tool.
 
+The abandoned-staging pruning test now runs in an isolated subprocess, so
+unrelated parallel test spawns cannot inherit its lock descriptors. Unix
+coverage explicitly retains a duplicate content-lock descriptor after abort:
+pruning preserves orphan staging while that descriptor is open and removes it
+after it closes. This reproduced the reported zero-removals failure; the updated
+test and focused transaction suite pass. Production pruning and lock/cache
+formats are unchanged. Native macOS confirmation remains pending CI.
+
 Focused Linux driver tests and Clippy pass. The released 0.17.0 startup and
 driver checks passed on all three native CI hosts; the new publication and
 tool-launch checks still require a matching native CI run. A deterministic

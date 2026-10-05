@@ -6,7 +6,7 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.17.1] - 2026-10-05 - Benchmark report and standalone tooling fixes
+## [0.17.1] - 2026-10-05 - Benchmark tooling and pruning-test fixes
 
 ### Fixed
 
@@ -29,6 +29,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Testing
 
+- The abandoned-staging pruning test controls its lock descriptors in an
+  isolated subprocess, avoiding inheritance by unrelated parallel test spawns.
+  It also verifies on Unix that a duplicate content-lock descriptor outliving
+  an aborted transaction protects orphan staging until that descriptor closes.
+  Holding such a duplicate reproduced the reported zero-removals assertion;
+  the updated test and focused transaction suite pass. Production pruning,
+  public APIs and lock/cache formats are unchanged.
 - Focused Linux driver checks pass, including injected storage exhaustion after
   a partial staged write, a real rename failure, complete JSON replacement,
   retained readers/hard links, symlink target preservation and interruption

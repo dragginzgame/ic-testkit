@@ -12,6 +12,7 @@ use std::{
     fs,
     panic::{AssertUnwindSafe, catch_unwind},
     path::Path,
+    process::Command,
     sync::{
         Arc, Barrier,
         atomic::{AtomicUsize, Ordering},
@@ -748,6 +749,28 @@ fn scheduled_pruning_skips_an_immediate_second_acquisition() {
 
 #[test]
 fn pruning_removes_abandoned_staging_without_touching_active_transactions() {
+    const CHILD_ENV: &str = "IC_TESTKIT_STAGING_PRUNING_CHILD";
+    if std::env::var_os(CHILD_ENV).is_none() {
+        // Control every holder of this fixture's lock. Other parallel tests
+        // can briefly inherit its descriptor when spawning before exec.
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "artifacts::transaction::tests::pruning_removes_abandoned_staging_without_touching_active_transactions",
+                "--test-threads=1",
+            ])
+            .env(CHILD_ENV, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated staging pruning failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
     let root = unique_temp_directory("staging-pruning");
     let input = root.join("input");
     fs::write(&input, b"input").expect("write input");
@@ -765,6 +788,11 @@ fn pruning_removes_abandoned_staging_without_touching_active_transactions() {
     .expect("prune around active transaction");
     assert_eq!(active_report.uncommitted_directories_removed(), 0);
     assert!(active_staging.exists());
+    #[cfg(unix)]
+    let retained_content_lock = transaction
+        ._content_lock
+        .try_clone()
+        .expect("duplicate the content lock as an inheriting child would");
     transaction.abort().expect("abort active transaction");
 
     let key = resolve_key(&spec).unwrap().key;
@@ -773,6 +801,21 @@ fn pruning_removes_abandoned_staging_without_touching_active_transactions() {
         .join(format!("{key}-terminated-0"));
     fs::create_dir_all(orphan.join("outputs")).expect("create orphan staging");
     fs::write(orphan.join("outputs/payload"), b"abandoned").expect("write orphan payload");
+
+    #[cfg(unix)]
+    {
+        // Aborting the transaction closes its handle, but a duplicate keeps
+        // the native flock alive. Pruning must respect that remaining holder.
+        let held_report = prune_artifact_cache(
+            spec.cache_root(),
+            spec.namespace(),
+            ArtifactCachePrunePolicy::new(),
+        )
+        .expect("prune while the duplicate content lock remains open");
+        assert_eq!(held_report.uncommitted_directories_removed(), 0);
+        assert!(orphan.exists());
+        drop(retained_content_lock);
+    }
 
     let report = prune_artifact_cache(
         spec.cache_root(),
