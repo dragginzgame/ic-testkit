@@ -1,24 +1,24 @@
 <p align="center">
-  <img src="images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
 </p>
 
 <!-- helper-navigation:start -->
 <p align="center">
-  <a href="https://github.com/dragginzgame/canic"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/canic.svg" width="18" height="18" alt=""> <strong>canic</strong></a>
+  <a href="https://github.com/dragginzgame/canic"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/canic.svg" width="18" height="18" alt=""> <strong>canic</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/icydb"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/icydb.svg" width="18" height="18" alt=""> <strong>icydb</strong></a>
+  <a href="https://github.com/dragginzgame/icydb"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/icydb.svg" width="18" height="18" alt=""> <strong>icydb</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/ic-timers"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-timers.svg" width="18" height="18" alt=""> <strong>ic-timers</strong></a>
+  <a href="https://github.com/dragginzgame/ic-timers"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/ic-timers.svg" width="18" height="18" alt=""> <strong>ic-timers</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/ic-memory"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-memory.svg" width="18" height="18" alt=""> <strong>ic-memory</strong></a>
+  <a href="https://github.com/dragginzgame/ic-memory"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/ic-memory.svg" width="18" height="18" alt=""> <strong>ic-memory</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/ic-query"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-query.svg" width="18" height="18" alt=""> <strong>ic-query</strong></a>
+  <a href="https://github.com/dragginzgame/ic-query"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/ic-query.svg" width="18" height="18" alt=""> <strong>ic-query</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/ic-backup"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-backup.svg" width="18" height="18" alt=""> <strong>ic-backup</strong></a>
+  <a href="https://github.com/dragginzgame/ic-backup"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/ic-backup.svg" width="18" height="18" alt=""> <strong>ic-backup</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/ic-blob-storage"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-blob-storage.svg" width="18" height="18" alt=""> <strong>ic-blob-storage</strong></a>
+  <a href="https://github.com/dragginzgame/ic-blob-storage"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/ic-blob-storage.svg" width="18" height="18" alt=""> <strong>ic-blob-storage</strong></a>
   &nbsp;&middot;&nbsp;
-  <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/helper-icons/ic-testkit.svg" width="18" height="18" alt=""> <strong>ic-testkit</strong></a>
+  <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/ic-testkit.svg" width="18" height="18" alt=""> <strong>ic-testkit</strong></a>
 </p>
 <!-- helper-navigation:end -->
 
@@ -80,13 +80,13 @@ instead. If a run fails, structured diagnostics help distinguish an application
 rejection from a broken simulator connection or setup failure.
 
 <p align="center">
-  <img src="images/ic-testkit-game-topology.svg" alt="A purchase test exercises accounts, inventory, and payment canisters inside PocketIC while ic-testkit manages the shared baseline around the system." width="900">
+  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-game-topology.svg" alt="A purchase test exercises accounts, inventory, and payment canisters inside PocketIC while ic-testkit manages the shared baseline around the system." width="900">
 </p>
 
 The core lifecycle is:
 
 <p align="center">
-  <img src="images/ic-testkit-core-lifecycle.svg" alt="Run a test, validate whether its environment is safe to reuse, and then restore or rebuild before the next test." width="900">
+  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-core-lifecycle.svg" alt="Run a test, validate whether its environment is safe to reuse, and then restore or rebuild before the next test." width="900">
 </p>
 
 This is most useful for applications with multiple canisters, expensive setup,
@@ -118,7 +118,7 @@ also available when compiling for `wasm32`.
 The pieces can be used separately or combined into a complete test workflow:
 
 <p align="center">
-  <img src="images/ic-testkit-capabilities.svg" alt="Six ic-testkit capabilities: system testing, safe reuse, reproducible builds, diagnostics, timings, and performance." width="900">
+  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-capabilities.svg" alt="Six ic-testkit capabilities: system testing, safe reuse, reproducible builds, diagnostics, timings, and performance." width="900">
 </p>
 
 | Test-suite need | What ic-testkit does | Practical benefit |
@@ -159,7 +159,7 @@ Not every test should use a cache. Choose the narrowest fixture that preserves
 the behavior under test:
 
 <p align="center">
-  <img src="images/ic-testkit-isolation-decision-tree.svg" alt="Decision tree for choosing a fresh PocketIC, standalone fixture, standalone fixture pool, or multi-canister baseline pool." width="900">
+  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-isolation-decision-tree.svg" alt="Decision tree for choosing a fresh PocketIC, standalone fixture, standalone fixture pool, or multi-canister baseline pool." width="900">
 </p>
 
 | Fixture | Best fit |

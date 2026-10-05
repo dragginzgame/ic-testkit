@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/dragginzgame/ic-testkit/main/images/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
+  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
 </p>
 
 # ic-testkit package changelog and migration guide
