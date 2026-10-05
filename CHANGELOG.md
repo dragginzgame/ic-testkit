@@ -6,6 +6,42 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.4] - 2026-10-05 - Simpler benchmark processing and cache pruning
+
+### Changed
+
+- Captured stdout and stderr append directly to one benchmark parse report
+  through the existing parsing loop. The temporary stderr report and its vector
+  and counter merge are removed. Events and diagnostics retain stdout-then-stderr
+  order, per-stream line numbers, original malformed lines, and strict-mode rules.
+- Benchmark aggregation borrows span labels for its temporary map, then owns
+  labels in the returned rows or overflow errors. It no longer allocates a label
+  key for every span update or passes a second copy of the span's label to the
+  aggregation helper. Scope ordering, named `ALL` suites, checked totals, run
+  counts, extrema, and peak-end counters are preserved.
+- Benchmark run allocation and previous-run discovery share one numeric index
+  parser. Discovery no longer reconstructs an already-split filename prefix to
+  strip it again. Minimum width, ASCII digits, numeric ordering, overflow
+  rejection, and metadata-based candidate ranking are preserved.
+- Size-based artifact-cache pruning skips sorting when retained bytes already
+  fit the budget, including after age-based removal. Above-budget pruning still
+  uses last-use time and path order, respects protected and retained entries,
+  and reports the same scanned and retained totals.
+- Public APIs, dependencies, and persisted layouts are unchanged;
+  repository-owned formats remain `v1`.
+
+### Testing
+
+- Focused parser checks cover both streams, strict and normal parsing, blank and
+  empty inputs, malformed markers, source positions, and diagnostic ordering.
+- Aggregation checks cover repeated spans, named and global scopes, numeric
+  boundaries, and overflow diagnostics for every counter and scope.
+- Run-discovery checks cover malformed indices, five-digit numeric ordering,
+  metadata selection, and index exhaustion. Pruning checks cover exact and
+  under-budget retention, least-recently-used removal, and active-entry protection.
+- Report-output checks, Rust 1.88 compilation, Clippy, documentation, formatting,
+  and diff checks pass. Full pre-push validation remains maintainer-owned.
+
 ## [0.15.3] - 2026-10-04 - Build validation, bounded progress, and simpler comparisons
 
 ### Fixed

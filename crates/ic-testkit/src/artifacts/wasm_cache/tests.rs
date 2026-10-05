@@ -1907,7 +1907,9 @@ fn age_pruning_removes_only_stale_fingerprint_directories() {
 
     let report = prune_wasm_build_cache(
         &target_dir,
-        ArtifactCachePrunePolicy::new().with_max_age(Duration::from_secs(60)),
+        ArtifactCachePrunePolicy::new()
+            .with_max_age(Duration::from_secs(60))
+            .with_max_size_bytes(u64::MAX),
     )
     .expect("prune old cache entry");
 
@@ -1929,6 +1931,22 @@ fn size_pruning_removes_least_recently_used_entries_first() {
     let middle = create_cache_entry(&cache_root, 'b', 10, UNIX_EPOCH + Duration::from_secs(2));
     let newest = create_cache_entry(&cache_root, 'c', 10, UNIX_EPOCH + Duration::from_secs(3));
     let newest_bytes = directory_logical_size(&newest).expect("measure newest entry");
+    let all_bytes = [&oldest, &middle, &newest]
+        .into_iter()
+        .map(|entry| directory_logical_size(entry).unwrap())
+        .sum::<u64>();
+    for limit in [all_bytes, all_bytes + 1] {
+        let report = prune_wasm_build_cache(
+            &target_dir,
+            ArtifactCachePrunePolicy::new().with_max_size_bytes(limit),
+        )
+        .expect("retain entries within the size budget");
+        assert_eq!(report.entries_scanned(), 3);
+        assert_eq!(report.entries_removed(), 0);
+        assert_eq!(report.bytes_before(), all_bytes);
+        assert_eq!(report.bytes_retained(), all_bytes);
+        assert!(oldest.exists() && middle.exists() && newest.exists());
+    }
 
     let report = prune_wasm_build_cache(
         &target_dir,

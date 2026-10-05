@@ -8,7 +8,6 @@
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
-    ffi::OsStr,
     fmt::Write as _,
     fs, io,
     path::{Path, PathBuf},
@@ -516,7 +515,16 @@ pub fn parse_benchmark_events_from_source(
     source: BenchmarkEventSource,
 ) -> BenchmarkParseReport {
     let mut report = BenchmarkParseReport::default();
+    append_benchmark_events(&mut report, input, config, source);
+    report
+}
 
+fn append_benchmark_events(
+    report: &mut BenchmarkParseReport,
+    input: &str,
+    config: &BenchmarkParserConfig,
+    source: BenchmarkEventSource,
+) {
     for (index, line) in input.lines().enumerate() {
         let source_line = index + 1;
         if !has_configured_prefix(line, &config.prefixes) {
@@ -538,8 +546,6 @@ pub fn parse_benchmark_events_from_source(
             Err(marker) => report.malformed_markers.push(marker),
         }
     }
-
-    report
 }
 
 /// Parse separately captured stdout and stderr.
@@ -553,16 +559,9 @@ pub fn parse_benchmark_events_from_captured_output(
     stderr: &str,
     config: &BenchmarkParserConfig,
 ) -> BenchmarkParseReport {
-    let mut report =
-        parse_benchmark_events_from_source(stdout, config, BenchmarkEventSource::Stdout);
-    let stderr_report =
-        parse_benchmark_events_from_source(stderr, config, BenchmarkEventSource::Stderr);
-
-    report.events.extend(stderr_report.events);
-    report
-        .malformed_markers
-        .extend(stderr_report.malformed_markers);
-    report.ignored_line_count += stderr_report.ignored_line_count;
+    let mut report = BenchmarkParseReport::default();
+    append_benchmark_events(&mut report, stdout, config, BenchmarkEventSource::Stdout);
+    append_benchmark_events(&mut report, stderr, config, BenchmarkEventSource::Stderr);
     report
 }
 
@@ -613,22 +612,17 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
 pub fn aggregate_benchmark_spans(
     spans: &[BenchmarkSpan],
 ) -> Result<BenchmarkAggregateReport, BenchmarkAggregateError> {
-    let mut rows: BTreeMap<(AggregateScope, String), AggregateBuilder> = BTreeMap::new();
+    let mut rows: BTreeMap<(AggregateScope, &str), AggregateBuilder> = BTreeMap::new();
 
     for span in spans {
-        add_span_to_aggregate(
-            &mut rows,
-            AggregateScope::Suite(span.suite.clone()),
-            &span.span_label,
-            span,
-        )?;
-        add_span_to_aggregate(&mut rows, AggregateScope::All, &span.span_label, span)?;
+        add_span_to_aggregate(&mut rows, AggregateScope::Suite(span.suite.clone()), span)?;
+        add_span_to_aggregate(&mut rows, AggregateScope::All, span)?;
     }
 
     Ok(BenchmarkAggregateReport {
         rows: rows
             .into_iter()
-            .map(|((scope, span_label), builder)| builder.finish(scope, span_label))
+            .map(|((scope, span_label), builder)| builder.finish(scope, span_label.to_owned()))
             .collect(),
     })
 }
@@ -948,17 +942,16 @@ impl AggregateBuilder {
     }
 }
 
-fn add_span_to_aggregate(
-    rows: &mut BTreeMap<(AggregateScope, String), AggregateBuilder>,
+fn add_span_to_aggregate<'a>(
+    rows: &mut BTreeMap<(AggregateScope, &'a str), AggregateBuilder>,
     scope: AggregateScope,
-    span_label: &str,
-    span: &BenchmarkSpan,
+    span: &'a BenchmarkSpan,
 ) -> Result<(), BenchmarkAggregateError> {
-    match rows.entry((scope, span_label.to_string())) {
+    match rows.entry((scope, span.span_label.as_str())) {
         Entry::Occupied(mut entry) => entry.get_mut().push(span).map_err(|counter| {
             let (scope, span_label) = entry.key();
             BenchmarkAggregateError {
-                span_label: span_label.clone(),
+                span_label: (*span_label).to_owned(),
                 counter,
                 scope: scope.clone(),
             }
@@ -1210,7 +1203,12 @@ fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> 
             continue;
         }
 
-        if let Some(index) = run_index_from_directory_name(&entry.file_name(), prefix) {
+        if let Some(index) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_prefix(prefix))
+            .and_then(parse_run_index)
+        {
             max_index = max_index.max(index);
         }
     }
@@ -1220,10 +1218,7 @@ fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> 
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "benchmark run index exhausted"))
 }
 
-fn run_index_from_directory_name(name: &OsStr, prefix: &str) -> Option<u32> {
-    let name = name.to_str()?;
-    let index = name.strip_prefix(prefix)?;
-
+fn parse_run_index(index: &str) -> Option<u32> {
     if index.len() >= 4 && index.chars().all(|char| char.is_ascii_digit()) {
         index.parse().ok()
     } else {
@@ -1232,9 +1227,8 @@ fn run_index_from_directory_name(name: &OsStr, prefix: &str) -> Option<u32> {
 }
 
 fn run_directory_sort_key(name: &str) -> Option<(&str, u32)> {
-    let (prefix, _) = name.rsplit_once('-')?;
-    let index = run_index_from_directory_name(OsStr::new(name), &format!("{prefix}-"))?;
-    Some((prefix, index))
+    let (prefix, index) = name.rsplit_once('-')?;
+    Some((prefix, parse_run_index(index)?))
 }
 
 fn short_commit_hash(hash: &str) -> String {

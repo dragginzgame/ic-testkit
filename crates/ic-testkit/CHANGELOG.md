@@ -8,6 +8,39 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.4
+
+This patch simplifies benchmark processing and avoids unnecessary cache-pruning
+work.
+Public APIs, dependencies, and persisted layouts are unchanged; no consumer
+migration is required. Repository-owned formats remain `v1`.
+
+- Captured stdout and stderr append to one parse report. The temporary stderr
+  report and its merge are removed. Stream ordering, source line numbers,
+  malformed-line contents, ignored counts, and strict-mode behavior are preserved.
+- Aggregation borrows labels from spans while building its temporary map and
+  creates owned labels for final rows or overflow errors. The helper derives the
+  label from the span instead of accepting it again as a separate argument.
+  Named suites remain distinct from the global aggregate, including suites named
+  `ALL`; ordering, checked totals, run counts, extrema, and peak-end counters are
+  unchanged.
+- Run allocation and previous-run discovery share one numeric index parser,
+  removing prefix reconstruction and reparsing. Index width, ASCII digit
+  validation, numeric ordering, overflow rejection, and metadata ranking remain
+  unchanged.
+- Size pruning skips sorting when retained bytes already fit the limit. Age
+  pruning still runs first; above-budget removal retains its last-use/path order,
+  active-entry and live-consumer protection, and report totals.
+
+Focused checks cover both streams, strict parsing, empty and blank inputs,
+malformed markers, source positions, repeated spans, numeric boundaries, and
+overflow diagnostics for every counter and scope.
+Run-discovery checks cover malformed and large indices, metadata selection, and
+index exhaustion. Pruning checks cover entries at and below the size limit,
+least-recently-used removal, and active-entry protection.
+Report-output checks, Rust 1.88 compilation, Clippy, documentation, formatting,
+and diff checks pass. Full pre-push validation remains maintainer-owned.
+
 ## 0.15.3
 
 This patch prevents help-only Cargo invocations from publishing stale Wasm and

@@ -542,7 +542,9 @@ pub(super) fn prune_direct_child_directories(
         }
     }
 
-    if let Some(max_size_bytes) = policy.max_size_bytes() {
+    if let Some(max_size_bytes) = policy.max_size_bytes()
+        && report.bytes_retained() > max_size_bytes
+    {
         entries.sort_by(|left, right| {
             left.last_used
                 .cmp(&right.last_used)
