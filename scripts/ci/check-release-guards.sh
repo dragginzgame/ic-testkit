@@ -77,6 +77,63 @@ set -e
 [[ "${missing_version_status}" -eq 1 ]] \
   || fail "the version reader accepted a manifest without a package version"
 
+installation_case="${work_dir}/installation"
+mkdir -p "${installation_case}/crates/ic-testkit" \
+  "${installation_case}/scripts/ci" "${installation_case}/scripts/release"
+cp "${repo_root}/scripts/ci/check-installation-version.sh" \
+  "${installation_case}/scripts/ci/"
+cp "${repo_root}/scripts/release/read-workspace-version.sh" \
+  "${installation_case}/scripts/release/"
+printf '[workspace.package]\nversion = "0.8.3"\n' >"${installation_case}/Cargo.toml"
+for scenario in current patch target-minor whitespace stale-root stale-package \
+  missing duplicate malformed outside-toml invalid-version; do
+  target_version=""
+  requirement="0.8"
+  expected_status=0
+  case "${scenario}" in
+    patch) target_version="0.8.4" ;;
+    target-minor) target_version="0.9.0"; requirement="0.9" ;;
+    current | whitespace) ;;
+    *) expected_status=1 ;;
+  esac
+  for readme in README.md crates/ic-testkit/README.md; do
+    printf '```toml\n[dev-dependencies]\nic-testkit = "%s"\n```\n' \
+      "${requirement}" >"${installation_case}/${readme}"
+  done
+  # Historical mentions outside the maintained TOML example are unrestricted.
+  printf 'Historical migration: ic-testkit = "0.1"\n' >>"${installation_case}/README.md"
+  case "${scenario}" in
+    whitespace)
+      printf '```toml\n  ic-testkit  =  "0.8"  # current line\n```\n' \
+        >"${installation_case}/README.md"
+      ;;
+    stale-root | stale-package)
+      readme="README.md"
+      [[ "${scenario}" != stale-package ]] || readme="crates/ic-testkit/README.md"
+      printf '```toml\nic-testkit = "0.7"\n```\n' \
+        >"${installation_case}/${readme}"
+      ;;
+    missing) rm "${installation_case}/crates/ic-testkit/README.md" ;;
+    duplicate) cat "${installation_case}/crates/ic-testkit/README.md" >>"${installation_case}/README.md" ;;
+    malformed)
+      printf '```toml\nic-testkit = "0.8\n```\n' >"${installation_case}/README.md"
+      ;;
+    outside-toml) printf 'ic-testkit = "0.8"\n' >"${installation_case}/README.md" ;;
+    invalid-version) target_version="0.8.4-rc.1" ;;
+  esac
+  status=0
+  (
+    cd "${installation_case}"
+    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
+      CHANGELOG_VERSION="${target_version}" installation-check
+  ) >/dev/null 2>&1 || status="$?"
+  if [[ "${expected_status}" -eq 0 ]]; then
+    [[ "${status}" -eq 0 ]] || fail "installation check rejected ${scenario}"
+  else
+    [[ "${status}" -ne 0 ]] || fail "installation check accepted ${scenario}"
+  fi
+done
+
 clean_case="${work_dir}/clean"
 mkdir -p "${clean_case}/bin"
 cat >"${clean_case}/bin/git" <<'EOF'

@@ -8,6 +8,19 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.17.3
+
+The root and packaged README installation examples now select
+`ic-testkit = "0.17"`; copying them no longer selects the older 0.14 line. Library APIs and
+runtime behavior are unchanged, and no migration is required.
+
+Repository CI checks both maintained TOML examples against the workspace
+package version. Release preparation checks the selected target minor line
+before the manifest bump, while historical migration prose remains outside
+the check. Focused shell fixtures pass, including rejection of stale, missing,
+duplicate and malformed examples. Native system-Bash confirmation of this
+guard remains pending matching CI.
+
 ## 0.17.2
 
 The synthetic HTTP fixture used by the PocketIC transport and teardown tests

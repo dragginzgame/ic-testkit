@@ -46,13 +46,21 @@ The separate [tag ARM64 full-gate run](https://github.com/dragginzgame/ic-testki
 failed in the synthetic teardown fixture with an immediate `WouldBlock` while
 reading an accepted request. The current fixture explicitly selects blocking
 accepted-stream I/O with read/write timeouts and tests an initially empty
-nonblocking stream. That fix requires its own native qualification.
+nonblocking stream. Later qualification is recorded below.
 
 At `v0.17.1` (`4cf3d0d852445957ad3c1a15f6cb9268330beacd`), the
 [portable-host checks](https://github.com/dragginzgame/ic-testkit/actions/runs/37333641501)
 passed on all three native hosts, including report publication and standalone
 Cargo/rustc proxy invocation. This qualifies those checks for that revision,
 not the subsequent teardown-fixture change or live benchmark measurements.
+
+At `v0.17.2` (`2b5a7f7630807a94a051b6de56e54a4b28bb1c33`), the
+[ARM64 portable-host job](https://github.com/dragginzgame/ic-testkit/actions/runs/37335414639/job/111848825778)
+and [Linux portable-host job](https://github.com/dragginzgame/ic-testkit/actions/runs/37335414639/job/111848826130)
+passed, including the synthetic transport/teardown suite. This confirms the
+accepted-stream fix on native ARM64 macOS. Intel qualification remains pending
+the matching job; these results do not qualify the subsequent installation
+documentation guard.
 
 ## Prerequisites
 
@@ -88,6 +96,7 @@ inputs. The shell guards use fixtures and mock external commands:
 ```bash
 /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
 /bin/bash scripts/ci/check-release-guards.sh
+/bin/bash scripts/ci/check-installation-version.sh
 /bin/bash scripts/ci/check-publish-guards.sh
 /bin/bash scripts/ci/check-github-actions-pinned.sh
 cargo fetch --locked
@@ -113,8 +122,9 @@ after the reader changes its socket mode.
 The driver checks include native process observations, report bounds, atomic
 report replacement, standalone proxy invocation and subprocess completion on
 interruption. They use synthetic workers rather than running the live benchmark.
-Passing Linux checks does not qualify macOS; the new teardown-fixture change
-still needs native ARM64 and Intel CI confirmation.
+Passing Linux checks does not qualify macOS. The teardown-fixture fix has
+native ARM64 confirmation at 0.17.2; Intel confirmation and native qualification
+of the new installation documentation guard remain pending.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:

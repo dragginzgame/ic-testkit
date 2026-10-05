@@ -103,7 +103,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.14"
+ic-testkit = "0.17"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -1530,7 +1530,8 @@ including earlier pre-1.0 hard cuts.
 
 ### Publishing a release
 
-Commit the changelog entry for the target version and start from a clean
+Commit the changelog entry for the target version and align both current README
+installation examples with its major/minor line. Start from a clean
 worktree, then run:
 
 ```bash
@@ -1555,6 +1556,12 @@ ownership of their child processes. See
 and the [host matrix](docs/hosts.md) for portable checks and qualification gaps.
 The version helper checks offline dependency availability and updates workspace
 lockfile versions without regenerating external dependency selections.
+
+`make installation-check` verifies the root and packaged README dependency
+examples against the current workspace version. Release preparation passes
+the selected target through `CHANGELOG_VERSION`, so a minor release checks its
+new installation line before the manifest bump. Historical migration notes
+are outside this check.
 
 Publication requires a clean worktree and a matching `v<version>` tag at
 `HEAD`. Re-running `make publish` is safe when that version already exists on

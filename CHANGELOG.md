@@ -6,6 +6,28 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.17.3] - 2026-10-05 - Installation documentation consistency
+
+### Fixed
+
+- Both current installation examples now select `ic-testkit = "0.17"` rather
+  than the older 0.14 line. This addresses the recurring documentation drift in
+  [issue #6](https://github.com/dragginzgame/ic-testkit/issues/6).
+
+### Tooling
+
+- `make installation-check` checks the root and packaged README TOML dependency
+  examples against the workspace package's major/minor line. Ordinary CI and
+  portable-host checks run it; release preparation uses the already selected
+  `CHANGELOG_VERSION` target before bumping the manifest, so minor releases
+  verify their new installation line. Historical migration prose is untouched.
+- Focused release-guard fixtures pass for current and patch versions, minor
+  targets, whitespace/comments and historical mentions. They reject stale,
+  missing, duplicate or malformed examples and invalid target versions. These
+  checks use temporary workspaces and mocked release commands, with no remote
+  effects or dependency changes. Native system-Bash qualification remains
+  pending a matching CI run.
+
 ## [0.17.2] - 2026-10-05 - Portable teardown fixture
 
 ### Fixed

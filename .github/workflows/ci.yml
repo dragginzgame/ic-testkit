@@ -91,6 +91,7 @@ jobs:
         run: |
           /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
           /bin/bash scripts/ci/check-release-guards.sh
+          /bin/bash scripts/ci/check-installation-version.sh
           /bin/bash scripts/ci/check-publish-guards.sh
           /bin/bash scripts/ci/check-github-actions-pinned.sh
       - name: Prepare selected dependencies

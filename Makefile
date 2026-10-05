@@ -1,6 +1,6 @@
 .PHONY: \
 	actions-check build-test-canisters changelog-check check check-wasm ci clean \
-	clippy docs-check ensure-clean fmt fmt-check help msrv package patch publish \
+	clippy docs-check ensure-clean fmt fmt-check help installation-check msrv package patch publish \
 	minor publish-dry-run publish-guards-check release-check release-commit \
 	release-ci release-guards-check release-minor release-patch release-push release-stage \
 	release-tag-check shared-tooling-check tags test test-canisters version
@@ -10,7 +10,7 @@ REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 MSRV ?= 1.88.0
 CHANGELOG_VERSION ?=
 
-CI_TARGETS := shared-tooling-check changelog-check actions-check publish-guards-check \
+CI_TARGETS := shared-tooling-check changelog-check installation-check actions-check publish-guards-check \
 	release-guards-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
@@ -25,6 +25,7 @@ help:
 	@echo "  check-wasm      Check the crate for wasm32"
 	@echo "  clippy          Run Clippy with warnings denied"
 	@echo "  docs-check      Build public API documentation with warnings denied"
+	@echo "  installation-check Check current README dependency requirements"
 	@echo "  shared-tooling-check Verify the reviewed shared snapshot offline"
 	@echo "  test            Run the ic-testkit test suite"
 	@echo "  test-canisters  Run the PocketIC canister integration test"
@@ -90,6 +91,9 @@ actions-check:
 
 changelog-check:
 	bash scripts/ci/check-changelog-version.sh $(CHANGELOG_VERSION)
+
+installation-check:
+	bash scripts/ci/check-installation-version.sh $(CHANGELOG_VERSION)
 
 publish-guards-check:
 	bash scripts/ci/check-publish-guards.sh
