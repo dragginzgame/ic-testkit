@@ -33,7 +33,6 @@ use super::{
         destination_matches_bytes, destination_matches_digest, digest_bytes, digest_file,
         digest_labeled_paths_composable, os_bytes, read_stamp_with_limit, write_atomic,
     },
-    wasm::wasm_path,
 };
 
 const CACHE_FORMAT_VERSION: &str = "ic-testkit-wasm-build-v1";
@@ -4853,14 +4852,10 @@ fn expected_artifacts(spec: &WasmBuildSpec, target_dir: &Path) -> Vec<PathBuf> {
     spec.packages
         .iter()
         .map(|package| {
-            if spec.target == DEFAULT_TARGET {
-                wasm_path(target_dir, package, &spec.profile_target_dir)
-            } else {
-                target_dir
-                    .join(&spec.target)
-                    .join(&spec.profile_target_dir)
-                    .join(format!("{package}.wasm"))
-            }
+            target_dir
+                .join(&spec.target)
+                .join(&spec.profile_target_dir)
+                .join(format!("{package}.wasm"))
         })
         .collect()
 }

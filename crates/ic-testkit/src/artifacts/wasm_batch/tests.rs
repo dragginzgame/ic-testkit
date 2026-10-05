@@ -18,6 +18,12 @@ fn empty_independent_batch_succeeds_without_work() {
     let report = build_wasm_canisters_cached_batch(&[]).expect("empty labeled batch");
     assert!(report.is_success());
     assert_eq!(report.outcomes().count(), 0);
+    let metrics = report.metrics();
+    assert_eq!(metrics.specifications(), 0);
+    assert_eq!(metrics.succeeded(), 0);
+    assert_eq!(metrics.failed(), 0);
+    assert_eq!(metrics.built(), 0);
+    assert_eq!(metrics.reused(), 0);
 }
 
 #[test]
@@ -56,6 +62,12 @@ fn batch_retains_every_indexed_failure() {
             && failure.timings().total() <= failure.entry_elapsed()
     }));
     assert_eq!(report.outcomes().count(), 0);
+    let metrics = report.metrics();
+    assert_eq!(metrics.specifications(), 2);
+    assert_eq!(metrics.succeeded(), 0);
+    assert_eq!(metrics.failed(), 2);
+    assert_eq!(metrics.built(), 0);
+    assert_eq!(metrics.reused(), 0);
 }
 
 #[cfg(unix)]

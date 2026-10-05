@@ -127,23 +127,11 @@ fn watched_input_stamp_path(artifact_path: &Path) -> std::path::PathBuf {
 mod tests {
     use super::WatchedInputSnapshot;
     use super::icp_artifact_ready_for_build;
-    use std::{
-        fs,
-        path::PathBuf,
-        sync::atomic::{AtomicU64, Ordering},
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    use crate::artifacts::test_support::unique_temp_directory;
+    use std::{fs, path::PathBuf};
 
     fn temp_workspace() -> PathBuf {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time before epoch")
-            .as_nanos();
-        let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path =
-            std::env::temp_dir().join(format!("ic-testkit-icp-artifact-test-{unique}-{sequence}"));
+        let path = unique_temp_directory("icp-artifact-test");
         fs::create_dir_all(path.join(".icp/local/canisters/counter"))
             .expect("create temp workspace");
         path

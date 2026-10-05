@@ -119,8 +119,6 @@ pub enum ArtifactCacheBatchFailure<E> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ArtifactCacheBatchMetrics {
     entries: usize,
-    succeeded: usize,
-    failed: usize,
     built: usize,
     reused: usize,
     successful_timings: ArtifactCacheTimings,
@@ -217,21 +215,16 @@ impl<E> ArtifactCacheBatchReport<E> {
             total: self.total,
             ..ArtifactCacheBatchMetrics::default()
         };
-        for entry in &self.entries {
-            match &entry.result {
-                Ok(outcome) => {
-                    metrics.succeeded += 1;
-                    if outcome.is_reused() {
-                        metrics.reused += 1;
-                    } else {
-                        metrics.built += 1;
-                    }
-                    metrics.successful_timings = metrics
-                        .successful_timings
-                        .saturating_add(outcome.record().timings());
-                }
-                Err(_) => metrics.failed += 1,
+        for entry in self.outcomes() {
+            let outcome = entry.outcome();
+            if outcome.is_reused() {
+                metrics.reused += 1;
+            } else {
+                metrics.built += 1;
             }
+            metrics.successful_timings = metrics
+                .successful_timings
+                .saturating_add(outcome.record().timings());
         }
         metrics
     }
@@ -420,13 +413,13 @@ impl ArtifactCacheBatchMetrics {
     /// Number of successful specifications.
     #[must_use]
     pub const fn succeeded(self) -> usize {
-        self.succeeded
+        self.built + self.reused
     }
 
     /// Number of failed specifications.
     #[must_use]
     pub const fn failed(self) -> usize {
-        self.failed
+        self.entries - self.succeeded()
     }
 
     /// Number of newly built artifact sets.

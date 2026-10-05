@@ -6,6 +6,42 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.6] - 2026-10-05 - Simpler retries and artifact bookkeeping
+
+### Changed
+
+- Install-code retries use an explicit budget for attempts after the initial
+  call, removing an unreachable panic and a one-line rejection-classification
+  helper. Only install-code rate limiting triggers retries; cooldowns remain
+  between attempts, and exhaustion returns the final rejection unchanged.
+- Watched-input freshness tests use the existing artifact temporary-directory
+  helper, removing their separate clock-based naming and atomic counter.
+- Wasm acquisition constructs expected artifact paths through one flow for
+  default and caller-selected targets, removing an equivalent special-case
+  branch. Package order, profile directories, cache lookup, reconstruction,
+  and publication retain their existing paths.
+- Wasm and transactional artifact-batch metrics derive success totals from
+  built plus reused counts, and failure totals from the number of report entries.
+  The redundant stored counters and parallel updates are removed. Metrics use
+  each report's existing successful-outcome iterator; public getters, report
+  display, input-resolution counters, and successful timing totals are preserved.
+- Public API signatures, dependencies, and persisted layouts are unchanged;
+  repository-owned formats remain `v1`.
+
+### Testing
+
+- Focused retry checks cover one- and three-attempt exhaustion, final-rejection
+  preservation, immediate non-rate-limit failure, immediate success, success
+  after retries, cooldown ordering, and rejection of zero-attempt policies.
+- Freshness checks cover matching content stamps, changed inputs, checkout-root
+  and input-order independence, malformed and oversized stamps, and read errors.
+- Batch checks cover empty and failed Wasm reports, transactional builds, reuse,
+  and mixed failures. A real Cargo fixture checks independent feature resolution,
+  cold and warm batch metrics, and retained artifact paths. Warm publication
+  checks cover isolated, shared, and scheduled-maintenance modes.
+- Targeted tests, Rust 1.88 compilation, Clippy, formatting, and diff checks pass.
+  Full pre-push validation remains maintainer-owned.
+
 ## [0.15.5] - 2026-10-05 - Cargo build-mode and artifact-boundary validation
 
 ### Fixed

@@ -525,8 +525,6 @@ impl<'a> WasmBuildBatchMaintenanceEntry<'a> {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WasmBuildBatchMetrics {
     specifications: usize,
-    succeeded: usize,
-    failed: usize,
     built: usize,
     reused: usize,
     input_resolution_runs: usize,
@@ -661,21 +659,16 @@ impl WasmBuildBatchReport {
             total: self.total,
             ..WasmBuildBatchMetrics::default()
         };
-        for entry in &self.entries {
-            match &entry.result {
-                Ok(outcome) => {
-                    metrics.succeeded += 1;
-                    if outcome.is_reused() {
-                        metrics.reused += 1;
-                    } else {
-                        metrics.built += 1;
-                    }
-                    metrics.successful_timings = metrics
-                        .successful_timings
-                        .saturating_add(outcome.record().timings());
-                }
-                Err(_) => metrics.failed += 1,
+        for entry in self.outcomes() {
+            let outcome = entry.outcome();
+            if outcome.is_reused() {
+                metrics.reused += 1;
+            } else {
+                metrics.built += 1;
             }
+            metrics.successful_timings = metrics
+                .successful_timings
+                .saturating_add(outcome.record().timings());
         }
         metrics
     }
@@ -691,13 +684,13 @@ impl WasmBuildBatchMetrics {
     /// Number of successful specifications.
     #[must_use]
     pub const fn succeeded(self) -> usize {
-        self.succeeded
+        self.built + self.reused
     }
 
     /// Number of failed specifications.
     #[must_use]
     pub const fn failed(self) -> usize {
-        self.failed
+        self.specifications - self.succeeded()
     }
 
     /// Number of newly built Wasm artifact sets.

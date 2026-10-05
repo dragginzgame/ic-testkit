@@ -68,6 +68,8 @@ fn labeled_transactions_build_then_reuse_in_order() {
     assert!(reused.is_success());
     assert!(reused.outcomes().all(|entry| entry.outcome().is_reused()));
     let reused_metrics = reused.metrics();
+    assert_eq!(reused_metrics.succeeded(), 2);
+    assert_eq!(reused_metrics.failed(), 0);
     assert_eq!(reused_metrics.built(), 0);
     assert_eq!(reused_metrics.reused(), 2);
     assert!(reused_metrics.successful_timings().caller_build().is_none());

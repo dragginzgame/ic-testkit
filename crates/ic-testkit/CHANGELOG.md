@@ -8,6 +8,37 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.6
+
+This patch simplifies install retries, artifact paths, and batch bookkeeping.
+Public API signatures, dependencies, and persisted layouts are unchanged;
+repository-owned formats remain `v1`. No consumer migration is required.
+
+- Install-code retries use an explicit budget after the initial attempt. The
+  unreachable panic and a one-line classification helper are removed. Only
+  install-code rate limiting is retried, cooldowns occur between attempts, and
+  the final rejection is returned unchanged when the budget is exhausted.
+- Watched-input freshness tests share the existing artifact temporary-directory
+  helper instead of maintaining a separate clock-based name and atomic counter.
+- Wasm acquisition uses one artifact-path construction for default and
+  caller-selected targets, removing an equivalent special-case branch.
+- Both artifact-batch metrics types derive successful and failed totals instead
+  of storing and updating redundant counters. Successful outcomes remain the
+  authoritative source for built/reused counts and timing sums. Public metric
+  getters and report display retain their values.
+
+Focused checks cover exhaustion, final rejection, non-retryable failures,
+immediate and eventual success, cooldown ordering, zero-attempt policies, and
+freshness-stamp behavior.
+
+Focused batch checks also cover empty reports, failures, transaction builds and
+reuse, and cold/warm Wasm metrics through a real Cargo feature-resolution fixture.
+Warm Wasm publication is checked in isolated, shared, and scheduled-maintenance
+modes, including repair of changed outputs and preservation of matching files.
+
+Rust 1.88 compilation, Clippy, formatting, and diff checks pass.
+Full pre-push validation remains maintainer-owned.
+
 ## 0.15.5
 
 This patch prevents build-graph Cargo invocations from publishing stale Wasm
