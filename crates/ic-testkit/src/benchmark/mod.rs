@@ -8,7 +8,6 @@
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
-    ffi::OsStr,
     fmt::Write as _,
     fs, io,
     path::{Path, PathBuf},
@@ -516,7 +515,16 @@ pub fn parse_benchmark_events_from_source(
     source: BenchmarkEventSource,
 ) -> BenchmarkParseReport {
     let mut report = BenchmarkParseReport::default();
+    append_benchmark_events(&mut report, input, config, source);
+    report
+}
 
+fn append_benchmark_events(
+    report: &mut BenchmarkParseReport,
+    input: &str,
+    config: &BenchmarkParserConfig,
+    source: BenchmarkEventSource,
+) {
     for (index, line) in input.lines().enumerate() {
         let source_line = index + 1;
         if !has_configured_prefix(line, &config.prefixes) {
@@ -538,8 +546,6 @@ pub fn parse_benchmark_events_from_source(
             Err(marker) => report.malformed_markers.push(marker),
         }
     }
-
-    report
 }
 
 /// Parse separately captured stdout and stderr.
@@ -553,16 +559,9 @@ pub fn parse_benchmark_events_from_captured_output(
     stderr: &str,
     config: &BenchmarkParserConfig,
 ) -> BenchmarkParseReport {
-    let mut report =
-        parse_benchmark_events_from_source(stdout, config, BenchmarkEventSource::Stdout);
-    let stderr_report =
-        parse_benchmark_events_from_source(stderr, config, BenchmarkEventSource::Stderr);
-
-    report.events.extend(stderr_report.events);
-    report
-        .malformed_markers
-        .extend(stderr_report.malformed_markers);
-    report.ignored_line_count += stderr_report.ignored_line_count;
+    let mut report = BenchmarkParseReport::default();
+    append_benchmark_events(&mut report, stdout, config, BenchmarkEventSource::Stdout);
+    append_benchmark_events(&mut report, stderr, config, BenchmarkEventSource::Stderr);
     report
 }
 
@@ -613,22 +612,17 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
 pub fn aggregate_benchmark_spans(
     spans: &[BenchmarkSpan],
 ) -> Result<BenchmarkAggregateReport, BenchmarkAggregateError> {
-    let mut rows: BTreeMap<(AggregateScope, String), AggregateBuilder> = BTreeMap::new();
+    let mut rows: BTreeMap<(AggregateScope, &str), AggregateBuilder> = BTreeMap::new();
 
     for span in spans {
-        add_span_to_aggregate(
-            &mut rows,
-            AggregateScope::Suite(span.suite.clone()),
-            &span.span_label,
-            span,
-        )?;
-        add_span_to_aggregate(&mut rows, AggregateScope::All, &span.span_label, span)?;
+        add_span_to_aggregate(&mut rows, AggregateScope::Suite(span.suite.clone()), span)?;
+        add_span_to_aggregate(&mut rows, AggregateScope::All, span)?;
     }
 
     Ok(BenchmarkAggregateReport {
         rows: rows
             .into_iter()
-            .map(|((scope, span_label), builder)| builder.finish(scope, span_label))
+            .map(|((scope, span_label), builder)| builder.finish(scope, span_label.to_owned()))
             .collect(),
     })
 }
@@ -638,26 +632,22 @@ pub fn compare_benchmark_aggregates(
     current: &[BenchmarkAggregateRow],
     previous: &[BenchmarkAggregateRow],
 ) -> BenchmarkComparisonReport {
-    let current_by_key = aggregate_rows_by_key(current);
-    let previous_by_key = aggregate_rows_by_key(previous);
-    let mut keys = current_by_key.keys().copied().collect::<Vec<_>>();
-
-    for key in previous_by_key.keys() {
-        if !current_by_key.contains_key(key) {
-            keys.push(*key);
-        }
+    let mut rows = BTreeMap::new();
+    for row in current {
+        rows.insert((&row.scope, row.span_label.as_str()), (Some(row), None));
+    }
+    for row in previous {
+        rows.entry((&row.scope, row.span_label.as_str()))
+            .or_insert((None, None))
+            .1 = Some(row);
     }
 
-    keys.sort();
-
     BenchmarkComparisonReport {
-        rows: keys
+        rows: rows
             .into_iter()
-            .map(|(scope, span_label)| {
-                let current_row = current_by_key.get(&(scope, span_label));
-                let previous_row = previous_by_key.get(&(scope, span_label));
-                let current_average = current_row.map(|row| row.average());
-                let previous_average = previous_row.map(|row| row.average());
+            .map(|((scope, span_label), (current_row, previous_row))| {
+                let current_average = current_row.map(BenchmarkAggregateRow::average);
+                let previous_average = previous_row.map(BenchmarkAggregateRow::average);
                 BenchmarkComparisonRow {
                     span_label: span_label.to_owned(),
                     current_runs: current_row.map(|row| row.runs),
@@ -752,17 +742,28 @@ fn parse_marker_line(
     source: BenchmarkEventSource,
     config: &BenchmarkParserConfig,
 ) -> Result<RawBenchmarkEvent, MalformedBenchmarkMarker> {
-    let parts = line.split('|').collect::<Vec<_>>();
-    if parts.len() != 6 {
+    let mut parts = line.split('|');
+    // Six fields and an absent seventh establish the complete marker shape
+    // without collecting an arbitrary number of columns from malformed logs.
+    let columns: [Option<&str>; 7] = std::array::from_fn(|_| parts.next());
+    let [
+        Some(prefix),
+        Some(label),
+        Some(instructions),
+        Some(heap_bytes),
+        Some(memory_bytes),
+        Some(total_allocation),
+        None,
+    ] = columns
+    else {
         return Err(malformed(
             source_line,
             source,
             line,
             "expected six pipe-separated columns",
         ));
-    }
+    };
 
-    let prefix = parts[0];
     if !config.prefixes.iter().any(|known| known == prefix) {
         return Err(malformed(
             source_line,
@@ -772,7 +773,6 @@ fn parse_marker_line(
         ));
     }
 
-    let label = parts[1];
     if label.is_empty() {
         return Err(malformed(source_line, source, line, "label is empty"));
     }
@@ -787,10 +787,16 @@ fn parse_marker_line(
     })?;
 
     let counters = BenchmarkCounters {
-        instructions: parse_counter(parts[2], source_line, source, line, "instructions")?,
-        heap_bytes: parse_counter(parts[3], source_line, source, line, "heap_bytes")?,
-        memory_bytes: parse_counter(parts[4], source_line, source, line, "memory_bytes")?,
-        total_allocation: parse_counter(parts[5], source_line, source, line, "total_allocation")?,
+        instructions: parse_counter(instructions, source_line, source, line, "instructions")?,
+        heap_bytes: parse_counter(heap_bytes, source_line, source, line, "heap_bytes")?,
+        memory_bytes: parse_counter(memory_bytes, source_line, source, line, "memory_bytes")?,
+        total_allocation: parse_counter(
+            total_allocation,
+            source_line,
+            source,
+            line,
+            "total_allocation",
+        )?,
     };
     let suite = config.suite_derivation.derive_suite(span_label);
 
@@ -936,17 +942,16 @@ impl AggregateBuilder {
     }
 }
 
-fn add_span_to_aggregate(
-    rows: &mut BTreeMap<(AggregateScope, String), AggregateBuilder>,
+fn add_span_to_aggregate<'a>(
+    rows: &mut BTreeMap<(AggregateScope, &'a str), AggregateBuilder>,
     scope: AggregateScope,
-    span_label: &str,
-    span: &BenchmarkSpan,
+    span: &'a BenchmarkSpan,
 ) -> Result<(), BenchmarkAggregateError> {
-    match rows.entry((scope, span_label.to_string())) {
+    match rows.entry((scope, span.span_label.as_str())) {
         Entry::Occupied(mut entry) => entry.get_mut().push(span).map_err(|counter| {
             let (scope, span_label) = entry.key();
             BenchmarkAggregateError {
-                span_label: span_label.clone(),
+                span_label: (*span_label).to_owned(),
                 counter,
                 scope: scope.clone(),
             }
@@ -967,14 +972,6 @@ fn averages(total: BenchmarkCounters, runs: u64) -> BenchmarkAverages {
         memory_bytes: total.memory_bytes as f64 / runs,
         total_allocation: total.total_allocation as f64 / runs,
     }
-}
-
-fn aggregate_rows_by_key(
-    rows: &[BenchmarkAggregateRow],
-) -> BTreeMap<(&AggregateScope, &str), &BenchmarkAggregateRow> {
-    rows.iter()
-        .map(|row| ((&row.scope, row.span_label.as_str()), row))
-        .collect()
 }
 
 fn compare_average(current: Option<f64>, previous: Option<f64>) -> Option<f64> {
@@ -1206,7 +1203,12 @@ fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> 
             continue;
         }
 
-        if let Some(index) = run_index_from_directory_name(&entry.file_name(), prefix) {
+        if let Some(index) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.strip_prefix(prefix))
+            .and_then(parse_run_index)
+        {
             max_index = max_index.max(index);
         }
     }
@@ -1216,10 +1218,7 @@ fn next_run_index_for_prefix(runs_root: &Path, prefix: &str) -> io::Result<u32> 
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "benchmark run index exhausted"))
 }
 
-fn run_index_from_directory_name(name: &OsStr, prefix: &str) -> Option<u32> {
-    let name = name.to_str()?;
-    let index = name.strip_prefix(prefix)?;
-
+fn parse_run_index(index: &str) -> Option<u32> {
     if index.len() >= 4 && index.chars().all(|char| char.is_ascii_digit()) {
         index.parse().ok()
     } else {
@@ -1228,9 +1227,8 @@ fn run_index_from_directory_name(name: &OsStr, prefix: &str) -> Option<u32> {
 }
 
 fn run_directory_sort_key(name: &str) -> Option<(&str, u32)> {
-    let (prefix, _) = name.rsplit_once('-')?;
-    let index = run_index_from_directory_name(OsStr::new(name), &format!("{prefix}-"))?;
-    Some((prefix, index))
+    let (prefix, index) = name.rsplit_once('-')?;
+    Some((prefix, parse_run_index(index)?))
 }
 
 fn short_commit_hash(hash: &str) -> String {

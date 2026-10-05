@@ -21,7 +21,8 @@ use super::{
     },
     digest::{
         FileDigest, InputDigest, InputHasher, copy_file_atomic, destination_matches_digest,
-        digest_bytes, digest_file, digest_labeled_paths, os_bytes, write_atomic,
+        digest_bytes, digest_file, digest_labeled_paths, os_bytes, read_file_with_limit,
+        write_atomic,
     },
     wasm_cache::{
         ResolvedCargoBuildInputs, WasmBuildError, WasmBuildSpec, resolve_cargo_build_inputs,
@@ -759,7 +760,8 @@ impl ArtifactBuildTransaction {
         }
 
         let publication_started = Instant::now();
-        let manifest = manifest_contents(self.resolved.key, &self.spec, &output_info);
+        let manifest =
+            manifest_contents(self.resolved.key, &self.spec, output_info.iter().copied());
         write_atomic(
             &self.staging_directory.join(MANIFEST_FILE),
             manifest.as_bytes(),
@@ -1409,18 +1411,38 @@ fn validated_cache_outputs(
     if !manifest_metadata.file_type().is_file() {
         return Ok(None);
     }
-    let manifest = fs::read(&manifest_path).map_err(|source| ArtifactCacheError::Io {
-        operation: "read artifact cache manifest",
-        path: manifest_path,
-        source,
-    })?;
+    // The writer owns the layout. Fixed-width digests and the largest byte count
+    // bound every valid manifest for this declared output set, without inspecting
+    // cached output bytes or allocating a placeholder output-info vector.
+    let maximum_len = manifest_contents(
+        key,
+        spec,
+        std::iter::repeat(FileDigest {
+            bytes: u64::MAX,
+            digest: key,
+        }),
+    )
+    .len();
+    let Some(manifest) = read_file_with_limit(&manifest_path, maximum_len).map_err(|source| {
+        ArtifactCacheError::Io {
+            operation: "read artifact cache manifest",
+            path: manifest_path,
+            source,
+        }
+    })?
+    else {
+        return Ok(None);
+    };
     if !manifest.starts_with(manifest_header(key).as_bytes()) {
         return Ok(None);
     }
     let Some(output_info) = inspect_cached_output_set(spec, entry)? else {
         return Ok(None);
     };
-    Ok((manifest == manifest_contents(key, spec, &output_info).as_bytes()).then_some(output_info))
+    Ok(
+        (manifest == manifest_contents(key, spec, output_info.iter().copied()).as_bytes())
+            .then_some(output_info),
+    )
 }
 
 fn inspect_complete_output_set(
@@ -1613,7 +1635,7 @@ fn manifest_header(key: InputDigest) -> String {
 fn manifest_contents(
     key: InputDigest,
     spec: &ArtifactCacheSpec,
-    output_info: &[FileDigest],
+    output_info: impl IntoIterator<Item = FileDigest>,
 ) -> String {
     let mut manifest = manifest_header(key);
     for ((index, output), info) in spec.outputs.iter().enumerate().zip(output_info) {

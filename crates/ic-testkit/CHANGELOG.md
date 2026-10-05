@@ -8,6 +8,179 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.7
+
+This patch prevents stale shared-target Wasm publication when the declared
+profile output directory disagrees with the Cargo build arguments. Mismatches
+now return `WasmBuildError::InvalidSpec` before input resolution or cache work.
+
+Pair `WasmBuildSpec::new(..., "release")` with
+`.with_cargo_profile_args(["--release"])` or an equivalent explicit release
+selection. Default builds, `--profile dev`, and `--profile test` use `debug`;
+`--release`, `-r`, and `--profile bench` use `release`; custom profiles use their
+own name. Both `--profile name` and `--profile=name` are supported, including
+release flags clustered before feature arguments. Empty or conflicting profile
+selections are rejected.
+
+Previously, Cargo could compile changed sources in debug mode while acquisition
+certified an old release output with the new fingerprint. A real Cargo
+regression covers rejection and subsequent correct release rebuild and reuse.
+Focused checks cover profile matching and rejection without filesystem side
+effects. Public signatures, dependencies, and persisted layouts are unchanged;
+repository-owned formats remain `v1`.
+
+## 0.15.6
+
+This patch simplifies install retries, artifact paths, and batch bookkeeping.
+Public API signatures, dependencies, and persisted layouts are unchanged;
+repository-owned formats remain `v1`. No consumer migration is required.
+
+- Install-code retries use an explicit budget after the initial attempt. The
+  unreachable panic and a one-line classification helper are removed. Only
+  install-code rate limiting is retried, cooldowns occur between attempts, and
+  the final rejection is returned unchanged when the budget is exhausted.
+- Watched-input freshness tests share the existing artifact temporary-directory
+  helper instead of maintaining a separate clock-based name and atomic counter.
+- Wasm acquisition uses one artifact-path construction for default and
+  caller-selected targets, removing an equivalent special-case branch.
+- Both artifact-batch metrics types derive successful and failed totals instead
+  of storing and updating redundant counters. Successful outcomes remain the
+  authoritative source for built/reused counts and timing sums. Public metric
+  getters and report display retain their values.
+
+Focused checks cover exhaustion, final rejection, non-retryable failures,
+immediate and eventual success, cooldown ordering, zero-attempt policies, and
+freshness-stamp behavior.
+
+Focused batch checks also cover empty reports, failures, transaction builds and
+reuse, and cold/warm Wasm metrics through a real Cargo feature-resolution fixture.
+Warm Wasm publication is checked in isolated, shared, and scheduled-maintenance
+modes, including repair of changed outputs and preservation of matching files.
+
+Rust 1.88 compilation, Clippy, formatting, and diff checks pass.
+Full pre-push validation remains maintainer-owned.
+
+## 0.15.5
+
+This patch prevents build-graph Cargo invocations from publishing stale Wasm
+and confines profile output paths to their target directories.
+Public API signatures, dependencies, and persisted layouts are unchanged;
+repository-owned formats remain `v1`.
+
+- Cargo's `--unit-graph` flag now returns `WasmBuildError::InvalidSpec` before
+  resolution or cache acquisition. It prints a graph and exits successfully
+  without compiling; previously, an existing shared-target Wasm could be
+  published under a new fingerprint. Remove this flag from build specifications
+  and run graph inspection separately from Wasm acquisition.
+- Help and build-graph modes use the same early validation path.
+- Profile output directories must be one normal path component. Absolute paths,
+  parent traversal, and nested paths now return `WasmBuildError::InvalidSpec`
+  before resolution or acquisition. Pass Cargo's output subdirectory name, such
+  as `debug`, `release`, or a custom profile name, rather than a path.
+
+The failure was reproduced with real nightly Cargo. Maintained regressions need
+no nightly and verify early rejection, no cache publication, and unchanged shared
+outputs. A profile-boundary regression also failed before fixing; targeted checks
+cover invalid paths, accepted names, absence of filesystem side effects, and
+compatible batch resolution. Focused Cargo argument checks, Rust 1.88 compilation,
+Clippy, documentation, formatting, and diff checks pass. Full pre-push validation
+remains maintainer-owned.
+
+## 0.15.4
+
+This patch simplifies benchmark processing and avoids unnecessary cache-pruning
+work.
+Public APIs, dependencies, and persisted layouts are unchanged; no consumer
+migration is required. Repository-owned formats remain `v1`.
+
+- Captured stdout and stderr append to one parse report. The temporary stderr
+  report and its merge are removed. Stream ordering, source line numbers,
+  malformed-line contents, ignored counts, and strict-mode behavior are preserved.
+- Aggregation borrows labels from spans while building its temporary map and
+  creates owned labels for final rows or overflow errors. The helper derives the
+  label from the span instead of accepting it again as a separate argument.
+  Named suites remain distinct from the global aggregate, including suites named
+  `ALL`; ordering, checked totals, run counts, extrema, and peak-end counters are
+  unchanged.
+- Run allocation and previous-run discovery share one numeric index parser,
+  removing prefix reconstruction and reparsing. Index width, ASCII digit
+  validation, numeric ordering, overflow rejection, and metadata ranking remain
+  unchanged.
+- Size pruning skips sorting when retained bytes already fit the limit. Age
+  pruning still runs first; above-budget removal retains its last-use/path order,
+  active-entry and live-consumer protection, and report totals.
+
+Focused checks cover both streams, strict parsing, empty and blank inputs,
+malformed markers, source positions, repeated spans, numeric boundaries, and
+overflow diagnostics for every counter and scope.
+Run-discovery checks cover malformed and large indices, metadata selection, and
+index exhaustion. Pruning checks cover entries at and below the size limit,
+least-recently-used removal, and active-entry protection.
+Report-output checks, Rust 1.88 compilation, Clippy, documentation, formatting,
+and diff checks pass. Full pre-push validation remains maintainer-owned.
+
+## 0.15.3
+
+This patch prevents help-only Cargo invocations from publishing stale Wasm and
+simplifies benchmark comparison. Public API signatures, dependencies, and
+persisted layouts are unchanged. Repository-owned formats remain `v1`.
+
+- Cargo help flags now return `WasmBuildError::InvalidSpec` before resolution
+  or cache acquisition. Previously, a successful `cargo build --help` could
+  publish an existing shared-target output under a new fingerprint. Remove help
+  flags from build specifications; long and clustered short forms are rejected.
+  Feature values containing `h`, including compact forms, remain accepted.
+- Benchmark comparison uses one ordered map instead of two indexes, a key list,
+  and explicit sorting. Ordering, missing rows, last-duplicate handling on both
+  sides, averages from current totals and runs, and the distinction between named
+  `ALL` suites and all-suites aggregates remain intact.
+- Observed Cargo output uses a bounded pending-chunk queue. Slow callbacks can
+  delay Cargo's writes instead of growing an unbounded forwarding backlog.
+  Raw stream contents and complete failure diagnostics are preserved, including
+  when output forwarding is disabled; diagnostic capture itself is not truncated.
+
+The stale-publication regression was reproduced using real Cargo before fixing.
+Focused argument, feature-resolution, and benchmark checks pass, along with
+large-stream, disabled-forwarding, reader-disconnection, read-error, and failing
+Cargo checks. Rust 1.88 compilation, Clippy, documentation, formatting, and diff
+checks also pass.
+Full pre-push validation remains maintainer-owned.
+
+## 0.15.2
+
+This patch bounds cache metadata reads and simplifies benchmark marker parsing.
+Public APIs, dependencies, and persisted layouts are unchanged. Repository-owned
+formats remain `v1`; no consumer migration is required.
+
+- The shared bounded file reader rejects oversized manifests before inspecting
+  output contents. The existing writer and declared output set determine the
+  limit, retaining one authoritative manifest layout.
+- Malformed manifests still trigger rebuilding. A corrupt entry retained by a
+  live consumer cannot be replaced until released. Content verification,
+  undeclared-output rejection, and atomic publication remain intact.
+- Manifest byte comparison keeps its existing malformed-data behavior. UTF-8
+  stamp readers retain their decoding errors through the shared read helper.
+- Last-use and maintenance markers share the bounded stamp reader. Oversized
+  last-use markers fall back to directory modification time; oversized maintenance
+  markers make maintenance due. Normal timestamps, changed-policy scheduling,
+  LF/CRLF handling, future-time behavior, and I/O error policies remain intact.
+- Benchmark marker parsing uses a fixed array for six fields and the absence of
+  a seventh, removing the dynamic column list. Extra columns still report the
+  same error, preserve the original line and source position, and do not prevent
+  later valid markers from being parsed.
+- Destination-stamp comparison also uses the bounded file reader, preserving
+  writable-file, ownership, permission, and link checks and keeping matching
+  stamps during warm publication.
+
+Focused checks cover oversized and malformed manifests, retained-entry protection,
+multiple outputs, empty-file validation, watched-input and Wasm stamps, and
+Wasm-cache reconstruction. Marker checks cover timestamps, bounded fallback,
+policy intervals, CRLF, and read errors. Benchmark checks cover malformed and
+valid markers, source diagnostics, and strict parsing; warm Wasm checks cover
+file preservation and linked or restricted file replacement.
+Rust 1.88 compilation, Clippy, documentation, formatting, and diff checks pass.
+Full pre-push validation remains maintainer-owned.
+
 ## 0.15.1
 
 This patch fixes transport recovery classification without changing public APIs,

@@ -840,6 +840,12 @@ these paths through `WasmBuildSpec`; overriding `CARGO_TARGET_DIR` through
 `with_extra_env` or passing `--target-dir` through `with_cargo_profile_args`
 returns `InvalidSpec` before acquisition.
 
+The profile output directory must match the Cargo arguments: default builds and
+`--profile dev` or `--profile test` use `debug`; `--release`, `-r`, and
+`--profile bench` use `release`; custom profiles use their own name. A mismatch
+returns `InvalidSpec` before input resolution or cache work. Setting the output
+directory alone does not select a Cargo profile.
+
 Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
 retaining exact immutable final Wasm entries:
 

@@ -70,16 +70,49 @@ fn records_source_stream_for_stdout_and_stderr_capture() {
 
 #[test]
 fn parses_combined_captured_stdout_and_stderr() {
-    let report = parse_benchmark_events_from_captured_output(
-        "noise\nICTK|app/a:start|1|2|3|4\n",
-        "ICTK|app/a:end|5|6|7|8\n",
-        &BenchmarkParserConfig::default(),
-    );
+    let bad_number = "ICTK|app/b:start|bad|2|3|4";
+    let bad_shape = "ICTK|app/b:end|5|6|7";
+    let stdout = format!("noise\n\nICTK|app/a:start|1|2|3|4\n{bad_number}\n");
+    let stderr = format!("\nICTK|app/a:end|5|6|7|8\n{bad_shape}\nstderr noise\n");
+    for strict in [false, true] {
+        let config = BenchmarkParserConfig {
+            strict,
+            ..BenchmarkParserConfig::default()
+        };
+        let report = parse_benchmark_events_from_captured_output(&stdout, &stderr, &config);
 
-    assert_eq!(report.ignored_line_count, 1);
-    assert_eq!(report.events.len(), 2);
-    assert_eq!(report.events[0].source, BenchmarkEventSource::Stdout);
-    assert_eq!(report.events[1].source, BenchmarkEventSource::Stderr);
+        assert_eq!(report.ignored_line_count, if strict { 2 } else { 4 });
+        assert_eq!(report.events.len(), 2);
+        assert_eq!(report.events[0].source, BenchmarkEventSource::Stdout);
+        assert_eq!(report.events[0].source_line, 3);
+        assert_eq!(report.events[1].source, BenchmarkEventSource::Stderr);
+        assert_eq!(report.events[1].source_line, 2);
+        let expected = if strict {
+            vec![
+                (BenchmarkEventSource::Stdout, 1, "noise"),
+                (BenchmarkEventSource::Stdout, 4, bad_number),
+                (BenchmarkEventSource::Stderr, 3, bad_shape),
+                (BenchmarkEventSource::Stderr, 4, "stderr noise"),
+            ]
+        } else {
+            vec![
+                (BenchmarkEventSource::Stdout, 4, bad_number),
+                (BenchmarkEventSource::Stderr, 3, bad_shape),
+            ]
+        };
+        assert_eq!(
+            report
+                .malformed_markers
+                .iter()
+                .map(|marker| (marker.source, marker.source_line, marker.line.as_str()))
+                .collect::<Vec<_>>(),
+            expected,
+        );
+    }
+    assert_eq!(
+        parse_benchmark_events_from_captured_output("", "", &BenchmarkParserConfig::default()),
+        BenchmarkParseReport::default(),
+    );
 }
 
 #[test]
@@ -114,6 +147,41 @@ ICTK||1|2|3|4
             .malformed_markers
             .iter()
             .any(|marker| marker.reason.contains("label is empty"))
+    );
+}
+
+#[test]
+fn malformed_extra_columns_preserve_diagnostics_and_following_markers() {
+    let valid = "ICTK|app/a:start|1|2|3|4";
+    let malformed = [
+        format!("{valid}|"),
+        format!("{valid}|extra|tail"),
+        format!("{valid}{}", "|".repeat(65_536)),
+    ];
+    let input = format!("{}\n{valid}\n", malformed.join("\n"));
+    let report = parse_benchmark_events_from_source(
+        &input,
+        &BenchmarkParserConfig::default(),
+        BenchmarkEventSource::FetchedLog,
+    );
+    assert_eq!(report.malformed_markers.len(), malformed.len());
+    for (index, (marker, line)) in report.malformed_markers.iter().zip(&malformed).enumerate() {
+        assert_eq!(marker.source_line, index + 1);
+        assert_eq!(marker.source, BenchmarkEventSource::FetchedLog);
+        assert_eq!(&marker.line, line);
+        assert_eq!(marker.reason, "expected six pipe-separated columns");
+    }
+    assert_eq!(report.events.len(), 1);
+    assert_eq!(report.events[0].source_line, 4);
+    assert_eq!(report.events[0].source, BenchmarkEventSource::FetchedLog);
+    assert_eq!(
+        report.events[0].counters,
+        BenchmarkCounters {
+            instructions: 1,
+            heap_bytes: 2,
+            memory_bytes: 3,
+            total_allocation: 4,
+        },
     );
 }
 
@@ -487,6 +555,18 @@ fn comparison_csv_distinguishes_named_all_suite_from_all_suites() {
 #[test]
 fn previous_run_discovery_orders_five_digit_indices_numerically() {
     let root = unique_temp_dir("previous-run-large-indices");
+    for suffix in ["", "001", "+0001", "00x1", "０００１", "4294967296"] {
+        let name = format!("2026-05-24T162600Z-a1b2c3d-{suffix}");
+        let path = root.join(&name);
+        fs::create_dir_all(&path).unwrap();
+        write_metadata(&path, "2026-05-24T162600Z", &name, Some("suite"));
+        assert_eq!(
+            find_latest_previous_run(&root, &name, Some("suite"))
+                .expect_err("invalid current indices must fail discovery")
+                .kind(),
+            std::io::ErrorKind::InvalidInput,
+        );
+    }
     for index in [9999, 10000, 10002] {
         let name = benchmark_run_directory_name("2026-05-24T162600Z", Some("a1b2c3d"), index);
         let path = root.join(&name);
@@ -500,6 +580,12 @@ fn previous_run_discovery_orders_five_digit_indices_numerically() {
     assert_eq!(
         previous.file_name().unwrap(),
         "2026-05-24T162600Z-a1b2c3d-10000"
+    );
+    assert_eq!(
+        next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d"))
+            .expect("ignore malformed indices when finding the next run")
+            .run_index,
+        10003,
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -616,6 +702,30 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
             _ => {}
         }
     }
+
+    let mut duplicated_previous = previous.rows;
+    let mut duplicate = duplicated_previous
+        .iter()
+        .find(|row| !row.is_all_suites() && row.span_label == "common")
+        .unwrap()
+        .clone();
+    duplicate.total.instructions = 600;
+    duplicate.runs = 2;
+    duplicated_previous.push(duplicate);
+    let comparison = compare_benchmark_aggregates(&current.rows, &duplicated_previous);
+    assert_eq!(comparison.rows[0].previous_runs, Some(2));
+    assert_eq!(
+        comparison.rows[0].instructions_avg_change_percent,
+        Some(0.0)
+    );
+    assert_eq!(
+        comparison.rows[3].instructions_avg_change_percent,
+        Some(50.0)
+    );
+    assert_eq!(
+        compare_benchmark_aggregates(&[], &[]).rows,
+        [] as [ic_testkit::benchmark::BenchmarkComparisonRow; 0],
+    );
 }
 
 #[test]

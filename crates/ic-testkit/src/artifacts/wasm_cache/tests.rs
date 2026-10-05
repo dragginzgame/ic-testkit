@@ -222,7 +222,10 @@ fn compact_feature_arguments_watch_enabled_optional_dependencies() {
     ] {
         fs::write(&dependency_source, "pub fn optional_dep() -> u8 { 1 }\n")
             .expect("reset optional dependency source");
-        let spec = base.clone().with_cargo_profile_args(&arguments);
+        let mut spec = base.clone().with_cargo_profile_args(&arguments);
+        if arguments == ["-rF=extra"] {
+            spec.profile_target_dir = "release".to_owned();
+        }
         validate_spec(&spec).expect("accept feature selection without input overrides");
         let snapshot = resolve_cargo_build_inputs(&spec).expect("resolve enabled dependency");
         assert!(
@@ -298,6 +301,35 @@ fn cargo_target_overrides_are_rejected_before_acquisition() {
 }
 
 #[test]
+#[cfg(unix)]
+fn cargo_non_building_commands_cannot_publish_existing_shared_target_outputs() {
+    use super::{build_wasm_canisters_cached, expected_artifacts};
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    // These modes must be rejected before invoking tools or certifying an old output.
+    for arguments in [vec!["--help"], vec!["--unit-graph", "-Zunstable-options"]] {
+        let (root, spec) = fake_wasm_build_spec("cargo-non-build-shared-output");
+        let shared = root.join("incremental");
+        let spec = spec
+            .with_cargo_program(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .with_cargo_profile_args(&arguments)
+            .with_shared_incremental_target(&shared);
+        let existing = expected_artifacts(&spec, &shared);
+        fs::create_dir_all(existing[0].parent().unwrap()).unwrap();
+        fs::write(&existing[0], b"\0asm\x01\0\0\0").unwrap();
+
+        let result = build_wasm_canisters_cached(&spec);
+        assert!(
+            matches!(result, Err(WasmBuildError::InvalidSpec { .. })),
+            "{arguments:?} must not publish existing output: {result:?}",
+        );
+        assert!(!spec.target_dir.exists());
+        assert_eq!(fs::read(&existing[0]).unwrap(), b"\0asm\x01\0\0\0");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
     use super::build_wasm_canisters_cached;
 
@@ -325,6 +357,15 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
         vec!["--exclude=fixture"],
         vec!["--config", "other.toml"],
         vec!["--config=build.rustflags=['--cfg=other']"],
+        vec!["--help"],
+        vec!["-h"],
+        vec!["-qh"],
+        vec!["-rh"],
+        vec!["-vh"],
+        vec!["-vrhFextra"],
+        vec!["--unit-graph"],
+        vec!["--unit-graph", "-Zunstable-options"],
+        vec!["-Zunstable-options", "--unit-graph"],
     ] {
         let override_spec = spec.clone().with_cargo_profile_args(&arguments);
         for result in [
@@ -336,6 +377,21 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
                 "{arguments:?} must fail before launching Cargo: {result:?}",
             );
         }
+    }
+    // Compact feature values containing 'h' are values, not help switches.
+    for arguments in [
+        vec!["-Fh"],
+        vec!["-qFhighlights"],
+        vec!["-rF=highlights"],
+        vec!["-F", "highlights"],
+        vec!["--features=highlights"],
+        vec!["--features", "highlights"],
+    ] {
+        let mut feature_spec = spec.clone().with_cargo_profile_args(&arguments);
+        if arguments == ["-rF=highlights"] {
+            feature_spec.profile_target_dir = "release".to_owned();
+        }
+        super::validate_spec(&feature_spec).expect("accept feature values containing 'h'");
     }
     assert!(!root.join("exact").exists());
     fs::remove_dir_all(root).expect("remove Cargo input override fixture");
@@ -572,7 +628,8 @@ fn semantic_workspace_projection_tracks_selected_dependencies_and_profiles() {
         .expect("write selected projection workspace manifest");
     };
     write_workspace("selected_dep_a", "s");
-    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "release");
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "release")
+        .with_cargo_profile_args(["--release"]);
 
     let initial = resolve_cargo_build_inputs(&spec).expect("resolve selected projection");
     write_workspace("selected_dep_b", "s");
@@ -738,6 +795,127 @@ fn batch_input_snapshot_reuses_compatible_toolchain_and_metadata_resolution() {
     );
     assert_ne!(first.fingerprint(), second.fingerprint());
     fs::remove_dir_all(root).expect("remove batch input snapshot fixture");
+}
+
+#[test]
+fn profile_output_directory_is_confined_before_resolution_or_acquisition() {
+    use super::build_wasm_canisters_cached;
+
+    let root = unique_temp_directory("wasm-profile-boundary");
+    let target = root.join("target");
+    let absolute = root.join("outside");
+    for profile in [
+        "",
+        ".",
+        "..",
+        "../outside",
+        "release/../../outside",
+        "release/nested",
+        absolute.to_str().unwrap(),
+    ] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], profile)
+            .with_cargo_program(root.join("missing-cargo"));
+        assert!(
+            matches!(
+                resolve_cargo_build_inputs(&spec),
+                Err(WasmBuildError::InvalidSpec { .. })
+            ),
+            "{profile:?} must fail before tool resolution",
+        );
+        assert!(
+            matches!(
+                build_wasm_canisters_cached(&spec),
+                Err(WasmBuildError::InvalidSpec { .. })
+            ),
+            "{profile:?} must fail before acquisition",
+        );
+        assert!(!target.exists());
+        assert!(!absolute.exists());
+    }
+    for profile in ["debug", "release", "fast", "release-with-debug"] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], profile)
+            .with_cargo_profile_args(["--profile", profile]);
+        validate_spec(&spec).expect("accept a normal profile output directory");
+        assert!(super::expected_artifacts(&spec, &target)[0].starts_with(&target));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cargo_profile_arguments_match_output_directories() {
+    for (directory, arguments) in [
+        ("debug", vec![]),
+        ("debug", vec!["--offline"]),
+        ("debug", vec!["--profile", "dev"]),
+        ("debug", vec!["--profile=test"]),
+        ("debug", vec!["--profile=debug"]),
+        ("release", vec!["--release"]),
+        ("release", vec!["-r"]),
+        ("release", vec!["-qr"]),
+        ("release", vec!["-vrFextra"]),
+        ("release", vec!["-rF=extra"]),
+        ("release", vec!["-rF", "extra"]),
+        ("release", vec!["--profile=release"]),
+        ("release", vec!["--profile", "bench"]),
+        ("fast", vec!["--profile", "fast"]),
+        ("fast", vec!["--profile=fast"]),
+        ("debug", vec!["-Fextra"]),
+        ("debug", vec!["-qF=extra"]),
+        ("debug", vec!["-F", "extra"]),
+        ("debug", vec!["--features=release"]),
+        ("debug", vec!["--features", "release"]),
+        ("debug", vec!["-j4"]),
+    ] {
+        let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], directory)
+            .with_cargo_profile_args(&arguments);
+        validate_spec(&spec)
+            .unwrap_or_else(|error| panic!("{arguments:?} should write to {directory}: {error}"));
+    }
+}
+
+#[test]
+fn mismatched_cargo_profiles_fail_before_resolution_or_acquisition() {
+    let root = unique_temp_directory("wasm-profile-mismatch");
+    let target = root.join("exact");
+    let shared = root.join("shared");
+    for (directory, arguments) in [
+        ("release", vec![]),
+        ("release", vec!["--offline"]),
+        ("release", vec!["--profile", "dev"]),
+        ("release", vec!["--profile=test"]),
+        ("debug", vec!["--release"]),
+        ("debug", vec!["-qrFextra"]),
+        ("debug", vec!["--profile=bench"]),
+        ("debug", vec!["--profile", "fast"]),
+        ("fast", vec!["--release"]),
+        ("debug", vec!["--profile"]),
+        ("debug", vec!["--profile="]),
+        ("release", vec!["--release", "--profile=release"]),
+        ("debug", vec!["--profile=dev", "--profile=test"]),
+    ] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], directory)
+            .with_cargo_profile_args(&arguments)
+            .with_cargo_program(root.join("missing-cargo"));
+        for spec in [spec.clone(), spec.with_shared_incremental_target(&shared)] {
+            assert!(
+                matches!(
+                    resolve_cargo_build_inputs(&spec),
+                    Err(WasmBuildError::InvalidSpec { .. })
+                ),
+                "{directory}: {arguments:?} must fail before resolution",
+            );
+            assert!(
+                matches!(
+                    super::build_wasm_canisters_cached(&spec),
+                    Err(WasmBuildError::InvalidSpec { .. })
+                ),
+                "{directory}: {arguments:?} must fail before acquisition",
+            );
+            assert!(!target.exists());
+            assert!(!shared.exists());
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1273,7 +1451,7 @@ fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
         contents: b"failure-stdout",
         attempts: 0,
     };
-    let (sender, chunks) = mpsc::channel();
+    let (sender, chunks) = mpsc::sync_channel(8);
     super::read_process_output(reader, WasmBuildOutputStream::Stdout, sender)
         .expect("interrupted output reads must retry");
     let captured = super::capture_observed_cargo_output(
@@ -1283,6 +1461,77 @@ fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
     );
     assert_eq!(captured.stdout, b"failure-stdout");
     assert_eq!(captured.stderr, [] as [u8; 0]);
+}
+
+#[test]
+fn observed_output_drains_both_streams_through_a_bounded_queue() {
+    let stdout = (0_u8..=255).cycle().take(128 * 1024).collect::<Vec<_>>();
+    let stderr = b"diagnostic\0\xff\n".repeat(16 * 1024);
+    for emit in [true, false] {
+        let mut forwarded_stdout = Vec::new();
+        let mut forwarded_stderr = Vec::new();
+        let captured = thread::scope(|scope| {
+            let (sender, chunks) = mpsc::sync_channel(1);
+            let stdout_sender = sender.clone();
+            let stdout_reader = scope.spawn(|| {
+                super::read_process_output(
+                    stdout.as_slice(),
+                    WasmBuildOutputStream::Stdout,
+                    stdout_sender,
+                )
+            });
+            let stderr_reader = scope.spawn(|| {
+                super::read_process_output(stderr.as_slice(), WasmBuildOutputStream::Stderr, sender)
+            });
+            let mut observer = |event| {
+                if let WasmBuildProgressEvent::CargoOutput { stream, bytes } = event {
+                    match stream {
+                        WasmBuildOutputStream::Stdout => forwarded_stdout.extend(bytes),
+                        WasmBuildOutputStream::Stderr => forwarded_stderr.extend(bytes),
+                    }
+                }
+            };
+            let mut progress = ProgressReporter::observed(
+                WasmBuildProgressConfig::new()
+                    .without_heartbeats()
+                    .with_cargo_output(emit),
+                &mut observer,
+            );
+            let captured = super::capture_observed_cargo_output(
+                chunks,
+                &mut progress,
+                std::time::Instant::now(),
+            );
+            stdout_reader.join().unwrap().unwrap();
+            stderr_reader.join().unwrap().unwrap();
+            captured
+        });
+        assert_eq!(captured.stdout, stdout);
+        assert_eq!(captured.stderr, stderr);
+        assert_eq!(
+            forwarded_stdout.as_slice(),
+            if emit { stdout.as_slice() } else { &[] }
+        );
+        assert_eq!(
+            forwarded_stderr.as_slice(),
+            if emit { stderr.as_slice() } else { &[] }
+        );
+    }
+}
+
+#[test]
+fn observed_output_reader_stops_when_the_consumer_disconnects() {
+    let (sender, chunks) = mpsc::sync_channel(1);
+    let worker = thread::spawn(move || {
+        let mut reader = std::io::Cursor::new(vec![0; 128 * 1024]);
+        super::read_process_output(&mut reader, WasmBuildOutputStream::Stdout, sender)
+            .expect("disconnected consumers release output readers");
+        reader
+    });
+    chunks.recv().expect("receive output before disconnecting");
+    drop(chunks);
+    let reader = worker.join().expect("join disconnected output reader");
+    assert!(reader.position() < reader.get_ref().len() as u64);
 }
 
 #[test]
@@ -1297,7 +1546,7 @@ fn observed_output_reader_propagates_permanent_errors() {
         }
     }
 
-    let (sender, _chunks) = mpsc::channel();
+    let (sender, _chunks) = mpsc::sync_channel(8);
     let error = super::read_process_output(FailedReader, WasmBuildOutputStream::Stderr, sender)
         .expect_err("permanent output errors must propagate");
     assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
@@ -1307,48 +1556,63 @@ fn observed_output_reader_propagates_permanent_errors() {
 #[cfg(unix)]
 fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     let root = unique_temp_directory("observed-cargo-failure");
+    // Each stream exceeds both the pipe buffer and the forwarding queue.
+    let expected_stdout = "failure-stdout".repeat(16 * 1024);
+    let expected_stderr = "failure-stderr".repeat(16 * 1024);
+    fs::write(root.join("stdout"), &expected_stdout).unwrap();
+    fs::write(root.join("stderr"), &expected_stderr).unwrap();
     // `sh build` reads the fixture without executing the freshly written file.
     fs::write(
         root.join("build"),
-        "printf 'failure-stdout'\nprintf 'failure-stderr' >&2\nexit 23\n",
+        "set -eu\ncat stdout\ncat stderr >&2\nexit 23\n",
     )
     .expect("write failing observed Cargo fixture");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
         .with_cargo_program("/bin/sh");
-    let mut events = Vec::new();
-    let error = {
-        let mut observer = |event| events.push(event);
-        let mut progress = ProgressReporter::observed(
-            WasmBuildProgressConfig::new().without_heartbeats(),
-            &mut observer,
+    for emit in [true, false] {
+        let mut events = Vec::new();
+        let error = {
+            let mut observer = |event| events.push(event);
+            let mut progress = ProgressReporter::observed(
+                WasmBuildProgressConfig::new()
+                    .without_heartbeats()
+                    .with_cargo_output(emit),
+                &mut observer,
+            );
+
+            run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
+                .expect_err("Cargo fixture must fail")
+        };
+
+        assert!(
+            matches!(
+                &error,
+                WasmBuildError::CommandFailed {
+                    status,
+                    stdout,
+                    stderr,
+                    ..
+                } if status.code() == Some(23)
+                    && stdout == &expected_stdout
+                    && stderr == &expected_stderr
+            ),
+            "unexpected Cargo fixture failure: {error:?}"
         );
-
-        run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
-            .expect_err("Cargo fixture must fail")
-    };
-
-    assert!(
-        matches!(
-            &error,
-            WasmBuildError::CommandFailed {
-                status,
-                stdout,
-                stderr,
+        assert!(events.iter().any(|event| matches!(
+            event,
+            WasmBuildProgressEvent::CargoFinished {
+                success: false,
+                code: Some(23),
                 ..
-            } if status.code() == Some(23)
-                && stdout == "failure-stdout"
-                && stderr == "failure-stderr"
-        ),
-        "unexpected Cargo fixture failure: {error:?}"
-    );
-    assert!(events.iter().any(|event| matches!(
-        event,
-        WasmBuildProgressEvent::CargoFinished {
-            success: false,
-            code: Some(23),
-            ..
-        }
-    )));
+            }
+        )));
+        assert_eq!(
+            events
+                .iter()
+                .any(|event| matches!(event, WasmBuildProgressEvent::CargoOutput { .. })),
+            emit,
+        );
+    }
     fs::remove_dir_all(root).expect("remove failing observed Cargo fixture");
 }
 
@@ -1776,7 +2040,9 @@ fn age_pruning_removes_only_stale_fingerprint_directories() {
 
     let report = prune_wasm_build_cache(
         &target_dir,
-        ArtifactCachePrunePolicy::new().with_max_age(Duration::from_secs(60)),
+        ArtifactCachePrunePolicy::new()
+            .with_max_age(Duration::from_secs(60))
+            .with_max_size_bytes(u64::MAX),
     )
     .expect("prune old cache entry");
 
@@ -1798,6 +2064,22 @@ fn size_pruning_removes_least_recently_used_entries_first() {
     let middle = create_cache_entry(&cache_root, 'b', 10, UNIX_EPOCH + Duration::from_secs(2));
     let newest = create_cache_entry(&cache_root, 'c', 10, UNIX_EPOCH + Duration::from_secs(3));
     let newest_bytes = directory_logical_size(&newest).expect("measure newest entry");
+    let all_bytes = [&oldest, &middle, &newest]
+        .into_iter()
+        .map(|entry| directory_logical_size(entry).unwrap())
+        .sum::<u64>();
+    for limit in [all_bytes, all_bytes + 1] {
+        let report = prune_wasm_build_cache(
+            &target_dir,
+            ArtifactCachePrunePolicy::new().with_max_size_bytes(limit),
+        )
+        .expect("retain entries within the size budget");
+        assert_eq!(report.entries_scanned(), 3);
+        assert_eq!(report.entries_removed(), 0);
+        assert_eq!(report.bytes_before(), all_bytes);
+        assert_eq!(report.bytes_retained(), all_bytes);
+        assert!(oldest.exists() && middle.exists() && newest.exists());
+    }
 
     let report = prune_wasm_build_cache(
         &target_dir,

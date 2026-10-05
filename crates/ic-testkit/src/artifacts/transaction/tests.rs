@@ -590,6 +590,23 @@ fn malformed_manifests_and_nondirectory_entries_are_rebuilt() {
         assert_eq!(fs::read(&output).unwrap(), b"valid");
     }
 
+    fs::write(&manifest_path, &manifest).expect("write matching manifest prefix");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&manifest_path)
+        .expect("open oversized manifest")
+        .set_len(1024 * 1024 * 1024)
+        .expect("extend oversized manifest");
+    let transaction =
+        expect_build(prepare_artifact_cache(&spec).expect("prepare after oversized manifest"));
+    assert!(!entry.exists());
+    fs::write(transaction.output_path("output").unwrap(), b"valid").unwrap();
+    drop(transaction.commit().expect("replace oversized manifest"));
+    assert!(matches!(
+        prepare_artifact_cache(&spec).expect("reuse repaired entry"),
+        ArtifactCachePreparation::Reused(_),
+    ));
+
     fs::remove_dir_all(&entry).expect("remove restored cache entry");
     fs::write(&entry, b"not a directory").expect("write nondirectory cache entry");
     let transaction =
@@ -1258,11 +1275,23 @@ fn retained_corrupt_entry_fails_closed_until_consumer_releases_it() {
     fs::write(&path, b"valid").unwrap();
     let manifest =
         entry_directory(&namespace_directory(&spec), retained.key()).join(super::MANIFEST_FILE);
+    let original_manifest = fs::read(&manifest).unwrap();
     fs::write(&manifest, b"invalid manifest").unwrap();
     assert!(matches!(prepare_artifact_cache(&spec),
         Err(ArtifactCacheError::Io { source, .. }) if source.kind() == std::io::ErrorKind::WouldBlock));
     assert_eq!(fs::read(&path).unwrap(), b"valid");
     assert_eq!(fs::read(&manifest).unwrap(), b"invalid manifest");
+    fs::write(&manifest, original_manifest).unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&manifest)
+        .unwrap()
+        .set_len(1024 * 1024 * 1024)
+        .unwrap();
+    assert!(matches!(prepare_artifact_cache(&spec),
+        Err(ArtifactCacheError::Io { source, .. }) if source.kind() == std::io::ErrorKind::WouldBlock));
+    assert_eq!(fs::read(&path).unwrap(), b"valid");
+    assert_eq!(fs::metadata(&manifest).unwrap().len(), 1024 * 1024 * 1024);
     drop(retained);
     expect_build(prepare_artifact_cache(&spec).unwrap())
         .abort()

@@ -156,6 +156,16 @@ pub(super) fn digest_file(domain: &str, path: &Path) -> io::Result<FileDigest> {
 /// Read a UTF-8 stamp without allocating or reading an oversized sidecar in full.
 /// An oversized stamp is stale; other read and decoding errors reach the caller.
 pub(super) fn read_stamp_with_limit(path: &Path, maximum_len: usize) -> io::Result<Option<String>> {
+    read_file_with_limit(path, maximum_len)?
+        .map(|contents| {
+            String::from_utf8(contents)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+        })
+        .transpose()
+}
+
+/// Read at most the format's maximum length plus one byte to detect oversized files.
+pub(super) fn read_file_with_limit(path: &Path, maximum_len: usize) -> io::Result<Option<Vec<u8>>> {
     let mut contents = Vec::with_capacity(maximum_len + 1);
     File::open(path)?
         .take((maximum_len + 1) as u64)
@@ -163,9 +173,7 @@ pub(super) fn read_stamp_with_limit(path: &Path, maximum_len: usize) -> io::Resu
     if contents.len() > maximum_len {
         return Ok(None);
     }
-    String::from_utf8(contents)
-        .map(Some)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    Ok(Some(contents))
 }
 
 /// Only reuse an independent, caller-owned writable destination. The caller
@@ -183,7 +191,8 @@ pub(super) fn destination_matches_bytes(destination: &Path, expected: &[u8]) -> 
     destination_is_reusable(
         destination,
         u64::try_from(expected.len()).expect("artifact byte length must fit in u64"),
-    ) && fs::read(destination).is_ok_and(|actual| actual == expected)
+    ) && read_file_with_limit(destination, expected.len())
+        .is_ok_and(|actual| actual.as_deref() == Some(expected))
 }
 
 fn destination_is_reusable(destination: &Path, expected_bytes: u64) -> bool {

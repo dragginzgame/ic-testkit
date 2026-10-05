@@ -4,7 +4,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, File},
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
         Arc, RwLock,
@@ -33,7 +33,6 @@ use super::{
         destination_matches_bytes, destination_matches_digest, digest_bytes, digest_file,
         digest_labeled_paths_composable, os_bytes, read_stamp_with_limit, write_atomic,
     },
-    wasm::wasm_path,
 };
 
 const CACHE_FORMAT_VERSION: &str = "ic-testkit-wasm-build-v1";
@@ -526,6 +525,8 @@ impl WasmBuildProgressConfig {
     /// Select whether raw Cargo stdout/stderr chunks are forwarded.
     ///
     /// Output is always captured for structured build failures.
+    /// Pending chunks use a bounded queue; slow observers can delay Cargo's
+    /// writes rather than accumulate an unbounded forwarding backlog.
     #[must_use]
     pub const fn with_cargo_output(mut self, emit: bool) -> Self {
         self.emit_cargo_output = emit;
@@ -856,7 +857,10 @@ impl WasmBuildSpec {
     /// Describe one Cargo build targeting `wasm32-unknown-unknown`.
     ///
     /// `profile_target_dir` is Cargo's output subdirectory, such as `debug`,
-    /// `release`, or the name supplied to `--profile`.
+    /// `release`, or the name supplied to `--profile`. It must be one normal
+    /// path component so artifacts remain inside their target directories.
+    /// It must match the profile selected by `with_cargo_profile_args`: the
+    /// default, `dev`, and `test` use `debug`; `release` and `bench` use `release`.
     /// Relative `workspace_root` and exact `target_dir` paths are resolved from
     /// the caller's working directory. Shared targets are workspace-relative.
     /// Package names are sorted and deduplicated for identity, discovery,
@@ -900,6 +904,9 @@ impl WasmBuildSpec {
     /// corresponding fields and builders. `--config` overrides are also
     /// rejected: use Cargo's discovered configuration files or explicit
     /// environment overrides so resolution and execution share tracked inputs.
+    /// Help and build-graph flags are rejected because they exit successfully
+    /// without building. The selected profile must match `profile_target_dir`;
+    /// declaring an output directory does not select a Cargo profile.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -3365,14 +3372,28 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "at least one Cargo package is required".to_owned(),
         });
     }
-    if spec.profile_target_dir.is_empty() {
+    let mut profile_components = Path::new(&spec.profile_target_dir).components();
+    if !matches!(
+        (profile_components.next(), profile_components.next()),
+        (Some(Component::Normal(_)), None)
+    ) {
         return Err(WasmBuildError::InvalidSpec {
-            message: "Cargo profile target directory must not be empty".to_owned(),
+            message: "Cargo profile target directory must be one normal path component".to_owned(),
         });
     }
     if spec.target.is_empty() {
         return Err(WasmBuildError::InvalidSpec {
             message: "Cargo compilation target must not be empty".to_owned(),
+        });
+    }
+    if spec.cargo_profile_args.iter().any(|argument| {
+        matches!(argument.to_str(), Some("--help" | "--unit-graph"))
+            || matches!(short_cargo_option(argument), Some((b'h', _)))
+    }) {
+        return Err(WasmBuildError::InvalidSpec {
+            message:
+                "Cargo help and build-graph flags exit without building and cannot be used for Wasm acquisition"
+                    .to_owned(),
         });
     }
     if spec.extra_env.contains_key(OsStr::new("CARGO_TARGET_DIR"))
@@ -3400,15 +3421,13 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
                 | b"--all"
                 | b"--exclude"
                 | b"--config"
-        ) || matches!(
-            short_cargo_value_option(argument),
-            Some((b'm' | b'p' | b'C', _))
-        )
+        ) || matches!(short_cargo_option(argument), Some((b'm' | b'p' | b'C', _)))
     }) {
         return Err(WasmBuildError::InvalidSpec {
             message: "Cargo workspace, package, target, and configuration inputs are owned by the build specification; use workspace_root, packages, with_target, and discovered Cargo configuration files or with_extra_env instead of command overrides".to_owned(),
         });
     }
+    validate_cargo_profile(spec)?;
     if matches!(
         &spec.cache_mode,
         WasmBuildCacheMode::SharedIncremental { target_dir } if target_dir.as_os_str().is_empty()
@@ -3427,6 +3446,61 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message:
                 "scheduled shared-target maintenance requires a shared incremental Cargo target"
                     .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_cargo_profile(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
+    let mut selected = None;
+    let mut arguments = spec.cargo_profile_args.iter();
+    while let Some(argument) = arguments.next() {
+        let profile = if argument == "--profile" {
+            Some(
+                arguments
+                    .next()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| WasmBuildError::InvalidSpec {
+                        message: "Cargo --profile requires a UTF-8 profile name".to_owned(),
+                    })?,
+            )
+        } else if let Some(profile) = argument.to_str().and_then(|s| s.strip_prefix("--profile=")) {
+            Some(profile)
+        } else {
+            let bytes = argument.as_encoded_bytes();
+            // Only switches before the first value-taking short option count:
+            // -qrFextra selects release, while -Fextra and -j4 do not.
+            let short_option = short_cargo_option(argument);
+            let flags_end = short_option.map_or(bytes.len(), |(_, index)| index);
+            let release = argument == "--release"
+                || (bytes.starts_with(b"-")
+                    && !bytes.starts_with(b"--")
+                    && bytes[..flags_end].contains(&b'r'));
+            if matches!(short_option, Some((_, index)) if index + 1 == bytes.len()) {
+                arguments.next();
+            }
+            release.then_some("release")
+        };
+        if let Some(profile) = profile
+            && (profile.is_empty() || selected.replace(profile).is_some())
+        {
+            return Err(WasmBuildError::InvalidSpec {
+                message: "select one nonempty Cargo profile".to_owned(),
+            });
+        }
+    }
+    let profile = selected.unwrap_or("dev");
+    let expected = match profile {
+        "dev" | "test" => "debug",
+        "bench" => "release",
+        custom => custom,
+    };
+    if spec.profile_target_dir != expected {
+        return Err(WasmBuildError::InvalidSpec {
+            message: format!(
+                "Cargo profile {profile:?} writes to {expected:?}, but profile target directory is {:?}; select matching Cargo profile arguments and output directory",
+                spec.profile_target_dir,
+            ),
         });
     }
     Ok(())
@@ -3573,7 +3647,7 @@ fn metadata_arguments(arguments: &[OsString]) -> Vec<OsString> {
     let mut selected = Vec::new();
     let mut arguments = arguments.iter();
     while let Some(argument) = arguments.next() {
-        if let Some((b'F', index)) = short_cargo_value_option(argument) {
+        if let Some((b'F', index)) = short_cargo_option(argument) {
             // Cargo accepts clusters such as -qFextra and -rF=extra. Profile
             // and output flags do not belong in metadata's resolution context.
             // Valid feature names are UTF-8; preserve malformed arguments for
@@ -3611,18 +3685,18 @@ fn metadata_arguments(arguments: &[OsString]) -> Vec<OsString> {
     selected
 }
 
-// Return the first value-taking short option and its byte position. Remaining
-// bytes are its value, so letters in feature names or paths are not switches.
+// Return the first help or value-taking short option and its byte position.
+// Bytes after a value-taking option are its value, not more switches.
 // Unknown options remain Cargo's responsibility to reject.
-fn short_cargo_value_option(argument: &OsStr) -> Option<(u8, usize)> {
+fn short_cargo_option(argument: &OsStr) -> Option<(u8, usize)> {
     let bytes = argument.as_encoded_bytes();
     if !bytes.starts_with(b"-") || bytes.starts_with(b"--") {
         return None;
     }
     for (index, byte) in bytes.iter().copied().enumerate().skip(1) {
         match byte {
-            b'v' | b'q' | b'r' | b'h' => {}
-            b'F' | b'j' | b'Z' | b'm' | b'p' | b'C' => return Some((byte, index)),
+            b'v' | b'q' | b'r' => {}
+            b'h' | b'F' | b'j' | b'Z' | b'm' | b'p' | b'C' => return Some((byte, index)),
             _ => return None,
         }
     }
@@ -4655,7 +4729,9 @@ fn run_observed_cargo_build(
         .stderr
         .take()
         .expect("Cargo stderr must be piped");
-    let (sender, chunks) = mpsc::channel();
+    // Each reader sends at most 8 KiB per chunk. Bound pending chunks while
+    // retaining both pipe readers so neither stream can block the other.
+    let (sender, chunks) = mpsc::sync_channel(8);
     let stdout_sender = sender.clone();
     let stdout_reader = thread::spawn(move || {
         read_process_output(stdout, WasmBuildOutputStream::Stdout, stdout_sender)
@@ -4751,7 +4827,7 @@ struct ProcessOutputChunk {
 fn read_process_output<R: io::Read>(
     mut reader: R,
     stream: WasmBuildOutputStream,
-    sender: mpsc::Sender<ProcessOutputChunk>,
+    sender: mpsc::SyncSender<ProcessOutputChunk>,
 ) -> io::Result<()> {
     let mut buffer = [0_u8; 8 * 1024];
     loop {
@@ -4835,14 +4911,10 @@ fn expected_artifacts(spec: &WasmBuildSpec, target_dir: &Path) -> Vec<PathBuf> {
     spec.packages
         .iter()
         .map(|package| {
-            if spec.target == DEFAULT_TARGET {
-                wasm_path(target_dir, package, &spec.profile_target_dir)
-            } else {
-                target_dir
-                    .join(&spec.target)
-                    .join(&spec.profile_target_dir)
-                    .join(format!("{package}.wasm"))
-            }
+            target_dir
+                .join(&spec.target)
+                .join(&spec.profile_target_dir)
+                .join(format!("{package}.wasm"))
         })
         .collect()
 }

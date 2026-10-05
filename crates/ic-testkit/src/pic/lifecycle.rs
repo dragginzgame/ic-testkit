@@ -263,10 +263,6 @@ fn try_create_funded_and_install(
     Ok(canister_id)
 }
 
-fn is_install_code_rate_limited(response: &RejectResponse) -> bool {
-    response.error_code == ErrorCode::CanisterInstallCodeRateLimited
-}
-
 fn try_install_step<T>(
     phase: CanisterInstallPhase,
     canister_id: Option<Principal>,
@@ -292,22 +288,26 @@ where
     F: FnMut() -> Result<T, RejectResponse>,
     W: FnMut(),
 {
-    for attempt in 1..=policy.max_attempts() {
+    let mut retries = 1..policy.max_attempts();
+    loop {
         match op() {
-            Ok(value) => return Ok(value),
-            Err(err) if is_install_code_rate_limited(&err) && attempt < policy.max_attempts() => {
+            Err(err)
+                if err.error_code == ErrorCode::CanisterInstallCodeRateLimited
+                    && retries.next().is_some() =>
+            {
                 wait_out_cooldown();
             }
-            Err(err) => return Err(err),
+            result => return result,
         }
     }
-
-    unreachable!("RetryPolicy guarantees at least one attempt")
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::Cell, time::Duration};
+    use std::{
+        cell::{Cell, RefCell},
+        time::Duration,
+    };
 
     use pocket_ic::{ErrorCode, RejectCode, RejectResponse};
 
@@ -324,24 +324,66 @@ mod tests {
 
     #[test]
     fn retry_policy_counts_the_first_attempt() {
-        let attempts = Cell::new(0);
-        let waits = Cell::new(0);
-        let rate_limited = rejection(
-            ErrorCode::CanisterInstallCodeRateLimited,
-            "install-code rate limit",
-        );
-        let result = retry_install_code_with(
-            RetryPolicy::try_new(3, Duration::from_secs(1)).expect("valid retry policy"),
-            || {
-                attempts.set(attempts.get() + 1);
-                Err::<(), _>(rate_limited.clone())
-            },
-            || waits.set(waits.get() + 1),
-        );
+        for max_attempts in [1, 3] {
+            let attempts = Cell::new(0);
+            let waits = Cell::new(0);
+            let result = retry_install_code_with(
+                RetryPolicy::try_new(max_attempts, Duration::from_secs(1))
+                    .expect("valid retry policy"),
+                || {
+                    attempts.set(attempts.get() + 1);
+                    Err::<(), _>(rejection(
+                        ErrorCode::CanisterInstallCodeRateLimited,
+                        &format!("rate limit on attempt {}", attempts.get()),
+                    ))
+                },
+                || waits.set(waits.get() + 1),
+            );
 
-        assert_eq!(result, Err(rate_limited));
-        assert_eq!(attempts.get(), 3);
-        assert_eq!(waits.get(), 2);
+            assert_eq!(
+                result,
+                Err(rejection(
+                    ErrorCode::CanisterInstallCodeRateLimited,
+                    &format!("rate limit on attempt {max_attempts}"),
+                ))
+            );
+            assert_eq!(attempts.get(), max_attempts);
+            assert_eq!(waits.get(), max_attempts - 1);
+        }
+    }
+
+    #[test]
+    fn retry_policy_waits_only_between_retryable_attempts() {
+        for success_attempt in [1, 3] {
+            let events = RefCell::new(Vec::new());
+            let attempts = Cell::new(0);
+            let result = retry_install_code_with(
+                RetryPolicy::try_new(3, Duration::from_secs(1)).unwrap(),
+                || {
+                    events.borrow_mut().push("attempt");
+                    attempts.set(attempts.get() + 1);
+                    if attempts.get() == success_attempt {
+                        Ok(42)
+                    } else {
+                        Err(rejection(
+                            ErrorCode::CanisterInstallCodeRateLimited,
+                            "rate limit",
+                        ))
+                    }
+                },
+                || events.borrow_mut().push("wait"),
+            );
+            assert_eq!(result, Ok(42));
+            assert_eq!(attempts.get(), success_attempt);
+            assert_eq!(
+                events.into_inner(),
+                if success_attempt == 1 {
+                    vec!["attempt"]
+                } else {
+                    vec!["attempt", "wait", "attempt", "wait", "attempt"]
+                }
+            );
+        }
     }
 
     #[test]

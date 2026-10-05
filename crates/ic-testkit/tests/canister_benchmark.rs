@@ -48,6 +48,48 @@ use wait_support::wait_for_path;
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
 #[test]
+fn shared_wasm_target_rejects_mismatched_cargo_profile_before_publication() {
+    let root = unique_temp_dir("ic-testkit-shared-profile-mismatch");
+    let workspace = root.join("workspace");
+    write_independent_feature_workspace(&workspace);
+    let target = root.join("exact-target");
+    let shared = root.join("shared-target");
+    let spec = WasmBuildSpec::new(&workspace, &target, &["feature_a"], "release")
+        .with_shared_incremental_target(&shared)
+        .with_cargo_profile_args(["--release"]);
+    let first = build_wasm_canisters_cached(&spec).expect("build initial release Wasm");
+    let before = read_wasm(&shared, "feature_a", "release");
+    fs::write(
+        workspace.join("shared/src/lib.rs"),
+        "pub fn value() -> u8 { 2 }\n",
+    )
+    .expect("change source while retaining old release output");
+
+    let mismatch = spec.clone().with_cargo_profile_args(["--offline"]);
+    let result = build_wasm_canisters_cached(&mismatch);
+    assert!(
+        matches!(
+            result,
+            Err(ic_testkit::artifacts::WasmBuildError::InvalidSpec { .. })
+        ),
+        "a debug build must not certify the old release output: {result:?}",
+    );
+    assert_eq!(read_wasm(&shared, "feature_a", "release"), before);
+    assert!(!wasm_path(&shared, "feature_a", "debug").exists());
+
+    let rebuilt = build_wasm_canisters_cached(&spec).expect("build changed release Wasm");
+    assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
+    assert_ne!(read_wasm(&shared, "feature_a", "release"), before);
+    assert!(matches!(
+        build_wasm_canisters_cached(&spec).expect("reuse matching release Wasm"),
+        WasmBuildOutcome::Reused(_)
+    ));
+    drop(first);
+    drop(rebuilt);
+    fs::remove_dir_all(root).expect("remove shared profile fixture");
+}
+
+#[test]
 fn independent_wasm_batch_preserves_standalone_feature_resolution() {
     let root = unique_temp_dir("ic-testkit-independent-feature-batch");
     let workspace = root.join("workspace");
