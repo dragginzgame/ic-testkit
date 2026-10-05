@@ -6,6 +6,29 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.17.2] - 2026-10-05 - Portable teardown fixture
+
+### Fixed
+
+- The synthetic PocketIC HTTP peer explicitly switches accepted streams to
+  blocking I/O before applying its read/write timeouts. macOS inherits the
+  nonblocking listener mode; a connected client that had not yet sent its
+  request could otherwise cause an immediate `WouldBlock` failure. Library
+  transport and teardown behavior are unchanged.
+
+### Testing
+
+- A real TCP regression starts with an empty nonblocking accepted stream and
+  sends the request only after the reader configures blocking I/O. It reproduces
+  the failure before the fix and passes afterward on Linux. The focused suite
+  passes, including the isolated instance-deletion and refused-transport probes.
+- Portable CI now runs the synthetic transport/teardown suite on Linux and
+  ARM64/Intel macOS without requiring a live PocketIC binary. Native confirmation
+  of this fixture change remains pending a matching CI run.
+- The pushed 0.17.1 portable-host checks passed on all three native hosts,
+  qualifying the earlier report-publication and standalone tool-launch changes
+  for that revision.
+
 ## [0.17.1] - 2026-10-05 - Benchmark tooling and pruning-test fixes
 
 ### Fixed

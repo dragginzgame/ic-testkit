@@ -97,6 +97,8 @@ jobs:
         run: cargo fetch --locked
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+      - name: Check synthetic PocketIC transport and teardown
+        run: cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
       - name: Check native fixture benchmark driver and sampler
         run: cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 

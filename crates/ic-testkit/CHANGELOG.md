@@ -8,6 +8,22 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.17.2
+
+The synthetic HTTP fixture used by the PocketIC transport and teardown tests
+explicitly selects blocking I/O on accepted streams before setting read/write
+timeouts. This prevents an immediate `WouldBlock` when macOS inherits the
+listener's nonblocking mode and the client has connected without sending data.
+Library APIs and runtime behavior are unchanged; no migration is required.
+
+A real TCP regression reproduces the failure with an initially empty,
+nonblocking stream and passes after the fix. The focused Linux suite passes.
+Portable CI now selects these synthetic tests on Linux and both macOS
+architectures without needing a live PocketIC server. Native confirmation of
+this change remains pending matching CI. The released 0.17.1 portable-host
+checks passed on all three hosts, including the earlier benchmark report and
+tool-launch checks.
+
 ## 0.17.1
 
 The repository-local benchmark publishes `--output` reports with an atomic

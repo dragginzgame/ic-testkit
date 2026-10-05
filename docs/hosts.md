@@ -41,8 +41,18 @@ At `v0.17.0` (`380b328717c22c6f68d27ad8a47537a281acbc1c`), the
 passed on all three hosts, including managed-server lifecycle and the native
 benchmark driver/sampler. This confirms the Intel test timing fix and native
 driver behavior for that revision. The new report publication and tool-launch
-checks require a matching native run; these passes are not live benchmark
-measurements.
+checks were added afterward; these passes are not live benchmark measurements.
+The separate [tag ARM64 full-gate run](https://github.com/dragginzgame/ic-testkit/actions/runs/37329182783/job/111828200457)
+failed in the synthetic teardown fixture with an immediate `WouldBlock` while
+reading an accepted request. The current fixture explicitly selects blocking
+accepted-stream I/O with read/write timeouts and tests an initially empty
+nonblocking stream. That fix requires its own native qualification.
+
+At `v0.17.1` (`4cf3d0d852445957ad3c1a15f6cb9268330beacd`), the
+[portable-host checks](https://github.com/dragginzgame/ic-testkit/actions/runs/37333641501)
+passed on all three native hosts, including report publication and standalone
+Cargo/rustc proxy invocation. This qualifies those checks for that revision,
+not the subsequent teardown-fixture change or live benchmark measurements.
 
 ## Prerequisites
 
@@ -82,6 +92,7 @@ inputs. The shell guards use fixtures and mock external commands:
 /bin/bash scripts/ci/check-github-actions-pinned.sh
 cargo fetch --locked
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
 cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency
 ```
@@ -94,11 +105,16 @@ server test is ignored unless explicitly selected as described in the README.
 Process ownership checks cover leader reaping and descendant termination on
 handle drop, readiness timeout, natural exit and background reaping on both
 Linux and macOS.
+The transport/teardown checks use a synthetic HTTP peer and isolated subprocess
+probes, without a live PocketIC binary. Accepted request streams use blocking
+I/O with timeouts even when the listener is nonblocking. Unix regression coverage
+forces an initially empty nonblocking stream and releases request bytes only
+after the reader changes its socket mode.
 The driver checks include native process observations, report bounds, atomic
 report replacement, standalone proxy invocation and subprocess completion on
 interruption. They use synthetic workers rather than running the live benchmark.
-Passing Linux checks does not qualify macOS; the new publication and tool-launch
-checks still need native ARM64 and Intel CI confirmation.
+Passing Linux checks does not qualify macOS; the new teardown-fixture change
+still needs native ARM64 and Intel CI confirmation.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:

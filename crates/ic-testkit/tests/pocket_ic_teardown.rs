@@ -9,6 +9,8 @@ use ic_testkit::pic::{
     is_dead_pocket_ic_transport_error,
 };
 use ic_testkit::pocket_ic::common::rest::{CreateInstanceResponse, RawCanisterId, Topology};
+#[cfg(unix)]
+use std::os::fd::AsRawFd as _;
 use std::{
     io::{BufRead as _, BufReader, Read as _, Write as _},
     net::{TcpListener, TcpStream},
@@ -55,6 +57,55 @@ fn refused_instance_request_is_classified_at_the_call_boundary() {
 #[test]
 fn refused_creation_returns_the_standalone_instance() {
     run_refused_operation_probe("refused_creation_probe");
+}
+
+#[cfg(unix)]
+#[test]
+fn request_reader_handles_an_initially_nonblocking_stream() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind synthetic peer");
+    listener.set_nonblocking(true).expect("bound accept wait");
+    let mut client = TcpStream::connect(listener.local_addr().expect("peer address"))
+        .expect("connect before sending request");
+    let (stream, _) = listener.accept().expect("accept connected client");
+    // Force the inherited socket state on Linux as well as native macOS.
+    stream.set_nonblocking(true).expect("start nonblocking");
+    let observation = stream.try_clone().expect("observe shared socket flags");
+
+    thread::scope(|scope| {
+        let reader = scope.spawn(move || read_request(stream));
+        let deadline = Instant::now() + DEADLOCK_ESCAPE;
+        loop {
+            // SAFETY: observation owns a live descriptor; F_GETFL takes no argument.
+            let flags = unsafe { libc::fcntl(observation.as_raw_fd(), libc::F_GETFL) };
+            assert!(flags >= 0, "inspect accepted socket flags");
+            if flags & libc::O_NONBLOCK == 0 {
+                break;
+            }
+            assert!(
+                !reader.is_finished(),
+                "request reader stopped before the client sent bytes"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "reader did not configure its socket"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        // The socket-mode change is the barrier; no timing delay supplies data.
+        client
+            .write_all(b"POST /probe HTTP/1.1\r\nContent-Length: 4\r\n\r\ntest")
+            .expect("send request after reader starts");
+        let (stream, request) = reader.join().expect("read initially empty socket");
+        assert_eq!(request, "POST /probe HTTP/1.1");
+        assert_eq!(
+            stream.read_timeout().expect("read timeout"),
+            Some(DEADLOCK_ESCAPE)
+        );
+        assert_eq!(
+            stream.write_timeout().expect("write timeout"),
+            Some(DEADLOCK_ESCAPE)
+        );
+    });
 }
 
 fn run_refused_operation_probe(name: &str) {
@@ -189,6 +240,15 @@ fn accept_request(listener: &TcpListener) -> (TcpStream, String) {
             Err(error) => panic!("accept synthetic request: {error}"),
         }
     };
+    read_request(stream)
+}
+
+fn read_request(stream: TcpStream) -> (TcpStream, String) {
+    // macOS inherits the listener's nonblocking mode; request timeouts need
+    // blocking I/O even though the accept loop itself must remain nonblocking.
+    stream
+        .set_nonblocking(false)
+        .expect("use blocking request and response I/O");
     stream
         .set_read_timeout(Some(DEADLOCK_ESCAPE))
         .expect("bound request read");
