@@ -87,7 +87,11 @@ documentation guard.
   and publish guard checks do not use credentials or perform remote writes.
 
 All three maintainer release commands run the same complete `make release-check`
-gate offline, including MSRV, with the caller's temporary-directory environment.
+gate, including MSRV, with the caller's network policy and temporary-directory
+environment. The locked publish dry run requires registry HTTP access without
+uploading a package; the complete gate must not be forced offline. Cache checks
+and metadata preparation remain offline. Explicit offline requests are preserved
+and failures are not automatically retried online.
 They retain each validation attempt's identity and full log in a unique Git
 directory location, including failed attempts, and retain prepared metadata.
 Preflight or validation-only failures rerun through the normal target with
@@ -155,11 +159,19 @@ sorting, and substituted Git/validation commands, so they do not commit, tag,
 push or publish. Consumer hook checks use isolated indexes with this repository's
 actual Make targets and tracked lockfile, real Cargo/rustfmt, and a substituted
 failing target for rejection. The shared upstream fixture's no-lockfile assertion
-does not apply to this Rust consumer; its failed local trace is retained at
-`/tmp/ic-testkit-git-hooks-c0206f1-trace.log`. The consumer-owned check covers
+does not apply to this Rust consumer; the finding and evidence are recorded in
+[Shared Tooling issue #2](https://github.com/dragginzgame/shared-tooling/issues/2).
+The consumer-owned check covers
 automatic refresh, unrelated-edit and lockfile preservation, partial staging,
 formatter failure, idempotence and installer refusal of another hook path.
 Local hook activation uses `make install-hooks`; verify the effective
 `git config --get core.hooksPath` separately from `make fmt-check`.
+That target invokes the reviewed installer from the physical workspace path,
+and qualification fixtures canonicalize their private temporary directories.
+An aliased-directory setup case exercises the actual Make target, including
+refusal of a conflicting hook path. This addresses the consumer boundary of
+[Shared Tooling issue #1](https://github.com/dragginzgame/shared-tooling/issues/1)
+without patching the snapshot; symlinked `TMPDIR` is a focused Linux reproduction
+of the path-identity problem, not native macOS qualification.
 Native Linux/ARM64/Intel qualification of this adoption remains pending matching
 portable-host CI; the earlier release passes do not qualify this new workflow.

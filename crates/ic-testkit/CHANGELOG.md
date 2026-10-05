@@ -49,6 +49,20 @@ Each attempt retains its identity and full validation log, and a failed retry
 cannot reuse an earlier successful receipt. Once preparation may begin, the
 retained exact plan owns recovery via `make release-resume VERSION=X.Y.Z`.
 
+The complete gate preserves the caller's network policy. Its locked
+`cargo publish --dry-run` check requires registry HTTP access without uploading;
+forcing the whole gate offline previously prevented validation from finishing
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). Cache availability and
+metadata preparation remain offline without changing dependency selections.
+Explicit offline requests remain effective, with no automatic online retry.
+
+`make install-hooks` invokes the unchanged reviewed installer from the physical
+workspace path. Its consumer qualification checks also canonicalize private
+temporary directories and exercise setup through an aliased directory, while
+preserving refusal of a different hook path. This prevents the false root
+rejection described in [Shared Tooling #1](https://github.com/dragginzgame/shared-tooling/issues/1),
+including macOS temporary-path aliases; native confirmation remains required.
+
 ## 0.17.3
 
 The root and packaged README installation examples now select

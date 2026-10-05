@@ -83,7 +83,7 @@ install-format-tools:
 		cargo install cargo-sort --version "$$IC_TESTKIT_CARGO_SORT_VERSION" --locked
 
 install-hooks: format-tools-check
-	bash scripts/dev/install-git-hooks.sh
+	cd "$$(pwd -P)" && bash scripts/dev/install-git-hooks.sh
 
 fmt: format-tools-check
 	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo sort --workspace

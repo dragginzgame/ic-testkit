@@ -103,9 +103,10 @@ case "$mode" in
     if [[ -e "$validation" ]]; then mv "$validation" "$attempt/prior-validation"; fi
     before="$(input_digest)"
     validation_identity "$before" > "$attempt/identity"
-    # Complete gate, identical for patch/minor/major. Retain its full log even
-    # on failure, without cleaning Cargo artifacts or resolving dependencies.
-    CARGO_NET_OFFLINE=true make --no-print-directory release-check 2>&1 \
+    # Complete gate, identical for patch/minor/major. Preserve the caller's
+    # network policy: its registry dry run needs HTTP even with cached crates.
+    # Retain the full log on failure; never retry offline failures online.
+    make --no-print-directory release-check 2>&1 \
       | tee "$attempt/validation.log"
     [[ "$before" == "$(input_digest)" ]] || fail "inputs changed during validation"
     temporary="$(mktemp "$validation.tmp.XXXXXX")"

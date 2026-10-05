@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   with fresh checks and retained attempt logs. Once preparation may begin,
   retries still require the exact saved release plan.
 
+### Fixed
+
+- Hook setup and its qualification fixtures use physical workspace paths, so
+  macOS temporary-directory aliases do not cause a false repository-root
+  rejection ([Shared Tooling #1](https://github.com/dragginzgame/shared-tooling/issues/1)).
+- Release validation preserves the caller's network policy so its locked publish
+  dry run can access the registry. Cache checks and metadata preparation remain
+  offline, and explicitly offline failures are never retried online automatically
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
 ## [0.17.3] - 2026-10-05 - Installation documentation consistency
 
 ### Fixed

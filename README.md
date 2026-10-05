@@ -1578,8 +1578,14 @@ succeeds:
 make publish
 ```
 
-Release validation runs offline and retains each attempt's identity and full log
-in a unique directory under `.git/release-state/`. A failed attempt cannot reuse
+Release validation preserves the caller's network policy; its locked
+`cargo publish --dry-run` check requires registry access without uploading a
+package. Do not force `CARGO_NET_OFFLINE=true` for this complete gate. Cache
+availability and metadata preparation are checked offline without dependency
+upgrades. An explicitly offline gate fails when registry access is required;
+it never retries online automatically.
+Validation retains each attempt's identity and full log in a unique directory
+under `.git/release-state/`. A failed attempt cannot reuse
 an earlier successful validation receipt. It preserves Cargo
 artifacts and does not remove temporary files around upstream background servers.
 Managed PocketIC handles retain

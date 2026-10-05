@@ -41,9 +41,14 @@ STUB
 cat > "$work_dir/bin/make" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == '--no-print-directory release-check' && "$CARGO_NET_OFFLINE" == true ]]
+[[ "$*" == '--no-print-directory release-check' ]]
 printf '%s\n' "$*" >> gate-trace
+printf '%s\n' "${CARGO_NET_OFFLINE-unset}" >> gate-environment
 echo 'substituted complete validation gate'
+if [[ "${ADAPTER_REGISTRY_CHECK:-}" == true && "${CARGO_NET_OFFLINE:-}" == true ]]; then
+  echo 'substituted registry check requires HTTP' >&2
+  exit 101
+fi
 exit "${ADAPTER_GATE_STATUS:-0}"
 STUB
 chmod +x "$work_dir/bin/git" "$work_dir/bin/make"
@@ -196,4 +201,29 @@ expect_failure commit
 unset ADAPTER_UNSTAGED
 export RELEASE_SOURCE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 expect_failure prepared
+
+# The complete gate's registry dry run has a different network boundary from
+# offline metadata preparation. Preserve explicit caller policy without fallback.
+for policy in unset false true; do
+  new_fixture "network-$policy"
+  (
+    if [[ "$policy" == unset ]]; then
+      unset CARGO_NET_OFFLINE
+    else
+      export CARGO_NET_OFFLINE="$policy"
+    fi
+    export ADAPTER_REGISTRY_CHECK=true
+    if [[ "$policy" == true ]]; then
+      expect_failure verify
+      expect_failure prepare
+      [[ ! -e ".release-state/$RELEASE_VERSION.validation" ]]
+    else
+      adapter verify
+      [[ -s ".release-state/$RELEASE_VERSION.validation" ]]
+    fi
+    [[ "$(cat gate-environment)" == "$policy" ]]
+    [[ "$(wc -l < gate-trace)" -eq 1 ]]
+    [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]]
+  )
+done
 echo 'release metadata isolated checks passed'

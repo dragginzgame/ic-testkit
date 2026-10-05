@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Qualify the reviewed hook against this consumer's actual formatting targets
 # and tracked lockfile. No commits, builds, tool installation or network effects.
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-git-hooks.XXXXXX")"
 cleanup() {
     local status=$?
@@ -14,6 +14,9 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+# macOS temporary paths and caller-supplied TMPDIR may be logical aliases.
+# Use physical identities when invoking the unchanged shared installer.
+fixture="$(cd "$fixture" && pwd -P)"
 source_commit="$(git -C "$root" rev-parse HEAD)"
 source_objects="$(git -C "$root" rev-parse --git-path objects)"
 case "$source_objects" in /*) ;; *) source_objects="$root/$source_objects" ;; esac
@@ -86,10 +89,14 @@ git diff --quiet -- Makefile Cargo.toml
 cmp selected-lock Cargo.lock
 
 new_fixture installer
-bash scripts/dev/install-git-hooks.sh > installed.log
+ln -s "$PWD" "$fixture/installer-alias"
+(
+    cd "$fixture/installer-alias"
+    make --no-print-directory install-hooks
+) > installed.log
 [[ "$(git config --get core.hooksPath)" == .githooks ]]
-bash scripts/dev/install-git-hooks.sh >> installed.log
+make --no-print-directory install-hooks >> installed.log
 git config --local core.hooksPath custom-hooks
-expect_failure bash scripts/dev/install-git-hooks.sh
+expect_failure make --no-print-directory install-hooks
 [[ "$(git config --get core.hooksPath)" == custom-hooks ]]
 echo 'Consumer hook formatting, lockfile preservation, rejection and activation checks passed'
