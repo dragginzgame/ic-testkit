@@ -16,7 +16,7 @@ hash_file() { git hash-object -- "$1"; }
 input_digest() { git diff --binary HEAD -- | git hash-object --stdin; }
 
 check_paths() {
-  local path allowed file path_list
+  local path allowed file path_list untracked
   # Git paths are NUL-delimited; whitespace in an unrelated name cannot evade
   # admission. Inspect index and worktree separately so opposing staged and
   # unstaged changes cannot cancel out and evade preflight.
@@ -31,7 +31,8 @@ check_paths() {
     [[ "$allowed" == true ]] || fail "unrelated work: $path"
   done < "$path_list"
   rm -f "$path_list"
-  [[ -z "$(git ls-files --others --exclude-standard)" ]] || fail "untracked work"
+  untracked="$(git ls-files --others --exclude-standard)" || fail "cannot inspect untracked work"
+  [[ -z "$untracked" ]] || fail "untracked work"
   for file in "${files[@]}"; do
     [[ -f "$file" && ! -L "$file" ]] || fail "missing or symlinked metadata: $file"
     git ls-files --error-unmatch -- "$file" >/dev/null
@@ -59,10 +60,24 @@ prepared_identity() {
     printf '%s\n' "$old_digest" "$new_digest"
   done
 }
-check_prepared() {
+check_saved_metadata() {
   check_validation
   [[ -f "$prepared/ready" && ! -L "$prepared/ready" ]] || fail "prepared metadata missing"
   [[ "$(cat "$prepared/ready")" == "$(prepared_identity)" ]] || fail "prepared metadata changed"
+}
+check_recovery() {
+  check_saved_metadata
+  local file digest
+  # Intent and exact old/new bytes precede publication. On interruption,
+  # accept only those two identities; never incorporate new dirty input.
+  for file in "${files[@]}"; do
+    digest="$(hash_file "$file")"
+    [[ "$digest" == "$(hash_file "$prepared/old/$file")" || "$digest" == "$(hash_file "$prepared/new/$file")" ]] \
+      || fail "metadata changed during recovery: $file"
+  done
+}
+check_prepared() {
+  check_saved_metadata
   local file
   for file in "${files[@]}"; do
     [[ "$(hash_file "$file")" == "$(hash_file "$prepared/new/$file")" ]] \
@@ -86,6 +101,13 @@ mkdir -p "$state"
 validation="$state/$RELEASE_VERSION.validation"
 prepared="$state/$RELEASE_VERSION.metadata"
 [[ ! -L "$prepared" ]] || fail "symlinked prepared metadata"
+if [[ -e "$prepared" ]]; then
+  [[ -d "$prepared" ]] || fail "prepared metadata is not a directory"
+  # Retained intent and backups must stay inside their owned tree. Check before
+  # copying or publishing; rejecting a linked ready file afterward is too late.
+  retained_links="$(find "$prepared" -type l -print)"
+  [[ -z "$retained_links" ]] || fail "symlink in prepared metadata"
+fi
 check_paths
 
 case "$mode" in
@@ -93,7 +115,18 @@ case "$mode" in
     [[ "$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_PREVIOUS" ]] \
       || fail "source version differs from saved selection"
     bash "$script_dir/../ci/check-format-tools.sh"
-    cargo fetch --locked --offline
+    cache_manifest=Cargo.toml
+    if [[ -e "$prepared/ready" ]]; then
+      check_recovery
+      for member in crates/ic-testkit canisters/test/perf_probe; do
+        cmp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml" \
+          || fail "saved member manifest changed: $member"
+      done
+      # The new lockfile can be published before the root manifest. Check the
+      # verified, consistent saved workspace without rewriting live metadata.
+      cache_manifest="$prepared/new/Cargo.toml"
+    fi
+    cargo fetch --manifest-path "$cache_manifest" --locked --offline
     ;;
   verify)
     attempt="$(mktemp -d "$state/$RELEASE_VERSION.validation.XXXXXX")"
@@ -166,14 +199,7 @@ case "$mode" in
       prepared_identity > "$prepared/ready.tmp"
       mv "$prepared/ready.tmp" "$prepared/ready"
     fi
-    [[ "$(cat "$prepared/ready")" == "$(prepared_identity)" ]] || fail "corrupt prepared metadata"
-    # Intent and exact old/new bytes precede publication. On interruption,
-    # accept only those two identities; never incorporate new dirty input.
-    for file in "${files[@]}"; do
-      digest="$(hash_file "$file")"
-      [[ "$digest" == "$(hash_file "$prepared/old/$file")" || "$digest" == "$(hash_file "$prepared/new/$file")" ]] \
-        || fail "metadata changed during recovery: $file"
-    done
+    check_recovery
     for file in "${files[@]}"; do
       temporary="$(mktemp "$(dirname "$file")/.release-metadata.XXXXXX")"
       cp -p "$prepared/new/$file" "$temporary"

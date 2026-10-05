@@ -1479,15 +1479,17 @@ also require the `wasm32-unknown-unknown` target:
 rustup target add wasm32-unknown-unknown
 ```
 
-Developer setup and updates prepare the pinned `cargo-sort` executable and
-activate the reviewed repository-local formatting hook:
+Developer setup and updates prepare `rustfmt` for the selected toolchain,
+the pinned `cargo-sort` executable, and the reviewed repository-local hook:
 
 ```bash
+rustup component add rustfmt
 make install-format-tools install-hooks
 ```
 
 The selected version is recorded in `ci/tool-versions.env` and used by CI too.
 Setup installs tools explicitly; formatting never installs or fetches them.
+Hook activation and formatting checks reject missing formatter prerequisites.
 `make fmt` sorts every workspace Cargo manifest before formatting all Rust code.
 `make fmt-check` performs the matching checks without changing files.
 The pre-commit hook formats an isolated export of the selected index, refreshes
@@ -1596,15 +1598,30 @@ The release file set is Cargo.toml, Cargo.lock, both changelogs and both READMEs
 If preflight or validation fails, correct the inputs and rerun the normal release
 target; both gates run afresh against the current source. Once preparation may
 begin, an interruption retains its exact plan and prepared old/new metadata
-under the repository's Git directory. Inspect the recorded state and resume that
-release:
+under the repository's Git directory. Rerun the same release target to
+automatically recover that release at its saved version. The runner selects
+unfinished intent before computing another increment, even if metadata has
+already been bumped. For explicit selection of the saved release:
 
 ```bash
 make release-resume VERSION=X.Y.Z
 ```
 
-Resume verifies the saved source, version, commit, branch and destination; it
-does not choose another version or recreate an existing release commit or tag.
+Both recovery paths verify the saved source, version, payload, commit, branch
+and destination and do not recreate a matching release commit or tag. Automatic
+recovery also rejects a different release kind or competing unfinished plans.
+Matching remote branch and tag identities complete an interrupted push without
+another push; an unavailable remote query stops recovery.
+Preparation and recovery reject symlinks in the retained metadata tree before
+changing release files or linked targets. Keep rejected state for inspection;
+the adapter does not discard its evidence to retry.
+If publication stopped between writing Cargo.lock and Cargo.toml, recovery
+checks offline caches against the verified saved workspace. It accepts only
+the saved old/new metadata bytes and unchanged member manifests, and leaves
+the live manifest and lockfile untouched until publication resumes.
+Leftover `.release-metadata.*` staging files in the root and `crates/ic-testkit`
+are helper-owned scratch, excluded from untracked-source checks and preserved
+during recovery. Other untracked files still block the release.
 An occupied release lock requires inspection of its recorded owner before
 manual removal. Agents prepare and inspect changes but never invoke these
 one-shot commands, which create commits.

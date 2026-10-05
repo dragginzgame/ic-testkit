@@ -55,7 +55,8 @@ help:
 	@echo "  publish         Publish the tagged release to crates.io"
 
 ensure-clean:
-	@if ! git diff-index --quiet HEAD -- || test -n "$$(git ls-files --others --exclude-standard)"; then \
+	@untracked="$$(git ls-files --others --exclude-standard)" || exit $$?; \
+	if ! git diff-index --quiet HEAD -- || test -n "$$untracked"; then \
 		echo "error: working directory is not clean; commit or stash changes first" >&2; \
 		exit 1; \
 	fi
@@ -83,7 +84,7 @@ install-format-tools:
 		cargo install cargo-sort --version "$$IC_TESTKIT_CARGO_SORT_VERSION" --locked
 
 install-hooks: format-tools-check
-	cd "$$(pwd -P)" && bash scripts/dev/install-git-hooks.sh
+	bash scripts/dev/install-git-hooks.sh
 
 fmt: format-tools-check
 	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo sort --workspace

@@ -15,7 +15,7 @@ cleanup() {
 }
 trap cleanup EXIT
 # macOS temporary paths and caller-supplied TMPDIR may be logical aliases.
-# Use physical identities when invoking the unchanged shared installer.
+# Keep private fixture identities physical across subsequent Git operations.
 fixture="$(cd "$fixture" && pwd -P)"
 source_commit="$(git -C "$root" rev-parse HEAD)"
 source_objects="$(git -C "$root" rev-parse --git-path objects)"
@@ -99,4 +99,32 @@ make --no-print-directory install-hooks >> installed.log
 git config --local core.hooksPath custom-hooks
 expect_failure make --no-print-directory install-hooks
 [[ "$(git config --get core.hooksPath)" == custom-hooks ]]
+
+# Setup must not activate a hook whose Rust formatter is unavailable. Substitute
+# Cargo only at the availability boundary, without removing any installed tools.
+new_fixture missing-rustfmt
+mkdir tool-bin
+cat > tool-bin/cargo <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$CARGO_NET_OFFLINE" == true && "$RUSTUP_AUTO_INSTALL" == 0 ]]
+printf '%s\n' "$*" >> formatter-trace
+case "$*" in
+    'sort --version')
+        # shellcheck source=/dev/null
+        source ci/tool-versions.env
+        printf 'cargo-sort %s\n' "$IC_TESTKIT_CARGO_SORT_VERSION"
+        ;;
+    'fmt --version') exit 1 ;;
+    *) echo "unexpected formatter effect: $*" >&2; exit 97 ;;
+esac
+STUB
+chmod +x tool-bin/cargo
+tree="$(git write-tree)"
+expect_failure env PATH="$PWD/tool-bin:$PATH" make --no-print-directory install-hooks
+[[ -z "$(git config --local --get core.hooksPath || true)" ]]
+[[ "$(cat formatter-trace)" == $'sort --version\nfmt --version' ]]
+[[ "$(git write-tree)" == "$tree" ]]
+git diff --quiet -- Makefile Cargo.toml
+cmp selected-lock Cargo.lock
 echo 'Consumer hook formatting, lockfile preservation, rejection and activation checks passed'

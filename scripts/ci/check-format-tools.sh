@@ -9,3 +9,7 @@ source "$root/ci/tool-versions.env"
     echo "Formatting requires prepared cargo-sort $IC_TESTKIT_CARGO_SORT_VERSION; run make install-format-tools during setup." >&2
     exit 1
 }
+cargo fmt --version >/dev/null || {
+    echo "Formatting requires prepared rustfmt for the selected toolchain; run rustup component add rustfmt during setup." >&2
+    exit 1
+}

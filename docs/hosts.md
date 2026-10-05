@@ -13,8 +13,10 @@ not qualified.
 
 Runner labels and architectures follow the [GitHub runner inventory](https://github.com/actions/runner-images#available-images).
 The matrix declares required support; each revision needs a successful matching
-native workflow run. Linux checks do not qualify macOS behavior. The complete
-CI, MSRV, archive verification and publish dry-run gates are configured on all
+native workflow run. Linux checks do not qualify macOS behavior.
+CI matrices disable fail-fast so a failure on one host does not cancel checks
+on the other supported hosts. Individual checks still stop on failure.
+The complete CI, MSRV, archive verification and publish dry-run gates run on all
 three native hosts. Native macOS qualification remains pending until matching
 workflow runs pass. Do not publish or push
 just to qualify tooling.
@@ -62,6 +64,13 @@ accepted-stream fix on native ARM64 macOS. Intel qualification remains pending
 the matching job; these results do not qualify the subsequent installation
 documentation guard.
 
+At `v0.17.3` (`e35a98f5786cfb5553cfeadc9ee67e6cbc7458b6`), the
+[native workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37336194477)
+passed the full gate, MSRV, portable-host checks and PocketIC concurrency on
+all three hosts. This qualifies the teardown fixture and installation
+documentation guard for that revision, including Intel macOS. It precedes the
+0.18 release/hook adoption and does not qualify that later tooling.
+
 ## Prerequisites
 
 - Bash 3.2 or newer. On macOS, use `/bin/bash` to exercise the system shell.
@@ -74,6 +83,8 @@ documentation guard.
   `wasm32-unknown-unknown` target. Published MSRV checks use Rust 1.88.
 - `cargo-sort` 2.1.4, prepared explicitly with `make install-format-tools`, for
   hooks, manifest sorting, and independent CI/release formatting checks.
+  Hook setup and formatting checks also require an already prepared `rustfmt`
+  component; use `rustup component add rustfmt` during explicit setup.
 - `cloc` and `jq` for `make cloc`. These are optional for builds; install them
   using the host's package manager before requesting a LOC report.
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
@@ -95,7 +106,26 @@ and failures are not automatically retried online.
 They retain each validation attempt's identity and full log in a unique Git
 directory location, including failed attempts, and retain prepared metadata.
 Preflight or validation-only failures rerun through the normal target with
-fresh checks. Once preparation may begin, recovery uses the exact saved plan.
+fresh checks. Once preparation may begin, rerunning the same release target
+automatically reconciles the exact saved plan before selecting another version.
+Explicit `make release-resume VERSION=X.Y.Z` uses the same checks.
+Preparation and recovery reject symlinks in retained metadata before copying
+backups or publishing files, preserving current metadata and linked targets.
+After partial metadata publication, preflight checks offline caches using the
+verified saved workspace and unchanged member manifests. It does not rewrite
+the mixed live manifest/lockfile to perform that check or repeat validation.
+Abandoned `.release-metadata.*` publication staging files are excluded from
+untracked-source checks only in the two metadata directories and are preserved.
+The qualification fixture exercises this admission with a real private Git
+index while retaining its substituted release/validation commands.
+Consumer metadata phases and the publication clean-worktree prerequisite stop
+when Git's untracked inventory fails. Command-stub checks exercise an empty
+failed inventory and verify that rejection preserves metadata and validation
+evidence before any gate or preparation effects.
+The same unchecked inventory in the reviewed shared runner is reported in
+[Shared Tooling issue #4](https://github.com/dragginzgame/shared-tooling/issues/4).
+The consumer adapter rejects this failure at each release phase; the vendored
+runner remains unchanged pending a reviewed upstream correction.
 Release validation preserves Cargo artifacts and does not remove temporary files underneath
 upstream background servers. Managed server handles own their process cleanup.
 
@@ -136,9 +166,9 @@ after the reader changes its socket mode.
 The driver checks include native process observations, report bounds, atomic
 report replacement, standalone proxy invocation and subprocess completion on
 interruption. They use synthetic workers rather than running the live benchmark.
-Passing Linux checks does not qualify macOS. The teardown-fixture fix has
-native ARM64 confirmation at 0.17.2; Intel confirmation and native qualification
-of the new installation documentation guard remain pending.
+Passing Linux checks does not qualify macOS. The 0.17.3 workflow above qualifies
+the teardown fixture and installation documentation guard on all three native
+hosts; qualification of the subsequent release/hook tooling remains pending.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:
@@ -151,10 +181,10 @@ The maintainer owns full pre-push, release and publication gates. Agents run
 only checks affected by their authorized changes.
 
 The adopted release runner and formatting hook come from reviewed Shared Tooling
-revision `c0206f1943238e21bd00fbe01658e6a0864c24fa`. Release guard checks exercise its
+revision `f52c0e2476aee094359ed21de91c468540d3969f`. Release guard checks exercise its
 patch/minor/major ordering, explicit staging, atomic branch/tag push and exact
-resume, including fresh validation-only retries, with command stubs. Consumer
-metadata checks use isolated workspaces, real offline Cargo metadata and manifest
+automatic recovery, including fresh validation-only retries, with command stubs.
+Consumer metadata checks use isolated workspaces, real offline Cargo metadata and manifest
 sorting, and substituted Git/validation commands, so they do not commit, tag,
 push or publish. Consumer hook checks use isolated indexes with this repository's
 actual Make targets and tracked lockfile, real Cargo/rustfmt, and a substituted
@@ -166,12 +196,23 @@ automatic refresh, unrelated-edit and lockfile preservation, partial staging,
 formatter failure, idempotence and installer refusal of another hook path.
 Local hook activation uses `make install-hooks`; verify the effective
 `git config --get core.hooksPath` separately from `make fmt-check`.
-That target invokes the reviewed installer from the physical workspace path,
-and qualification fixtures canonicalize their private temporary directories.
+The reviewed installer canonicalizes both its own root and Git's repository
+root; qualification fixtures canonicalize their private temporary directories.
 An aliased-directory setup case exercises the actual Make target, including
-refusal of a conflicting hook path. This addresses the consumer boundary of
+refusal of a conflicting hook path. This adopts the upstream fix for
 [Shared Tooling issue #1](https://github.com/dragginzgame/shared-tooling/issues/1)
 without patching the snapshot; symlinked `TMPDIR` is a focused Linux reproduction
 of the path-identity problem, not native macOS qualification.
 Native Linux/ARM64/Intel qualification of this adoption remains pending matching
 portable-host CI; the earlier release passes do not qualify this new workflow.
+
+At `v0.18.0` (`6f77928204a1993f3d6923df8cf3f9015baa4cd6`), the
+[tag workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37349040375)
+failed on Linux: release-metadata fixtures depended on a pending changelog
+heading that finalization had removed, and portable formatting checks lacked
+the toolchain's `rustfmt` component. The portable shell also continued past an
+earlier failed check. Current fixtures own their candidate notes and cover
+finalized-only history; portable setup explicitly prepares `rustfmt` and its
+system Bash step stops on command, pipeline and unset-variable failures.
+Qualification of these fixes remains pending matching native CI on all three
+hosts.

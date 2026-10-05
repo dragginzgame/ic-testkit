@@ -6,6 +6,34 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.18.1]
+
+### Fixed
+
+- Rerunning the same release target recovers its saved release without another
+  version increment or duplicate commit, tag or completed push. Preparation and
+  recovery reject symlinks in saved metadata before changing release files or
+  linked targets. Interrupted metadata publication recovers even when the
+  new lockfile was written before the manifest. Leftover publication staging
+  files no longer block recovery and are preserved
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+- Release and publication source checks stop when Git cannot list untracked
+  files, preserving metadata and validation evidence instead of treating a
+  failed inventory as a clean checkout
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+- Hook installation uses Shared Tooling's physical-path fix directly, removing
+  the local path workaround
+  ([Shared Tooling #1](https://github.com/dragginzgame/shared-tooling/issues/1)).
+- Release-check fixtures work with finalized or pending changelog notes, so
+  checks remain usable after a release
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). See the
+  [package tooling notes](crates/ic-testkit/CHANGELOG.md#0181).
+- Portable CI explicitly prepares `rustfmt` and stops at the first shell
+  failure. Hook setup rejects a missing `rustfmt` before activation. CI matrices
+  collect all supported hosts' results when another host fails, preserving
+  macOS qualification evidence
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
 ## [0.18.0] - 2026-10-05
 
 ### Breaking

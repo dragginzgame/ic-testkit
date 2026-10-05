@@ -141,22 +141,34 @@ cat >"${clean_case}/bin/git" <<'EOF'
 case "${1:-}" in
   diff-index) exit 0 ;;
   ls-files)
-    printf 'untracked-release-note.md\n'
-    exit 0
+    printf '%s' "${CLEAN_UNTRACKED:-}"
+    exit "${CLEAN_INVENTORY_STATUS:-0}"
     ;;
   *) exit 2 ;;
 esac
 EOF
 chmod +x "${clean_case}/bin/git"
-set +e
-(
-  cd "${clean_case}"
-  PATH="${clean_case}/bin:${PATH}" \
-    make --no-print-directory -f "${repo_root}/Makefile" ensure-clean
-) >/dev/null 2>&1
-clean_status="$?"
-set -e
-[[ "${clean_status}" -ne 0 ]] || fail "ensure-clean accepted an untracked file"
+for scenario in clean untracked failed-empty failed-partial; do
+  clean_untracked=""
+  inventory_status=0
+  case "$scenario" in
+    untracked) clean_untracked=untracked-release-note.md ;;
+    failed-empty) inventory_status=9 ;;
+    failed-partial) inventory_status=9; clean_untracked=partial-inventory ;;
+  esac
+  clean_status=0
+  (
+    cd "${clean_case}"
+    PATH="${clean_case}/bin:${PATH}" CLEAN_UNTRACKED="$clean_untracked" \
+      CLEAN_INVENTORY_STATUS="$inventory_status" \
+      make --no-print-directory -f "${repo_root}/Makefile" ensure-clean
+  ) >/dev/null 2>&1 || clean_status="$?"
+  if [[ "$scenario" == clean ]]; then
+    [[ "$clean_status" -eq 0 ]] || fail "ensure-clean rejected a clean inventory"
+  else
+    [[ "$clean_status" -ne 0 ]] || fail "ensure-clean accepted $scenario"
+  fi
+done
 
 sequence_case="${work_dir}/sequence"
 mkdir -p "${sequence_case}/bin"

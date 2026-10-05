@@ -3,7 +3,15 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-release-metadata.XXXXXX")"
-trap 'rm -rf "$work_dir"' EXIT
+cleanup() {
+  local status=$?
+  if [[ "$status" -eq 0 ]]; then
+    rm -rf "$work_dir"
+  else
+    echo "Failed metadata qualification retained at $work_dir" >&2
+  fi
+}
+trap cleanup EXIT
 export REAL_GIT
 REAL_GIT="$(command -v git)"
 mkdir -p "$work_dir/bin"
@@ -14,7 +22,11 @@ case "$1" in
   hash-object) shift; exec "$REAL_GIT" hash-object "$@" ;;
   rev-parse) [[ "$*" == 'rev-parse --git-path release-state' ]]; echo .release-state ;;
   ls-files)
-    if [[ "$2" == --others ]]; then printf '%s' "${ADAPTER_UNTRACKED:-}"; fi
+    if [[ "$2" == --others ]]; then
+      if [[ "${ADAPTER_REAL_UNTRACKED:-}" == true ]]; then exec "$REAL_GIT" "$@"; fi
+      printf '%s' "${ADAPTER_UNTRACKED:-}"
+      exit "${ADAPTER_UNTRACKED_STATUS:-0}"
+    fi
     ;;
   diff)
     case "$2" in
@@ -72,14 +84,22 @@ new_fixture() {
   export RELEASE_KIND="${2:-patch}" RELEASE_DATE=2026-10-05
   export RELEASE_VERSION
   RELEASE_VERSION="$(bash "$repo_root/scripts/ci/next-release-version.sh" "$previous" "$RELEASE_KIND")"
-  # Each isolated candidate has matching numbered notes. The real pending
-  # batch keeps its minor version; fixtures select their own release identity.
+  # Own the fixture's candidate independently of the checkout's note state.
+  # Keep published history, replacing any real pending batch with fixture notes.
   for file in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
-    awk -v version="$RELEASE_VERSION" '
-      /^## \[[0-9]+\.[0-9]+\.[0-9]+\]$/ && !selected++ {
-        print "## [" version "]"; next
+    awk -v version="$RELEASE_VERSION" -v notes="${3:-pending}" '
+      /^## \[[0-9]+\.[0-9]+\.[0-9]+\]$/ { pending = 1; next }
+      /^## / {
+        pending = 0
+        if (!history++ && notes == "pending") {
+          print "## [" version "]"
+          print ""
+          print "- Isolated release fixture notes."
+          print ""
+        }
       }
-      { print }
+      !pending { print }
+      END { if (!history) exit 1 }
     ' "$file" > candidate-notes
     mv candidate-notes "$file"
   done
@@ -115,6 +135,22 @@ for kind in patch minor major; do
   # republishes the same saved bytes without another gate or version selection.
   cp ".release-state/$RELEASE_VERSION.metadata/old/Cargo.toml" Cargo.toml
   cp ".release-state/$RELEASE_VERSION.metadata/old/README.md" README.md
+  # The shared runner repeats preflight while the manifest is still old. Its
+  # cache check must tolerate the saved new lockfile already being published.
+  cp Cargo.lock recovery-lock
+  cp Cargo.toml recovery-manifest
+  cp README.md recovery-readme
+  echo 'unvalidated recovery mutation' >> README.md
+  expect_failure preflight
+  cp recovery-readme README.md
+  saved_member=".release-state/$RELEASE_VERSION.metadata/new/crates/ic-testkit/Cargo.toml"
+  cp "$saved_member" recovery-member
+  echo '# unvalidated saved workspace input' >> "$saved_member"
+  expect_failure preflight
+  cp recovery-member "$saved_member"
+  adapter preflight
+  cmp recovery-lock Cargo.lock
+  cmp recovery-manifest Cargo.toml
   adapter prepare
   adapter prepared
   [[ "$(wc -l < gate-trace)" -eq 1 ]]
@@ -122,6 +158,87 @@ for kind in patch minor major; do
   expect_failure prepared
   expect_failure prepare
 done
+
+new_fixture publication-temporaries
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+cp "$retained/old/Cargo.toml" Cargo.toml
+cp "$repo_root/.gitignore" .gitignore
+# Real Git supplies untracked-path admission for this case. Only the fixture's
+# mocked Git-directory state needs an extra private exclusion; no commits occur.
+"$REAL_GIT" init --quiet
+printf '/.release-state/\n' > .git/info/exclude
+: > rejected.log
+"$REAL_GIT" add -- .gitignore Cargo.toml Cargo.lock CHANGELOG.md \
+  crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md \
+  rust-toolchain.toml crates/ic-testkit/Cargo.toml crates/ic-testkit/src/lib.rs \
+  canisters/test/perf_probe/Cargo.toml canisters/test/perf_probe/src/lib.rs \
+  artifact gate-trace gate-environment rejected.log
+printf 'interrupted root staging bytes\n' > .release-metadata.fixture
+printf 'interrupted package staging bytes\n' > crates/ic-testkit/.release-metadata.fixture
+(
+  export ADAPTER_REAL_UNTRACKED=true
+  adapter preflight
+  adapter prepare
+  [[ "$(cat .release-metadata.fixture)" == 'interrupted root staging bytes' ]]
+  [[ "$(cat crates/ic-testkit/.release-metadata.fixture)" == 'interrupted package staging bytes' ]]
+  [[ "$(wc -l < gate-trace)" -eq 1 ]]
+  printf 'unrelated same-prefix file\n' > canisters/test/perf_probe/.release-metadata.unrelated
+  expect_failure prepared
+)
+
+new_fixture finalized-notes patch finalized
+cp CHANGELOG.md history-root
+cp crates/ic-testkit/CHANGELOG.md history-package
+adapter verify
+adapter prepare
+adapter prepared
+for view in root package; do
+  file=CHANGELOG.md
+  [[ "$view" != package ]] || file=crates/ic-testkit/CHANGELOG.md
+  grep -Fx "## [$RELEASE_VERSION] - $RELEASE_DATE" "$file"
+  # Preparing with no pending notes inserts an empty release section and
+  # preserves all prior history, including the heading and introductory text.
+  awk -v heading="## [$RELEASE_VERSION] - $RELEASE_DATE" '
+    $0 == heading { inserted = 1; next }
+    inserted { inserted = 0; next }
+    { print }
+  ' "$file" > prepared-history
+  cmp "history-$view" prepared-history
+done
+
+for linked_path in ready old/README.md new; do
+  new_fixture "linked-${linked_path//\//-}"
+  adapter verify
+  adapter prepare
+  retained=".release-state/$RELEASE_VERSION.metadata"
+  # Recreate the pre-publication state, then replace saved evidence with an
+  # alias to identical bytes. Content equality must not authorize linked state.
+  for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+    cp "$retained/old/$file" "$file"
+  done
+  mv "$retained/$linked_path" foreign-metadata
+  cp -R foreign-metadata foreign-before
+  ln -s "$PWD/foreign-metadata" "$retained/$linked_path"
+  expect_failure prepare
+  diff -r foreign-before foreign-metadata
+  for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+    cmp "$retained/old/$file" "$file"
+  done
+done
+
+new_fixture linked-preparation-directory
+adapter verify
+retained=".release-state/$RELEASE_VERSION.metadata"
+mkdir -p "$retained" foreign-metadata
+cp README.md foreign-metadata/README.md
+cp -R foreign-metadata foreign-before
+ln -s "$PWD/foreign-metadata" "$retained/new"
+expect_failure prepare
+diff -r foreign-before foreign-metadata
+[[ ! -e "$retained/ready" ]]
+[[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]]
 
 for view in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
   new_fixture "conflicting-${view//\//-}"
@@ -195,7 +312,38 @@ export ADAPTER_UNTRACKED='untracked release input'
 expect_failure preflight
 unset ADAPTER_UNTRACKED
 adapter verify
+cp ".release-state/$RELEASE_VERSION.validation" admitted-receipt
+for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+  mkdir -p "admitted/$(dirname "$file")"
+  cp "$file" "admitted/$file"
+done
+# An empty inventory is clean only after Git completed successfully. Failure
+# must not run a gate, invalidate its receipt or begin metadata publication.
+export ADAPTER_UNTRACKED_STATUS=9
+for phase in preflight verify prepare; do
+  expect_failure "$phase"
+  cmp admitted-receipt ".release-state/$RELEASE_VERSION.validation"
+  [[ "$(wc -l < gate-trace)" -eq 1 ]]
+  [[ ! -e ".release-state/$RELEASE_VERSION.metadata" ]]
+  for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+    cmp "admitted/$file" "$file"
+  done
+done
+unset ADAPTER_UNTRACKED_STATUS
 adapter prepare
+cp ".release-state/$RELEASE_VERSION.metadata/ready" admitted-ready
+export ADAPTER_UNTRACKED_STATUS=9
+for phase in prepared commit committed tagged push; do
+  expect_failure "$phase"
+  cmp admitted-receipt ".release-state/$RELEASE_VERSION.validation"
+  cmp admitted-ready ".release-state/$RELEASE_VERSION.metadata/ready"
+  [[ "$(wc -l < gate-trace)" -eq 1 ]]
+  for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+    cmp ".release-state/$RELEASE_VERSION.metadata/new/$file" "$file"
+  done
+done
+unset ADAPTER_UNTRACKED_STATUS
+adapter prepared
 export ADAPTER_UNSTAGED=1
 expect_failure commit
 unset ADAPTER_UNSTAGED

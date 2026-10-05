@@ -8,6 +8,77 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.18.1]
+
+The reviewed Shared Tooling snapshot advances to
+`f52c0e2476aee094359ed21de91c468540d3969f`. Rerunning the same
+`make release-patch`, `make release-minor` or `make release-major` target now
+reconciles an unfinished release at its saved version before computing an
+increment, including when preparation already changed metadata
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). Recovery preserves
+validation evidence, rejects conflicting identities, payloads and destinations,
+and avoids duplicate matching commits, tags and completed pushes. Explicit
+`make release-resume VERSION=X.Y.Z` uses the same checks.
+
+Recovery preflight checks offline caches against the verified saved workspace
+when preparation has published only part of its metadata. A new Cargo.lock
+with the old Cargo.toml previously made the repeated `cargo fetch --locked`
+fail before recovery could finish. The adapter now verifies retained evidence
+and admits only exact saved old/new file identities before checking that
+consistent private workspace. It preserves the live manifest and lockfile,
+dependency selections and original validation rather than resolving again
+against mixed live metadata
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+Interrupted atomic publication can leave `.release-metadata.*` staging files
+beside root or packaged metadata. Those helper-owned names are now excluded
+from Git's untracked-source checks only in the repository root and
+`crates/ic-testkit`, so recovery can continue without deleting those files.
+It publishes from verified saved metadata using fresh staging files. Unrelated
+untracked files, including the same prefix in other directories, still block
+the release ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+Release metadata phases and `make ensure-clean`, the publication prerequisite,
+require Git's untracked inventory to complete successfully before admitting
+source. A failed command with empty output previously passed as a clean
+checkout. Rejection now preserves release files and existing validation
+evidence without running another gate or beginning preparation
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+Preparation and recovery reject symlinks anywhere in the retained metadata
+tree before copying backups or publishing release files. A linked readiness
+file could previously be rejected only after metadata had already changed;
+linked backup files and preparation directories are now rejected at the same
+boundary. Current metadata and linked targets remain unchanged on rejection
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). Corrupt retained
+state stays available for inspection rather than being followed or removed.
+Qualification failures also retain their private fixture directories for
+inspection.
+
+Hook installation delegates physical-path normalization to the reviewed
+installer, including macOS temporary-directory aliases; the consumer Makefile
+no longer repeats that workaround
+([Shared Tooling #1](https://github.com/dragginzgame/shared-tooling/issues/1)).
+
+Release-metadata qualification constructs its own candidate notes instead of
+depending on an undated heading in the checkout. It exercises preparation
+from finalized notes, preserves published history, and rejects conflicting
+candidates in either changelog view
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). This fixes checks
+that failed after the 0.18.0 notes were finalized.
+
+Portable CI explicitly installs the pinned toolchain's `rustfmt` component
+before formatting-hook checks. Its system Bash step uses strict mode so
+command, pipeline and unset-variable failures stop the step immediately.
+Hook setup and formatting checks verify `rustfmt` availability with automatic
+installation disabled; setup fails before changing hook configuration if that
+component is missing. All four CI matrices collect results on every supported
+host even if another host fails, rather than cancelling macOS qualification
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+These are compatible tooling fixes; library APIs and runtime behavior are
+unchanged. Native qualification still requires matching successful runs on
+Linux and both supported macOS architectures.
+
 ## [0.18.0] - 2026-10-05
 
 The repository's maintainer release CLI makes a hard cut to the reviewed

@@ -72,9 +72,7 @@ read_plan() {
     [[ "$(bash "$(dirname "${BASH_SOURCE[0]}")/next-release-version.sh" "$saved_previous" "$saved_kind")" == "$saved_candidate" ]] || fail 'release plan increment is invalid'
     case "$saved_phase" in preflight|validate|prepare|stage|commit|tag|push|complete) ;; *) fail 'release plan phase is invalid' ;; esac
 }
-if [[ "$mode" == resume ]]; then
-    [[ "$requested_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || usage
-    plan="$state_root/$requested_version.plan"
+load_plan() {
     read_plan "$plan"
     [[ "$remote" == "$saved_remote" && "$branch" == "$saved_branch" && "$remote_identity" == "$saved_destination" ]] || fail 'release destination changed'
     kind="$saved_kind"
@@ -86,6 +84,32 @@ if [[ "$mode" == resume ]]; then
     phase="$saved_phase"
     # Early plans have no reusable validation: repeat preflight and the full gate.
     case "$phase" in preflight|validate) phase=preflight ;; esac
+}
+plan=""
+if [[ "$mode" == resume ]]; then
+    [[ "$requested_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || usage
+    plan="$state_root/$requested_version.plan"
+else
+    # Select saved intent before reading possibly bumped metadata. Recovery uses
+    # the saved increment, not another increment from the prepared version.
+    early_intent=no
+    for retained_plan in "$state_root"/*.plan; do
+        [[ -e "$retained_plan" || -L "$retained_plan" ]] || continue
+        read_plan "$retained_plan"
+        case "$saved_phase" in
+            complete) ;;
+            preflight|validate) early_intent=yes ;;
+            *)
+                [[ -z "$plan" ]] || fail 'multiple unfinished release identities; inspect retained plans'
+                [[ "$saved_kind" == "$mode" ]] || fail "unfinished release $saved_candidate has kind $saved_kind, not $mode"
+                plan="$retained_plan"
+                ;;
+        esac
+    done
+    [[ -z "$plan" || "$early_intent" == no ]] || fail 'multiple unfinished release identities; inspect retained plans'
+fi
+if [[ -n "$plan" ]]; then
+    load_plan
 else
     kind="$mode"
     previous="$("$make_bin" --no-print-directory -s release-version)"
@@ -114,7 +138,7 @@ else
                 mv "$retained_plan" "$archive/$saved_candidate.plan"
                 printf 'Restarting before preparation; retained earlier attempt: %s\n' "$archive/$saved_candidate.plan"
                 ;;
-            *) fail "unfinished release $saved_candidate is at $saved_phase; use make release-resume VERSION=$saved_candidate" ;;
+            *) fail 'release plan changed during selection' ;;
         esac
     done
     index_tree=""
