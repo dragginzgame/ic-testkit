@@ -6,6 +6,38 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.10] - 2026-10-05 - Declared Wasm library output validation
+
+### Fixed
+
+- Wasm acquisition validates the selected packages' library output declarations
+  from Cargo metadata. A package must provide a `cdylib` library whose name
+  matches its expected `<package>.wasm` artifact. Missing, non-`cdylib`, and
+  renamed libraries return `InvalidSpec` before cache reuse, compilation, or
+  scheduled shared-target maintenance.
+- Previously, changing a library to `rlib` or renaming it could leave an old
+  shared-target Wasm available for publication under the changed manifest's
+  fingerprint even though Cargo no longer produced that artifact.
+- Validation survives batch resolution, immutable-source sessions, and prepared
+  snapshots. A failed package retains its input-discovery failure and does not
+  prevent compatible batch entries from succeeding. Libraries emitting both
+  `rlib` and `cdylib` remain accepted; `cdylib` examples do not satisfy the
+  library requirement.
+- Input-only Cargo snapshots and transactional artifact recipes remain generic.
+  Public signatures, fingerprint domains, and persisted layouts are unchanged;
+  repository-owned formats remain `v1`.
+
+### Testing
+
+- A real Cargo regression reproduced stale publication after changing `cdylib`
+  to `rlib`. It now checks type/name rejection, untouched shared outputs even
+  with zero-byte scheduled retention, absence of compilation outputs, and
+  correct reuse after restoring the declared library.
+- Focused checks cover library/example distinction, dual crate types, batch
+  continuation, session and prepared-reader validation, failure phases, and
+  generic transactional Cargo snapshots. Full pre-push validation remains
+  maintainer-owned.
+
 ## [0.15.9] - 2026-10-05 - Library-only Wasm acquisition
 
 ### Fixed

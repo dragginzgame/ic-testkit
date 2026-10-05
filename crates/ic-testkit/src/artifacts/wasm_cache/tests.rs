@@ -664,6 +664,7 @@ fn semantic_package_identity_uses_selected_registry_lock_checksum() {
         is_local: false,
         source: Some(source),
         semantic_fields: Vec::new(),
+        cdylib_name: None,
     };
     let write_lock = |checksum: Option<&str>| {
         let checksum = checksum.map_or_else(String::new, |checksum| {
@@ -872,6 +873,45 @@ fn cargo_profile_arguments_match_output_directories() {
         validate_spec(&spec)
             .unwrap_or_else(|error| panic!("{arguments:?} should write to {directory}: {error}"));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn wasm_output_validation_distinguishes_libraries_from_cdylib_examples() {
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+
+    let (root, spec) = fake_wasm_build_spec("wasm-library-versus-example");
+    fs::create_dir_all(root.join("fixture/examples")).unwrap();
+    fs::write(
+        root.join("fixture/examples/fixture.rs"),
+        "pub fn example() {}\n",
+    )
+    .unwrap();
+    let manifest = root.join("fixture/Cargo.toml");
+    let original = fs::read_to_string(&manifest).unwrap();
+    let example = "\n[[example]]\nname = \"fixture\"\ncrate-type = [\"cdylib\"]\n";
+    fs::write(&manifest, original.replace("cdylib", "rlib") + example).unwrap();
+    resolve_cargo_build_inputs(&spec).expect("generic snapshot with a cdylib example");
+    assert!(matches!(
+        super::build_wasm_canisters_cached(&spec),
+        Err(WasmBuildError::InvalidSpec { .. })
+    ));
+    assert!(
+        !spec
+            .target_dir
+            .join("wasm32-unknown-unknown/debug/fixture.wasm")
+            .exists()
+    );
+
+    fs::write(
+        &manifest,
+        original.replace("[\"cdylib\"]", "[\"rlib\", \"cdylib\"]") + example,
+    )
+    .unwrap();
+    let built = super::build_wasm_canisters_cached(&spec).expect("library with both crate types");
+    assert!(matches!(built, WasmBuildOutcome::Built(_)));
+    drop(built);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

@@ -852,6 +852,14 @@ before input resolution or cache work. Run other targets separately; they can
 share the library's output filename and overwrite the canister Wasm. An explicit
 `--lib` in `with_cargo_profile_args` remains accepted.
 
+Acquired packages must declare a `cdylib` library with the same name as the
+package, matching the expected `<package>.wasm` output. Acquisition validates
+this declaration from Cargo metadata before reuse, compilation, or scheduled
+shared-target maintenance. Libraries that only produce an `rlib`, renamed
+libraries, and binary-only packages return `InvalidSpec`. Input-only snapshots
+from `resolve_cargo_build_inputs` can still describe arbitrary Cargo targets
+for transactional artifact recipes.
+
 Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
 retaining exact immutable final Wasm entries:
 

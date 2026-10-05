@@ -8,6 +8,34 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.10
+
+Wasm acquisition now checks Cargo metadata for a `cdylib` library whose name
+matches the package's expected `<package>.wasm` output. Missing, non-`cdylib`,
+and renamed libraries return `WasmBuildError::InvalidSpec` before cache reuse,
+compilation, or scheduled shared-target maintenance. Previously, changing a
+library to `rlib` or renaming it could publish an old shared-target Wasm under
+the changed manifest's fingerprint after a successful Cargo build.
+
+Ensure each acquired package declares the expected library name and includes
+`cdylib` in `[lib].crate-type`. Libraries emitting both `rlib` and `cdylib` are
+accepted; a `cdylib` example cannot replace the required library. This check also
+applies to batches, immutable-source sessions, and prepared snapshot readers.
+Invalid packages retain input-discovery failures while compatible batch entries
+continue to succeed.
+
+`resolve_cargo_build_inputs` and transactional artifact recipes still support
+input snapshots for arbitrary Cargo targets. Public signatures, fingerprint
+domains, and persisted layouts are unchanged; repository-owned formats remain
+`v1`.
+
+A real Cargo regression reproduced stale publication after switching to `rlib`.
+It checks type/name rejection, preservation of shared outputs before scheduled
+retention, absence of compilation outputs, and reuse after restoring the
+library. Focused checks cover library/example distinction, dual crate types,
+batch/session/prepared validation, and generic transactional snapshots.
+Full pre-push validation remains maintainer-owned.
+
 ## 0.15.9
 
 Wasm acquisition now always builds package libraries with Cargo's `--lib` flag.

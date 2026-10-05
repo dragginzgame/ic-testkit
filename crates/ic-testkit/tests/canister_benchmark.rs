@@ -48,6 +48,62 @@ use wait_support::wait_for_path;
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
 #[test]
+fn shared_wasm_target_rejects_library_that_no_longer_produces_wasm() {
+    let root = unique_temp_dir("ic-testkit-shared-library-kind");
+    let workspace = root.join("workspace");
+    write_independent_feature_workspace(&workspace);
+    let shared = root.join("shared");
+    let spec = WasmBuildSpec::new(&workspace, &root.join("exact"), &["feature_a"], "debug")
+        .with_shared_incremental_target(&shared);
+    let first = build_wasm_canisters_cached(&spec).expect("build initial canister library");
+    let before = read_wasm(&shared, "feature_a", "debug");
+    let manifest = workspace.join("feature_a/Cargo.toml");
+    let contents = fs::read_to_string(&manifest).expect("read canister manifest");
+    for changed in [
+        contents.replace("cdylib", "rlib"),
+        contents.replace("[lib]", "[lib]\nname = \"renamed\""),
+    ] {
+        fs::write(&manifest, changed).expect("change the declared library output");
+        // Cargo input snapshots remain useful for generic transactional builds.
+        resolve_cargo_build_inputs(&spec).expect("resolve changed library inputs");
+        let scheduled = spec.clone().with_shared_incremental_target_maintenance(
+            ic_testkit::artifacts::SharedIncrementalTargetMaintenanceConfig::new(
+                SharedIncrementalTargetPrunePolicy::new().with_max_size_bytes(0),
+                Duration::ZERO,
+            ),
+        );
+        for candidate in [&spec, &scheduled] {
+            let result = build_wasm_canisters_cached(candidate);
+            assert!(
+                matches!(
+                    result,
+                    Err(ic_testkit::artifacts::WasmBuildError::InvalidSpec { .. })
+                ),
+                "a changed library output must not certify old Wasm: {result:?}",
+            );
+            assert_eq!(read_wasm(&shared, "feature_a", "debug"), before);
+        }
+    }
+    assert!(
+        !shared
+            .join("wasm32-unknown-unknown/debug/libfeature_a.rlib")
+            .exists()
+    );
+    assert!(
+        !shared
+            .join("wasm32-unknown-unknown/debug/renamed.wasm")
+            .exists()
+    );
+    fs::write(&manifest, contents).expect("restore cdylib library");
+    assert!(matches!(
+        build_wasm_canisters_cached(&spec).expect("reuse restored canister library"),
+        WasmBuildOutcome::Reused(_)
+    ));
+    drop(first);
+    fs::remove_dir_all(root).expect("remove library-kind fixture");
+}
+
+#[test]
 fn wasm_acquisition_builds_library_when_binary_has_the_same_output_name() {
     for shared_target in [false, true] {
         for observed in [false, true] {

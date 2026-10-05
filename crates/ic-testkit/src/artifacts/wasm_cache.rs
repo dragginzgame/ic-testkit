@@ -217,6 +217,7 @@ pub struct ResolvedCargoBuildInputs {
     validation_digest: InputDigest,
     inputs: Arc<[CargoBuildInput]>,
     exclusions: Arc<[PathBuf]>,
+    wasm_artifact_error: Option<String>,
     timings: WasmInputResolutionTimings,
 }
 
@@ -262,6 +263,7 @@ struct BatchResolutionGroup {
 struct ResolvedLocalInputs {
     validation_inputs: Vec<(PathBuf, PathBuf)>,
     workspace_projection: Option<InputDigest>,
+    wasm_artifact_error: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -867,6 +869,8 @@ impl WasmBuildSpec {
     /// Cargo invocation, and artifact paths.
     /// Acquisition always builds package libraries with Cargo's `--lib` flag;
     /// binary and other targets cannot replace the canister library output.
+    /// Each acquired package must declare a `cdylib` library with the same name
+    /// as the package, matching its expected `<package>.wasm` output path.
     #[must_use]
     pub fn new(
         workspace_root: &Path,
@@ -1747,6 +1751,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
                             exclusions,
                             input_digest,
                             validation_digest,
+                            inputs.wasm_artifact_error,
                         )
                     });
                     (index, result)
@@ -1773,14 +1778,15 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
             .or_else(|| resolved_inputs.iter().find(|(_, result)| result.is_ok()))
             .map(|(index, _)| *index);
         for (index, result) in resolved_inputs {
-            let (inputs, exclusions, input_digest, validation_digest) = match result {
-                Ok(resolved) => resolved,
-                Err(error) => {
-                    self.resolved[index] =
-                        Some(Err((WasmBuildFailurePhase::ContentHashing, error)));
-                    continue;
-                }
-            };
+            let (inputs, exclusions, input_digest, validation_digest, wasm_artifact_error) =
+                match result {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        self.resolved[index] =
+                            Some(Err((WasmBuildFailurePhase::ContentHashing, error)));
+                        continue;
+                    }
+                };
             let spec = self.specs[index];
             let resolved = ResolvedCargoBuildInputs {
                 fingerprint: finish_build_fingerprint(
@@ -1796,6 +1802,7 @@ impl<'a, 'session> WasmBuildBatchInputResolver<'a, 'session> {
                     .map(|(label, path)| CargoBuildInput { label, path })
                     .collect(),
                 exclusions: exclusions.into(),
+                wasm_artifact_error,
                 timings: if Some(index) == timing_index {
                     timings
                 } else {
@@ -2186,6 +2193,8 @@ impl std::fmt::Display for WasmBuildOutcome {
 ///
 /// This performs the same resolution used before and after cached Wasm builds
 /// without running `cargo build`.
+/// Input-only snapshots may describe ordinary libraries or other Cargo targets;
+/// the `cdylib` name/output constraint is checked when acquiring Wasm artifacts.
 pub fn resolve_cargo_build_inputs(
     spec: &WasmBuildSpec,
 ) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
@@ -2812,6 +2821,7 @@ fn resolve_inputs_with_progress(
     progress: &mut ProgressReporter<'_>,
 ) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
     let resolved = build_fingerprint_with_progress(spec, progress)?;
+    validate_wasm_library_outputs(&resolved, progress)?;
     progress.emit(WasmBuildProgressEvent::InputsResolved {
         fingerprint: resolved.fingerprint,
         input_digest: resolved.input_digest,
@@ -2830,12 +2840,26 @@ fn resolve_initial_inputs(
     } else {
         build_fingerprint_with_progress(spec, progress)?
     };
+    validate_wasm_library_outputs(&resolved, progress)?;
     progress.emit(WasmBuildProgressEvent::InputsResolved {
         fingerprint: resolved.fingerprint,
         input_digest: resolved.input_digest,
         elapsed: resolved.timings.total,
     });
     Ok(resolved)
+}
+
+fn validate_wasm_library_outputs(
+    resolved: &ResolvedCargoBuildInputs,
+    progress: &mut ProgressReporter<'_>,
+) -> Result<(), WasmBuildError> {
+    if let Some(message) = &resolved.wasm_artifact_error {
+        progress.begin_phase(WasmBuildFailurePhase::InputDiscovery);
+        return Err(WasmBuildError::InvalidSpec {
+            message: message.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn emit_finished_progress(outcome: &WasmBuildOutcome, progress: &mut ProgressReporter<'_>) {
@@ -3592,6 +3616,7 @@ fn build_fingerprint_with_progress(
             .map(|(label, path)| CargoBuildInput { label, path })
             .collect(),
         exclusions: exclusions.into(),
+        wasm_artifact_error: inputs.wasm_artifact_error,
         timings: WasmInputResolutionTimings {
             tool_identity,
             cargo_metadata,
@@ -3745,6 +3770,7 @@ struct MetadataPackage<'a> {
     is_local: bool,
     source: Option<&'a str>,
     semantic_fields: Vec<(&'static str, Option<String>)>,
+    cdylib_name: Option<&'a str>,
 }
 
 // Parsed once per Cargo resolution context. Each specification still selects
@@ -3832,6 +3858,17 @@ fn resolve_local_inputs(
     metadata: &ParsedCargoMetadata<'_>,
 ) -> Result<(ResolvedLocalInputs, Vec<PathBuf>), WasmBuildError> {
     let mut selected_ids = selected_package_ids(spec, metadata)?;
+    // Cargo snapshots also serve generic transactions; defer this acquisition
+    // constraint until the resolved snapshot is used to acquire Wasm artifacts.
+    let wasm_artifact_error = selected_ids.iter().find_map(|id| {
+        let package = &metadata.packages[id];
+        (package.cdylib_name != Some(package.name)).then(|| {
+            format!(
+                "Cargo package `{}` must declare a cdylib library named `{}` to produce its expected Wasm artifact",
+                package.name, package.name,
+            )
+        })
+    });
     let mut closure = BTreeSet::new();
     while let Some(id) = selected_ids.pop_front() {
         if !closure.insert(id) {
@@ -3860,6 +3897,7 @@ fn resolve_local_inputs(
         ResolvedLocalInputs {
             validation_inputs,
             workspace_projection,
+            wasm_artifact_error,
         },
         exclusions,
     ))
@@ -3884,6 +3922,19 @@ fn metadata_packages(metadata: &Value) -> Result<HashMap<&str, MetadataPackage<'
                 .iter()
                 .map(|field| (*field, value.get(*field).map(Value::to_string)))
                 .collect(),
+            cdylib_name: value
+                .get("targets")
+                .and_then(Value::as_array)
+                .and_then(|targets| {
+                    targets.iter().find(|target| {
+                        target
+                            .get("kind")
+                            .and_then(Value::as_array)
+                            .is_some_and(|kinds| kinds.iter().any(|kind| kind == "cdylib"))
+                    })
+                })
+                .and_then(|target| target.get("name"))
+                .and_then(Value::as_str),
         };
         packages.insert(package.id, package);
     }

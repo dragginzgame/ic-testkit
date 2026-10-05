@@ -26,6 +26,69 @@ fn empty_independent_batch_succeeds_without_work() {
     assert_eq!(metrics.reused(), 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn library_output_validation_survives_batch_session_and_prepared_resolution() {
+    use crate::artifacts::test_support::fake_wasm_build_spec;
+    use crate::artifacts::{WasmBuildInputSnapshot, WasmBuildSession};
+    use std::{fs, sync::Mutex};
+
+    let (root, valid) = fake_wasm_build_spec("batch-library-output-validation");
+    fs::create_dir_all(root.join("ordinary/src")).unwrap();
+    fs::write(
+        root.join("ordinary/Cargo.toml"),
+        "[package]\nname = \"ordinary\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+    )
+    .unwrap();
+    fs::write(root.join("ordinary/src/lib.rs"), "pub fn ordinary() {}\n").unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"fixture\", \"ordinary\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    let invalid = WasmBuildSpec::new(&root, &root.join("exact"), &["ordinary"], "debug")
+        .with_cargo_program(root.join("cargo.sh"));
+    let specs = [
+        LabeledWasmBuildSpec::new("ordinary", invalid.clone()),
+        LabeledWasmBuildSpec::new("canister", valid.clone()),
+    ];
+    let check = |report: super::WasmBuildBatchReport| {
+        assert_eq!(report.outcomes().count(), 1);
+        assert_eq!(report.failures().count(), 1);
+        let failure = report.failures().next().unwrap();
+        assert_eq!(failure.label(), "ordinary");
+        assert!(matches!(
+            failure.error(),
+            WasmBuildError::InvalidSpec { .. }
+        ));
+        assert_eq!(failure.phase(), WasmBuildFailurePhase::InputDiscovery);
+        assert_eq!(failure.timings().cargo_build(), None);
+    };
+    check(build_wasm_canisters_cached_batch(&specs).unwrap());
+
+    let source_lock = Mutex::new(());
+    let source_guard = source_lock.lock().unwrap();
+    let mut session = WasmBuildSession::assume_sources_immutable(&source_guard);
+    for _ in 0..2 {
+        check(
+            session
+                .build_batch(&specs, WasmBuildBatchConfig::new())
+                .unwrap(),
+        );
+    }
+    let snapshot = WasmBuildInputSnapshot::prepare_assuming_sources_immutable(
+        &source_guard,
+        &[invalid, valid],
+    )
+    .unwrap();
+    check(
+        snapshot
+            .build_batch(&specs, WasmBuildBatchConfig::new())
+            .unwrap(),
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn batch_retains_every_indexed_failure() {
     let specs = [
