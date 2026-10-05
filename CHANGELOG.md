@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
-</p>
-
 # Changelog
 
 All notable, and occasionally less notable changes to this project will be
@@ -9,6 +5,34 @@ documented in this file.
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
+
+## [0.15.8] - 2026-10-05 - Canister library target validation
+
+### Fixed
+
+- Wasm acquisition rejects binary, example, test, and bench target selectors
+  before input resolution or cache work. These selectors can build successfully
+  without refreshing the canister library; previously, shared-target acquisition
+  could publish an existing canister Wasm under a changed source fingerprint.
+- Named selectors are rejected in both separate-value and `--option=value`
+  forms, along with their plural forms. Default selection, `--lib`, and
+  `--all-targets` remain accepted. Public signatures and persisted layouts are
+  unchanged; repository-owned formats remain `v1`.
+
+### Changed
+
+- Documentation uses images from the shared-assets repository; duplicated
+  local image files are removed.
+
+### Testing
+
+- A real Cargo fixture reproduced successful binary-only acquisition with a
+  stale canister output before fixing. The regression checks early rejection,
+  preservation of the existing Wasm, absence of a binary build, and subsequent
+  library rebuild and reuse.
+- Focused validation checks cover named and plural target selectors, isolated
+  and shared acquisition, and rejection before tool execution or cache creation.
+  Full pre-push validation remains maintainer-owned.
 
 ## [0.15.7] - 2026-10-05 - Cargo profile and artifact-path agreement
 

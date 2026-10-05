@@ -845,6 +845,8 @@ fn profile_output_directory_is_confined_before_resolution_or_acquisition() {
 fn cargo_profile_arguments_match_output_directories() {
     for (directory, arguments) in [
         ("debug", vec![]),
+        ("debug", vec!["--lib"]),
+        ("debug", vec!["--all-targets"]),
         ("debug", vec!["--offline"]),
         ("debug", vec!["--profile", "dev"]),
         ("debug", vec!["--profile=test"]),
@@ -871,6 +873,46 @@ fn cargo_profile_arguments_match_output_directories() {
         validate_spec(&spec)
             .unwrap_or_else(|error| panic!("{arguments:?} should write to {directory}: {error}"));
     }
+}
+
+#[test]
+fn cargo_target_selectors_fail_before_resolution_or_acquisition() {
+    let root = unique_temp_directory("wasm-target-selectors");
+    let target = root.join("exact");
+    let shared = root.join("shared");
+    for arguments in [
+        vec!["--bin", "helper"],
+        vec!["--bin=helper"],
+        vec!["--bins"],
+        vec!["--example", "helper"],
+        vec!["--example=helper"],
+        vec!["--examples"],
+        vec!["--test", "helper"],
+        vec!["--test=helper"],
+        vec!["--tests"],
+        vec!["--bench", "helper"],
+        vec!["--bench=helper"],
+        vec!["--benches"],
+        vec!["--lib", "--bin=helper"],
+    ] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], "debug")
+            .with_cargo_profile_args(&arguments)
+            .with_cargo_program(root.join("missing-cargo"));
+        for spec in [spec.clone(), spec.with_shared_incremental_target(&shared)] {
+            for result in [
+                resolve_cargo_build_inputs(&spec).map(|_| ()),
+                super::build_wasm_canisters_cached(&spec).map(|_| ()),
+            ] {
+                assert!(
+                    matches!(result, Err(WasmBuildError::InvalidSpec { .. })),
+                    "{arguments:?} must fail before invoking tools: {result:?}",
+                );
+            }
+            assert!(!target.exists());
+            assert!(!shared.exists());
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

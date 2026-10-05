@@ -48,6 +48,58 @@ use wait_support::wait_for_path;
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
 #[test]
+fn shared_wasm_target_rejects_binary_only_build_before_publication() {
+    let root = unique_temp_dir("ic-testkit-shared-binary-only");
+    let workspace = root.join("workspace");
+    write_independent_feature_workspace(&workspace);
+    fs::create_dir_all(workspace.join("feature_a/src/bin")).expect("create binary directory");
+    fs::write(
+        workspace.join("feature_a/src/bin/helper.rs"),
+        "fn main() {}\n",
+    )
+    .expect("write unrelated binary target");
+    let target = root.join("exact-target");
+    let shared = root.join("shared-target");
+    let spec = WasmBuildSpec::new(&workspace, &target, &["feature_a"], "debug")
+        .with_shared_incremental_target(&shared)
+        .with_cargo_profile_args(["--lib"]);
+    let first = build_wasm_canisters_cached(&spec).expect("build initial canister Wasm");
+    let before = read_wasm(&shared, "feature_a", "debug");
+    fs::write(
+        workspace.join("shared/src/lib.rs"),
+        "pub fn value() -> u8 { 2 }\n",
+    )
+    .expect("change source while retaining old canister output");
+
+    let binary_only = spec.clone().with_cargo_profile_args(["--bin", "helper"]);
+    let result = build_wasm_canisters_cached(&binary_only);
+    assert!(
+        matches!(
+            result,
+            Err(ic_testkit::artifacts::WasmBuildError::InvalidSpec { .. })
+        ),
+        "a binary-only build must not certify the old canister output: {result:?}",
+    );
+    assert_eq!(read_wasm(&shared, "feature_a", "debug"), before);
+    assert!(
+        !shared
+            .join("wasm32-unknown-unknown/debug/helper.wasm")
+            .exists()
+    );
+
+    let rebuilt = build_wasm_canisters_cached(&spec).expect("build changed canister Wasm");
+    assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
+    assert_ne!(read_wasm(&shared, "feature_a", "debug"), before);
+    assert!(matches!(
+        build_wasm_canisters_cached(&spec).expect("reuse matching canister Wasm"),
+        WasmBuildOutcome::Reused(_)
+    ));
+    drop(first);
+    drop(rebuilt);
+    fs::remove_dir_all(root).expect("remove binary-only fixture");
+}
+
+#[test]
 fn shared_wasm_target_rejects_mismatched_cargo_profile_before_publication() {
     let root = unique_temp_dir("ic-testkit-shared-profile-mismatch");
     let workspace = root.join("workspace");

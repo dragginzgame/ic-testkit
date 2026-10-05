@@ -907,6 +907,8 @@ impl WasmBuildSpec {
     /// Help and build-graph flags are rejected because they exit successfully
     /// without building. The selected profile must match `profile_target_dir`;
     /// declaring an output directory does not select a Cargo profile.
+    /// Binary, example, test, and bench selectors are rejected because they can
+    /// skip the canister library artifact. `--lib` and `--all-targets` are supported.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -3406,6 +3408,7 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "Cargo target directories are owned by the build specification; use target_dir or with_shared_incremental_target instead of command overrides".to_owned(),
         });
     }
+    validate_cargo_target_selection(spec)?;
     if spec.cargo_profile_args.iter().any(|argument| {
         let option = argument
             .as_encoded_bytes()
@@ -3446,6 +3449,32 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message:
                 "scheduled shared-target maintenance requires a shared incremental Cargo target"
                     .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_cargo_target_selection(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
+    if spec.cargo_profile_args.iter().any(|argument| {
+        let option = argument
+            .as_encoded_bytes()
+            .split(|byte| *byte == b'=')
+            .next()
+            .unwrap_or_default();
+        matches!(
+            option,
+            b"--bin"
+                | b"--bins"
+                | b"--example"
+                | b"--examples"
+                | b"--test"
+                | b"--tests"
+                | b"--bench"
+                | b"--benches"
+        )
+    }) {
+        return Err(WasmBuildError::InvalidSpec {
+            message: "Cargo target selectors can skip canister library artifacts; use default target selection or --lib for Wasm acquisition".to_owned(),
         });
     }
     Ok(())
