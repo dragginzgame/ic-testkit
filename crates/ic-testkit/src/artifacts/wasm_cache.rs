@@ -4,7 +4,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, File},
     io,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
     sync::{
         Arc, RwLock,
@@ -858,7 +858,8 @@ impl WasmBuildSpec {
     /// Describe one Cargo build targeting `wasm32-unknown-unknown`.
     ///
     /// `profile_target_dir` is Cargo's output subdirectory, such as `debug`,
-    /// `release`, or the name supplied to `--profile`.
+    /// `release`, or the name supplied to `--profile`. It must be one normal
+    /// path component so artifacts remain inside their target directories.
     /// Relative `workspace_root` and exact `target_dir` paths are resolved from
     /// the caller's working directory. Shared targets are workspace-relative.
     /// Package names are sorted and deduplicated for identity, discovery,
@@ -902,7 +903,8 @@ impl WasmBuildSpec {
     /// corresponding fields and builders. `--config` overrides are also
     /// rejected: use Cargo's discovered configuration files or explicit
     /// environment overrides so resolution and execution share tracked inputs.
-    /// Help flags are rejected because they exit successfully without building.
+    /// Help and build-graph flags are rejected because they exit successfully
+    /// without building.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -3368,9 +3370,13 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "at least one Cargo package is required".to_owned(),
         });
     }
-    if spec.profile_target_dir.is_empty() {
+    let mut profile_components = Path::new(&spec.profile_target_dir).components();
+    if !matches!(
+        (profile_components.next(), profile_components.next()),
+        (Some(Component::Normal(_)), None)
+    ) {
         return Err(WasmBuildError::InvalidSpec {
-            message: "Cargo profile target directory must not be empty".to_owned(),
+            message: "Cargo profile target directory must be one normal path component".to_owned(),
         });
     }
     if spec.target.is_empty() {
@@ -3379,11 +3385,12 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
         });
     }
     if spec.cargo_profile_args.iter().any(|argument| {
-        argument == OsStr::new("--help") || matches!(short_cargo_option(argument), Some((b'h', _)))
+        matches!(argument.to_str(), Some("--help" | "--unit-graph"))
+            || matches!(short_cargo_option(argument), Some((b'h', _)))
     }) {
         return Err(WasmBuildError::InvalidSpec {
             message:
-                "Cargo help flags exit without building and cannot be used for Wasm acquisition"
+                "Cargo help and build-graph flags exit without building and cannot be used for Wasm acquisition"
                     .to_owned(),
         });
     }

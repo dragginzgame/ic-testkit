@@ -6,6 +6,34 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.5] - 2026-10-05 - Cargo build-mode and artifact-boundary validation
+
+### Fixed
+
+- Wasm acquisition rejects Cargo's `--unit-graph` mode before input resolution
+  or cache acquisition. This mode exits successfully after printing a build
+  graph without compiling; previously, shared-target acquisition could publish
+  an existing Wasm output under the graph invocation's fingerprint.
+- Help and build-graph flags share the existing early validation path. Public
+  API signatures, dependencies, and persisted layouts are unchanged;
+  repository-owned formats remain `v1`.
+- Profile output directories must be one normal path component. Absolute paths,
+  parent traversal, and nested paths are rejected before resolution or
+  acquisition, keeping expected artifacts inside their target directories.
+  Standard and custom profile names remain accepted.
+
+### Testing
+
+- Reproduced stale-output publication with real nightly Cargo before fixing.
+  The maintained regression runs without nightly and checks early rejection,
+  absence of cache publication, and preservation of existing shared outputs.
+- A failing profile-boundary regression was verified before fixing. Focused
+  checks cover invalid paths, accepted profile names, no filesystem side effects,
+  and compatible batch input resolution.
+- Focused Cargo argument checks, Rust 1.88 compilation, Clippy, documentation,
+  formatting, and diff checks pass. Full pre-push validation remains
+  maintainer-owned.
+
 ## [0.15.4] - 2026-10-05 - Simpler benchmark processing and cache pruning
 
 ### Changed

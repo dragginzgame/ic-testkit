@@ -299,29 +299,31 @@ fn cargo_target_overrides_are_rejected_before_acquisition() {
 
 #[test]
 #[cfg(unix)]
-fn cargo_help_cannot_publish_existing_shared_target_outputs() {
+fn cargo_non_building_commands_cannot_publish_existing_shared_target_outputs() {
     use super::{build_wasm_canisters_cached, expected_artifacts};
     use crate::artifacts::test_support::fake_wasm_build_spec;
 
-    let (root, spec) = fake_wasm_build_spec("cargo-help-shared-output");
-    let shared = root.join("incremental");
-    // Use real Cargo: --help succeeds without building or inspecting the target.
-    let spec = spec
-        .with_cargo_program(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
-        .with_cargo_profile_args(["--help"])
-        .with_shared_incremental_target(&shared);
-    let existing = expected_artifacts(&spec, &shared);
-    fs::create_dir_all(existing[0].parent().unwrap()).unwrap();
-    fs::write(&existing[0], b"\0asm\x01\0\0\0").unwrap();
+    // These modes must be rejected before invoking tools or certifying an old output.
+    for arguments in [vec!["--help"], vec!["--unit-graph", "-Zunstable-options"]] {
+        let (root, spec) = fake_wasm_build_spec("cargo-non-build-shared-output");
+        let shared = root.join("incremental");
+        let spec = spec
+            .with_cargo_program(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+            .with_cargo_profile_args(&arguments)
+            .with_shared_incremental_target(&shared);
+        let existing = expected_artifacts(&spec, &shared);
+        fs::create_dir_all(existing[0].parent().unwrap()).unwrap();
+        fs::write(&existing[0], b"\0asm\x01\0\0\0").unwrap();
 
-    let result = build_wasm_canisters_cached(&spec);
-    assert!(
-        matches!(result, Err(WasmBuildError::InvalidSpec { .. })),
-        "help-only Cargo invocation must not publish existing output: {result:?}",
-    );
-    assert!(!spec.target_dir.exists());
-    assert_eq!(fs::read(&existing[0]).unwrap(), b"\0asm\x01\0\0\0");
-    fs::remove_dir_all(root).unwrap();
+        let result = build_wasm_canisters_cached(&spec);
+        assert!(
+            matches!(result, Err(WasmBuildError::InvalidSpec { .. })),
+            "{arguments:?} must not publish existing output: {result:?}",
+        );
+        assert!(!spec.target_dir.exists());
+        assert_eq!(fs::read(&existing[0]).unwrap(), b"\0asm\x01\0\0\0");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]
@@ -358,6 +360,9 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
         vec!["-rh"],
         vec!["-vh"],
         vec!["-vrhFextra"],
+        vec!["--unit-graph"],
+        vec!["--unit-graph", "-Zunstable-options"],
+        vec!["-Zunstable-options", "--unit-graph"],
     ] {
         let override_spec = spec.clone().with_cargo_profile_args(&arguments);
         for result in [
@@ -783,6 +788,49 @@ fn batch_input_snapshot_reuses_compatible_toolchain_and_metadata_resolution() {
     );
     assert_ne!(first.fingerprint(), second.fingerprint());
     fs::remove_dir_all(root).expect("remove batch input snapshot fixture");
+}
+
+#[test]
+fn profile_output_directory_is_confined_before_resolution_or_acquisition() {
+    use super::build_wasm_canisters_cached;
+
+    let root = unique_temp_directory("wasm-profile-boundary");
+    let target = root.join("target");
+    let absolute = root.join("outside");
+    for profile in [
+        "",
+        ".",
+        "..",
+        "../outside",
+        "release/../../outside",
+        "release/nested",
+        absolute.to_str().unwrap(),
+    ] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], profile)
+            .with_cargo_program(root.join("missing-cargo"));
+        assert!(
+            matches!(
+                resolve_cargo_build_inputs(&spec),
+                Err(WasmBuildError::InvalidSpec { .. })
+            ),
+            "{profile:?} must fail before tool resolution",
+        );
+        assert!(
+            matches!(
+                build_wasm_canisters_cached(&spec),
+                Err(WasmBuildError::InvalidSpec { .. })
+            ),
+            "{profile:?} must fail before acquisition",
+        );
+        assert!(!target.exists());
+        assert!(!absolute.exists());
+    }
+    for profile in ["debug", "release", "fast", "release-with-debug"] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], profile);
+        validate_spec(&spec).expect("accept a normal profile output directory");
+        assert!(super::expected_artifacts(&spec, &target)[0].starts_with(&target));
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

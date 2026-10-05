@@ -8,6 +8,32 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.5
+
+This patch prevents build-graph Cargo invocations from publishing stale Wasm
+and confines profile output paths to their target directories.
+Public API signatures, dependencies, and persisted layouts are unchanged;
+repository-owned formats remain `v1`.
+
+- Cargo's `--unit-graph` flag now returns `WasmBuildError::InvalidSpec` before
+  resolution or cache acquisition. It prints a graph and exits successfully
+  without compiling; previously, an existing shared-target Wasm could be
+  published under a new fingerprint. Remove this flag from build specifications
+  and run graph inspection separately from Wasm acquisition.
+- Help and build-graph modes use the same early validation path.
+- Profile output directories must be one normal path component. Absolute paths,
+  parent traversal, and nested paths now return `WasmBuildError::InvalidSpec`
+  before resolution or acquisition. Pass Cargo's output subdirectory name, such
+  as `debug`, `release`, or a custom profile name, rather than a path.
+
+The failure was reproduced with real nightly Cargo. Maintained regressions need
+no nightly and verify early rejection, no cache publication, and unchanged shared
+outputs. A profile-boundary regression also failed before fixing; targeted checks
+cover invalid paths, accepted names, absence of filesystem side effects, and
+compatible batch resolution. Focused Cargo argument checks, Rust 1.88 compilation,
+Clippy, documentation, formatting, and diff checks pass. Full pre-push validation
+remains maintainer-owned.
+
 ## 0.15.4
 
 This patch simplifies benchmark processing and avoids unnecessary cache-pruning
