@@ -6,6 +6,8 @@ use std::{
 
 #[cfg(windows)]
 use std::ffi::OsString;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
 
 /// Resolve one executable exactly as an artifact-cache tool input.
 ///
@@ -101,7 +103,6 @@ fn canonical_executable(path: &Path) -> io::Result<PathBuf> {
 
 #[cfg(unix)]
 fn is_executable(metadata: &fs::Metadata) -> bool {
-    use std::os::unix::fs::PermissionsExt as _;
     metadata.permissions().mode() & 0o111 != 0
 }
 

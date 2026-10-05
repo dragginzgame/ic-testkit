@@ -719,12 +719,13 @@ mod tests {
     use super::canonicalize_allow_missing;
     use super::directory_logical_size;
     use crate::artifacts::test_support::unique_temp_directory;
-    use std::fs;
+    use std::{
+        fs,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn last_use_markers_preserve_timestamps_and_bounded_fallbacks() {
-        use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
         let root = unique_temp_directory("bounded-last-use-marker");
         let marker = root.join(super::LAST_USED_FILE);
         let modified = || fs::metadata(&root).unwrap().modified().unwrap();
@@ -758,8 +759,6 @@ mod tests {
 
     #[test]
     fn maintenance_markers_preserve_policy_intervals_and_read_errors() {
-        use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
         let root = unique_temp_directory("bounded-maintenance-marker");
         let marker = root.join(super::LAST_MAINTENANCE_FILE);
         let identity = super::ArtifactCachePrunePolicy::new().maintenance_identity();

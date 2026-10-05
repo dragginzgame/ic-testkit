@@ -237,7 +237,7 @@ fn compact_feature_arguments_watch_enabled_optional_dependencies() {
             snapshot
                 .inputs()
                 .iter()
-                .any(|input| input.path() == dependency),
+                .any(|input| input.path() == canonical_fixture(&dependency)),
             "{arguments:?} must include the enabled optional dependency",
         );
         assert!(
@@ -506,7 +506,7 @@ fn public_cargo_input_snapshot_detects_local_source_changes() {
         snapshot
             .inputs()
             .iter()
-            .any(|input| input.path() == package)
+            .any(|input| input.path() == canonical_fixture(&package))
     );
     assert!(
         snapshot
@@ -2204,7 +2204,9 @@ fn cargo_configuration_discovery_matches_cargo_search_and_include_rules() {
     assert!(paths.contains(&canonical_fixture(&workspace_cargo.join("included.toml"))));
     assert!(paths.contains(&canonical_fixture(&workspace_cargo.join("nested.toml"))));
     assert!(paths.contains(&canonical_fixture(&ancestor_cargo.join("config.toml"))));
-    assert!(paths.contains(&canonical_fixture(&cargo_home.join("config"))));
+    // Explicit Cargo home lookups retain the caller's path, including directory
+    // aliases, so later replacement of an alias remains observable.
+    assert!(paths.contains(&cargo_home.join("config")));
     assert!(!paths.contains(&canonical_fixture(&workspace_cargo.join("config.toml"))));
     assert_eq!(paths.len(), 5);
     fs::remove_dir_all(root).expect("remove Cargo-configuration test directory");

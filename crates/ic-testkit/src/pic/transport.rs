@@ -179,6 +179,7 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{CanisterInstallError, CanisterInstallPhase, ControllerSnapshotError};
     use super::{
         PocketIcOperationError, is_dead_instance_transport_error,
         is_dead_pocket_ic_transport_error, panic_is_dead_instance_transport,
@@ -237,7 +238,6 @@ mod tests {
 
     #[test]
     fn snapshot_and_install_wrappers_preserve_transport_causes() {
-        use super::super::{CanisterInstallError, CanisterInstallPhase, ControllerSnapshotError};
         let canister_id = candid::Principal::anonymous();
         for message in [REFUSED, "unrelated application panic"] {
             let expected = message == REFUSED;

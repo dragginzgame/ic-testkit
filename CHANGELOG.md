@@ -6,6 +6,51 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.16.1] - 2026-10-05 - Managed startup and native macOS fixes
+
+### Fixed
+
+- Managed startup handles Darwin's `EPERM` result when its process group contains
+  only the exited, unreaped leader. A bounded native membership query verifies
+  that exact state before accepting cleanup; permission failures for groups
+  containing another process still propagate. Child status and captured output
+  remain available through `ServerExited`.
+- Startup port and output readers open nonblocking on Unix and validate the
+  opened file as regular. A replaced FIFO cannot stall readiness or diagnostic
+  capture: port reads return a structured `Io` failure with `InvalidData`, while
+  unavailable output streams remain empty.
+- Cargo input tests compare canonical package paths while retaining the caller's
+  explicit Cargo-home configuration lookup path. This accommodates macOS's
+  `/var` directory alias without discarding replacement detection.
+- Filesystem fixtures use valid non-ASCII native names on macOS. Linux retains
+  invalid-UTF-8 filename coverage, and Unix byte-conversion coverage runs without
+  requiring the filesystem to accept those names.
+
+### Changed
+
+- Completed function-local import cleanup in startup, transport, digest, cache
+  filesystem, executable-tool resolution and benchmark tests, preserving
+  platform-specific conditions.
+- Public APIs and repository-owned `v1` formats are unchanged. Native macOS
+  confirmation requires CI for this revision; Linux checks do not qualify it.
+
+### Testing
+
+- A FIFO regression covers the port file and both captured-output streams,
+  including whether a reader needs a writer to unblock it. The regression failed
+  before the regular-file reader fix and passes with it.
+- Managed process tests verify leader reaping and descendant termination on
+  Linux and macOS for handle drop, readiness timeout, natural exit and background
+  reaping. Process-state inspection uses each host's native `ps`, avoiding
+  Linux-only `/proc` assertions. Descendants outlive the assertion deadline so
+  natural timeout cannot masquerade as successful cleanup.
+- Focused Linux startup, digest, cache filesystem, transaction, tool, transport,
+  Cargo-input and benchmark-schema tests pass. The three affected Cargo-input
+  tests also pass with a symlinked temporary directory.
+- Clippy checks for the library and its test targets, and public API documentation
+  builds, pass with warnings denied. Formatting and the pinned shared-tooling
+  snapshot checks pass.
+
 ## [0.16.0] - 2026-10-05 - Wasm library contracts and shared engineering baseline
 
 ### Changed

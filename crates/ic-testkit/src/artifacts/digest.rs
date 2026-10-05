@@ -10,6 +10,11 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+#[cfg(unix)]
+use std::os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt as _;
+
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
@@ -198,8 +203,6 @@ pub(super) fn destination_matches_bytes(destination: &Path, expected: &[u8]) -> 
 fn destination_is_reusable(destination: &Path, expected_bytes: u64) -> bool {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::MetadataExt as _;
-
         let Ok(metadata) = fs::symlink_metadata(destination) else {
             return false;
         };
@@ -515,13 +518,11 @@ fn write_file_atomic<T>(
 
 #[cfg(unix)]
 pub(super) fn os_bytes(value: &OsStr) -> Cow<'_, [u8]> {
-    use std::os::unix::ffi::OsStrExt as _;
     Cow::Borrowed(value.as_bytes())
 }
 
 #[cfg(windows)]
 pub(super) fn os_bytes(value: &OsStr) -> Cow<'_, [u8]> {
-    use std::os::windows::ffi::OsStrExt as _;
     Cow::Owned(value.encode_wide().flat_map(u16::to_le_bytes).collect())
 }
 
@@ -537,7 +538,18 @@ mod tests {
         digest_labeled_paths_composable, write_atomic,
     };
     use crate::artifacts::test_support::unique_temp_directory;
-    use std::{fs, path::PathBuf};
+    use std::{
+        fs,
+        io::{self, Write as _},
+        path::PathBuf,
+    };
+
+    #[cfg(unix)]
+    use super::{InputHasher, digest_labeled_paths};
+    #[cfg(unix)]
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
+    #[cfg(windows)]
+    use std::{ffi::OsString, os::windows::ffi::OsStringExt as _};
 
     #[test]
     fn digest_text_preserves_lowercase_hex_and_leading_zeroes() {
@@ -553,80 +565,92 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn labeled_path_digests_preserve_native_names_and_sorted_order() {
-        use super::{InputHasher, digest_labeled_paths};
-        use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
-
-        let root = unique_temp_directory("native-path-digest");
-        let tree = root.join("tree");
-        fs::create_dir_all(tree.join("nested")).unwrap();
-        fs::write(tree.join(OsStr::from_bytes(b"\xff")), b"native").unwrap();
-        fs::write(tree.join("nested/z"), b"last").unwrap();
-        fs::write(tree.join("a"), b"first").unwrap();
-        fs::write(root.join("top"), b"top").unwrap();
-        let mut paths = [
-            (PathBuf::from("tree"), tree),
-            (PathBuf::from("aaa"), root.join("top")),
+        let names: &[&[u8]] = &[
+            b"\xce\xbb",
+            #[cfg(target_os = "linux")]
+            b"\xff",
         ];
+        for &name in names {
+            let root = unique_temp_directory("native-path-digest");
+            let tree = root.join("tree");
+            fs::create_dir_all(tree.join("nested")).unwrap();
+            fs::write(tree.join(OsStr::from_bytes(name)), b"native").unwrap();
+            fs::write(tree.join("nested/z"), b"last").unwrap();
+            fs::write(tree.join("a"), b"first").unwrap();
+            fs::write(root.join("top"), b"top").unwrap();
+            let mut paths = [
+                (PathBuf::from("tree"), tree),
+                (PathBuf::from("aaa"), root.join("top")),
+            ];
 
-        let tree_fields = |hasher: &mut InputHasher| {
-            hasher.field("directory", b"tree");
-            hasher.field("file-path", b"tree/a");
-            hasher.field("file-content", b"first");
-            hasher.field("directory", b"tree/nested");
-            hasher.field("file-path", b"tree/nested/z");
-            hasher.field("file-content", b"last");
-            hasher.field("file-path", b"tree/\xff");
-            hasher.field("file-content", b"native");
-        };
-        let mut expected = InputHasher::new("native-path-test-v1");
-        expected.field("file-path", b"aaa");
-        expected.field("file-content", b"top");
-        tree_fields(&mut expected);
-        let expected = expected.finish();
+            let tree_fields = |hasher: &mut InputHasher| {
+                hasher.field("directory", b"tree");
+                hasher.field("file-path", b"tree/a");
+                hasher.field("file-content", b"first");
+                hasher.field("directory", b"tree/nested");
+                hasher.field("file-path", b"tree/nested/z");
+                hasher.field("file-content", b"last");
+                hasher.field("file-path", &[b"tree/".as_slice(), name].concat());
+                hasher.field("file-content", b"native");
+            };
+            let mut expected = InputHasher::new("native-path-test-v1");
+            expected.field("file-path", b"aaa");
+            expected.field("file-content", b"top");
+            tree_fields(&mut expected);
+            let expected = expected.finish();
 
-        let mut top = InputHasher::new("native-path-test-v1/root-v1");
-        top.field("file-path", b"aaa");
-        top.field("file-content", b"top");
-        let mut tree = InputHasher::new("native-path-test-v1/root-v1");
-        tree_fields(&mut tree);
-        let mut composable = InputHasher::new("native-path-test-v1/composable-v1");
-        composable.field("input-label", b"aaa");
-        composable.field("input-digest", top.finish().as_bytes());
-        composable.field("input-label", b"tree");
-        composable.field("input-digest", tree.finish().as_bytes());
-        let composable = composable.finish();
+            let mut top = InputHasher::new("native-path-test-v1/root-v1");
+            top.field("file-path", b"aaa");
+            top.field("file-content", b"top");
+            let mut tree = InputHasher::new("native-path-test-v1/root-v1");
+            tree_fields(&mut tree);
+            let mut composable = InputHasher::new("native-path-test-v1/composable-v1");
+            composable.field("input-label", b"aaa");
+            composable.field("input-digest", top.finish().as_bytes());
+            composable.field("input-label", b"tree");
+            composable.field("input-digest", tree.finish().as_bytes());
+            let composable = composable.finish();
 
-        for _ in 0..2 {
-            assert_eq!(
-                digest_labeled_paths(
-                    "native-path-test-v1",
-                    paths.iter().map(|(label, path)| (label, path)),
-                    &[],
-                )
-                .unwrap(),
-                expected,
-            );
-            assert_eq!(
-                digest_labeled_paths_composable(
-                    "native-path-test-v1",
-                    paths
-                        .iter()
-                        .map(|(label, path)| (label.as_path(), path.as_path())),
-                    &[],
-                    &mut LabeledPathDigestCache::default(),
-                )
-                .unwrap(),
-                composable,
-            );
-            paths.reverse();
+            for _ in 0..2 {
+                assert_eq!(
+                    digest_labeled_paths(
+                        "native-path-test-v1",
+                        paths.iter().map(|(label, path)| (label, path)),
+                        &[],
+                    )
+                    .unwrap(),
+                    expected,
+                );
+                assert_eq!(
+                    digest_labeled_paths_composable(
+                        "native-path-test-v1",
+                        paths
+                            .iter()
+                            .map(|(label, path)| (label.as_path(), path.as_path())),
+                        &[],
+                        &mut LabeledPathDigestCache::default(),
+                    )
+                    .unwrap(),
+                    composable,
+                );
+                paths.reverse();
+            }
+            fs::remove_dir_all(root).unwrap();
         }
-        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn native_bytes_preserve_non_utf8_without_a_filesystem_roundtrip() {
+        assert_eq!(
+            super::os_bytes(OsStr::from_bytes(b"name\xff")).as_ref(),
+            b"name\xff"
+        );
     }
 
     #[test]
     #[cfg(windows)]
     fn native_names_preserve_utf16_little_endian_encoding() {
-        use std::{ffi::OsString, os::windows::ffi::OsStringExt as _};
         let value = OsString::from_wide(&[0x0061, 0xd800, 0x0100]);
         assert_eq!(super::os_bytes(&value).as_ref(), &[0x61, 0, 0, 0xd8, 0, 1]);
     }
@@ -733,8 +757,6 @@ mod tests {
 
     #[test]
     fn atomic_publication_failures_remove_only_the_owned_temporary_file() {
-        use std::io::{self, Write as _};
-
         let root = unique_temp_directory("atomic-publication-failure");
         let destination = root.join("output");
         fs::write(&destination, b"original output").unwrap();

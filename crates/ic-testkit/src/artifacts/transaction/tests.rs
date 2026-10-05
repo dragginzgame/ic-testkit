@@ -934,6 +934,7 @@ fn undeclared_output_names_reject_staging_and_cached_entries() {
         .with_output("output", &root.join("output"));
     let names = [
         "extra",
+        "0000.artifactλ",
         "0001.artifact",
         "+0000.artifact",
         "00000.artifact",
@@ -942,7 +943,7 @@ fn undeclared_output_names_reject_staging_and_cached_entries() {
     ]
     .into_iter()
     .map(OsString::from);
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     let names = names.chain([OsString::from_vec(b"0000.artifact\xff".to_vec())]);
     for name in names {
         let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());

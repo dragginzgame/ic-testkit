@@ -12,6 +12,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(unix)]
+use std::os::unix::{
+    fs::{DirBuilderExt as _, OpenOptionsExt as _},
+    process::CommandExt as _,
+};
+
 use pocket_ic::{PocketIc, PocketIcBuilder};
 
 use super::transport;
@@ -50,7 +56,8 @@ pub struct PocketIcManagedServer {
 /// Bounded lossy UTF-8 output captured from a managed PocketIC server.
 ///
 /// Each stream retains at most the first 16 KiB. A textual suffix reports the
-/// number of omitted bytes when truncation occurred.
+/// number of omitted bytes when truncation occurred. Unreadable streams and
+/// paths replaced with non-regular files are omitted.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PocketIcManagedServerOutput {
     stdout: String,
@@ -212,7 +219,9 @@ impl PocketIcStartupConfig {
     /// bounded by [`Self::timeout`]. No hard TTL is passed by default; an
     /// explicit [`Self::with_server_hard_ttl`] value is passed to the child.
     /// Readiness requires a nonzero decimal port followed by a newline in a
-    /// UTF-8 file of at most 64 bytes; oversized files fail with bounded diagnostics.
+    /// regular UTF-8 file of at most 64 bytes; oversized files fail with bounded
+    /// diagnostics. Non-regular port files fail with [`PocketIcStartupError::Io`]
+    /// and [`io::ErrorKind::InvalidData`] without waiting for a FIFO writer.
     /// The returned handle terminates the child on drop; use its URL with
     /// [`Self::connect`] to construct bounded instances.
     pub fn start_managed_server(self) -> Result<PocketIcManagedServer, PocketIcStartupError> {
@@ -451,7 +460,6 @@ impl ManagedServer {
             .stderr(Stdio::from(stderr));
         #[cfg(unix)]
         {
-            use std::os::unix::process::CommandExt as _;
             command.process_group(0);
         }
         let child = command
@@ -522,7 +530,7 @@ impl ManagedServer {
     fn read_port(&self) -> Result<PortFileState, PocketIcStartupError> {
         let port_path = &self.files.port;
         let mut contents = String::new();
-        match File::open(port_path).and_then(|file| {
+        match open_regular_startup_file(port_path).and_then(|file| {
             file.take((SERVER_PORT_FILE_LIMIT + 1) as u64)
                 .read_to_string(&mut contents)
         }) {
@@ -660,6 +668,23 @@ fn terminate_process_group(child: &Child) -> io::Result<()> {
         if error.raw_os_error() == Some(libc::ESRCH) {
             return Ok(());
         }
+        #[cfg(target_os = "macos")]
+        if error.raw_os_error() == Some(libc::EPERM) && wait_for_child_exit(child, true)? {
+            // Darwin's group signal path excludes zombies and can report EPERM
+            // for the unreaped leader alone. Verify that exact state; permission
+            // failures for a group with any other member still propagate.
+            // Two slots distinguish the sole leader from a larger/truncated group.
+            let mut members: [libc::pid_t; 2] = [0; 2];
+            let size = libc::c_int::try_from(std::mem::size_of_val(&members))
+                .expect("two process IDs fit in a libproc buffer size");
+            // SAFETY: members is writable for size bytes. The owned unreaped
+            // leader reserves this group ID across the query and later wait.
+            let count =
+                unsafe { libc::proc_listpgrppids(group, members.as_mut_ptr().cast(), size) };
+            if count == 1 && members[0] == group {
+                return Ok(());
+            }
+        }
         if error.kind() != io::ErrorKind::Interrupted {
             return Err(error);
         }
@@ -733,7 +758,6 @@ impl StartupFiles {
             let mut directory = fs::DirBuilder::new();
             #[cfg(unix)]
             {
-                use std::os::unix::fs::DirBuilderExt as _;
                 directory.mode(0o700);
             }
             match directory.create(&base) {
@@ -779,7 +803,7 @@ fn startup_file_error(
 }
 
 fn read_bounded_lossy(path: &Path) -> String {
-    let Ok(file) = File::open(path) else {
+    let Ok(file) = open_regular_startup_file(path) else {
         return String::new();
     };
     let length = file.metadata().map_or(0, |metadata| metadata.len());
@@ -797,6 +821,23 @@ fn read_bounded_lossy(path: &Path) -> String {
         let _ = write!(output, "\n<truncated {omitted} bytes>");
     }
     output
+}
+
+fn open_regular_startup_file(path: &Path) -> io::Result<File> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    // Bound opening a replaced FIFO as well as reading file contents. Inspect
+    // the opened file, rather than a path that can change before open completes.
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "PocketIC startup reader requires a regular file",
+        ));
+    }
+    Ok(file)
 }
 
 impl std::fmt::Display for PocketIcStartupError {
@@ -901,11 +942,41 @@ mod tests {
 
     #[cfg(unix)]
     use crate::test_executable::write_executable_script;
+    #[cfg(unix)]
+    use std::{
+        io::Write as _,
+        os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
+        process::Command,
+        sync::mpsc,
+    };
+
+    #[cfg(unix)]
+    fn process_state(pid: u32) -> Option<char> {
+        // Both supported Unix hosts provide this ps field. A zombie has stopped
+        // running but may remain visible until its parent reaps it.
+        let output = Command::new("/bin/ps")
+            .args(["-p", &pid.to_string(), "-o", "stat="])
+            .output()
+            .expect("inspect managed test process state");
+        assert!(
+            output.status.success()
+                || (output.status.code() == Some(1)
+                    && output.stdout.is_empty()
+                    && output.stderr.is_empty()),
+            "process-state inspection failed: {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr),
+        );
+        String::from_utf8(output.stdout)
+            .expect("process state is ASCII")
+            .trim()
+            .chars()
+            .next()
+    }
 
     #[cfg(unix)]
     #[test]
     fn reading_large_sparse_server_output_is_bounded() {
-        use std::io::Write as _;
         let (files, _, _) = StartupFiles::create().expect("allocate startup files");
         let mut file = fs::File::create(&files.stdout).expect("create sparse log");
         file.write_all(b"server started\n").expect("write prefix");
@@ -918,6 +989,74 @@ mod tests {
             size - super::SERVER_OUTPUT_LIMIT as u64
         )));
         assert!(output.len() < super::SERVER_OUTPUT_LIMIT + 100);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_readers_reject_fifos_without_waiting_for_a_writer() {
+        let (files, stdout, stderr) = StartupFiles::create().expect("allocate startup files");
+        drop((stdout, stderr));
+        fs::remove_file(&files.stdout).unwrap();
+        fs::remove_file(&files.stderr).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .args([&files.port, &files.stdout, &files.stderr])
+                .status()
+                .expect("create FIFO startup files")
+                .success()
+        );
+        let server = super::ManagedServer {
+            child: None,
+            binary: PathBuf::from("unused-server"),
+            files,
+            started: Instant::now(),
+        };
+        for path in [
+            &server.files.port,
+            &server.files.stdout,
+            &server.files.stderr,
+        ] {
+            // A delayed writer bounds a blocked read and records whether the
+            // reader needed it. Completion cancels the writer; with no reader,
+            // a nonblocking open fails and is retried if the reader starts late.
+            let fifo = path.clone();
+            let (stop_writer, stopped) = mpsc::channel();
+            let writer = std::thread::spawn(move || {
+                loop {
+                    match stopped.recv_timeout(Duration::from_millis(200)) {
+                        Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    }
+                    if fs::OpenOptions::new()
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&fifo)
+                        .is_ok()
+                    {
+                        return true;
+                    }
+                }
+            });
+            let result = if path == &server.files.port {
+                Some(server.read_port())
+            } else {
+                assert_eq!(super::read_bounded_lossy(path), "");
+                None
+            };
+            let _ = stop_writer.send(());
+            assert!(
+                !writer.join().expect("join delayed FIFO writer"),
+                "startup reader waited for a writer: {}",
+                path.display(),
+            );
+            if let Some(result) = result {
+                assert!(matches!(
+                    result,
+                    Err(PocketIcStartupError::Io { source, .. })
+                        if source.kind() == std::io::ErrorKind::InvalidData
+                ));
+            }
+        }
     }
 
     #[test]
@@ -1023,8 +1162,6 @@ mod tests {
         assert!(files.stderr.is_file());
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt as _;
-
             let mode = fs::metadata(&directory)
                 .expect("inspect private startup directory")
                 .permissions()
@@ -1058,7 +1195,10 @@ mod tests {
             ..
         }) = result
         else {
-            panic!("an exited managed server must return a structured exit error");
+            panic!(
+                "an exited managed server must return a structured exit error; got {:?}",
+                result.err(),
+            );
         };
         assert_eq!(server_binary, script.path());
         assert_eq!(status.code(), Some(23));
@@ -1084,10 +1224,7 @@ mod tests {
         let pid = lines.next().unwrap().parse::<u32>().unwrap();
         let port_path = PathBuf::from(lines.next().unwrap());
         assert!(!port_path.parent().unwrap().exists());
-        #[cfg(target_os = "linux")]
-        assert!(!PathBuf::from(format!("/proc/{pid}")).exists());
-        #[cfg(not(target_os = "linux"))]
-        let _ = pid;
+        assert_eq!(process_state(pid), None, "failed server must be reaped");
     }
 
     #[cfg(unix)]
@@ -1137,16 +1274,13 @@ mod tests {
             format!("managed server ready: {}", server.process_id())
         );
         assert_eq!(server.output().stderr(), "");
-        #[cfg(target_os = "linux")]
-        let child_process = PathBuf::from(format!("/proc/{}", server.process_id()));
-        #[cfg(target_os = "linux")]
-        assert!(child_process.exists());
+        let pid = server.process_id();
+        assert!(process_state(pid).is_some_and(|state| state != 'Z'));
         drop(server);
-        #[cfg(target_os = "linux")]
-        assert!(!child_process.exists());
+        assert_eq!(process_state(pid), None, "owned server must be reaped");
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     #[test]
     fn managed_server_cleans_descendants_on_drop_timeout_exit_and_background_reap() {
         for mode in ["drop", "timeout", "exit", "background"] {
@@ -1162,7 +1296,7 @@ mod tests {
             };
             let script = TestServerScript::new(
                 mode,
-                &format!("#!/bin/sh\nsleep 3 &\nprintf '%s' \"$!\"\n{publish}{finish}"),
+                &format!("#!/bin/sh\nsleep 30 &\nprintf '%s' \"$!\"\n{publish}{finish}"),
             );
             let result = PocketIcStartupConfig::spawn(script.path(), Duration::from_millis(300))
                 .start_managed_server();
@@ -1201,14 +1335,8 @@ mod tests {
             let pid = output
                 .parse::<u32>()
                 .expect("server published its descendant PID");
-            let state_file = PathBuf::from(format!("/proc/{pid}/stat"));
-            let deadline = Instant::now() + Duration::from_secs(1);
-            loop {
-                match fs::read_to_string(&state_file) {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
-                    Ok(state) if state.rsplit_once(") ").unwrap().1.starts_with('Z') => break,
-                    _ => {}
-                }
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while process_state(pid).is_some_and(|state| state != 'Z') {
                 assert!(
                     Instant::now() < deadline,
                     "{mode} left its descendant running"

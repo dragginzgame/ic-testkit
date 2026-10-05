@@ -19,11 +19,21 @@ three native hosts. Native macOS qualification remains pending until matching
 workflow runs pass. Do not publish or push
 just to qualify tooling.
 
+At `v0.16.0` (`5f4a850b6dc3bb5652418f85dd18ed97f63046ce`), the native
+Linux gate and PocketIC concurrency checks passed, but macOS startup and
+filesystem fixtures failed. See the [ARM64 startup failure](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725235/job/111788601271),
+[Intel startup failure](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725777/job/111788604408),
+and [ARM64 full-gate results](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725235/job/111788601582).
+The 0.16.1 fixes require fresh native CI confirmation. These earlier runs are
+failure evidence, not macOS qualification for the changed revision.
+
 ## Prerequisites
 
 - Bash 3.2 or newer. On macOS, use `/bin/bash` to exercise the system shell.
 - GNU Make (the macOS system Make is sufficient), Git, Perl, and standard Unix
-  tools including `awk`, `cat`, `find`, `grep`, `mktemp`, `sed`, `sort` and `tar`.
+  tools including `awk`, `cat`, `find`, `grep`, `mkfifo`, `mktemp`, `ps`, `sed`,
+  `sort` and `tar`. Managed process tests use `/bin/ps -p <pid> -o stat=` on both
+  native Unix hosts to distinguish running processes, zombies and reaped children.
 - A SHA-256 implementation: Linux `sha256sum` or macOS `shasum -a 256`.
 - Rustup with the repository's pinned toolchain, `rustfmt`, `clippy`, and the
   `wasm32-unknown-unknown` target. Published MSRV checks use Rust 1.88.
@@ -59,6 +69,9 @@ For an already prepared offline host, use `cargo fetch --locked --offline`;
 missing cache data is a preparation failure, not permission to select upgrades.
 The focused startup tests use synthetic servers; the caller-provided live
 server test is ignored unless explicitly selected as described in the README.
+Process ownership checks cover leader reaping and descendant termination on
+handle drop, readiness timeout, natural exit and background reaping on both
+Linux and macOS.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:

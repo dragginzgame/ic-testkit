@@ -8,6 +8,41 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.16.1
+
+Native macOS CI for 0.16.0 exposed startup exit-reporting and test-fixture
+portability failures. Managed startup now recognizes Darwin's group-signal
+`EPERM` result only after verifying that the sole member is its exited,
+unreaped child. Groups containing another process still propagate permission
+failures; the child exit status and captured output retain their existing
+`ServerExited` contract.
+
+Port and output readers validate regular files after opening nonblocking on
+Unix. Replaced FIFOs cannot stall startup or captured-output reads. Non-regular
+port files return `PocketIcStartupError::Io` with `InvalidData`; unavailable
+output streams are omitted.
+
+Cargo fixtures account for canonical package paths and preserve explicit
+Cargo-home lookup paths across directory aliases. Non-ASCII filesystem fixtures
+work on macOS while Linux retains invalid-UTF-8 filename coverage; Unix native
+byte conversion is exercised without requiring filesystem support. Remaining
+function-local imports move to their owning module's import group with their
+platform conditions retained.
+
+No consumer migration is required. Public APIs, dependency selections and
+repository-owned `v1` formats are unchanged. Native macOS qualification for
+this revision remains pending CI.
+
+Managed ownership tests now exercise leader reaping and descendant termination
+on both Linux and macOS, including drop, timeout, exit and background reaping.
+Native process-state checks distinguish running processes from zombies and
+reaped children; descendants cannot naturally expire within the cleanup deadline.
+
+Focused Linux tests pass, including the affected Cargo-input fixtures under a
+symlinked temporary directory. Library/test-target Clippy checks and public API
+documentation builds pass with warnings denied; formatting and shared-tooling
+snapshot verification pass.
+
 ## 0.16.0
 
 This is a minor release because the acquired-package contract excludes outputs

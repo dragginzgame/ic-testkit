@@ -10,6 +10,7 @@ use ic_testkit::benchmark::{
     parse_benchmark_events_from_captured_output, parse_benchmark_events_from_source,
     read_benchmark_run_metadata, write_benchmark_report_dir,
 };
+use serde_json::{Value, json};
 use std::{fmt::Write as _, fs};
 use support::unique_temp_directory as unique_temp_dir;
 
@@ -1007,8 +1008,6 @@ fn metadata_reader_round_trips_written_metadata() {
 
 #[test]
 fn metadata_reader_enforces_object_schema() {
-    use serde_json::{Value, json};
-
     let root = unique_temp_dir("ic-testkit-metadata-schema");
     write_metadata(&root, "timestamp", "run", Some("benchmark"));
     let path = root.join("metadata.json");

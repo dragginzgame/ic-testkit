@@ -337,9 +337,13 @@ reuse the PID after the child exits and is reaped. A copied PID retains no
 ownership.
 Managed startup creates a unique private temporary directory but leaves the
 actual `--port-file` path absent for PocketIC to create. Output is retained as
-bounded lossy UTF-8 for the handle lifetime. Keep the handle alive until every
-instance connected through its URL has been dropped. The handle is
-process-local: a CI topology spanning several Cargo or test-runner processes
+bounded lossy UTF-8 for the handle lifetime. Startup readers require regular
+files and use nonblocking opens on Unix so a replaced FIFO cannot stall startup
+or output capture. Non-regular port files return `PocketIcStartupError::Io` with
+`InvalidData`; unreadable output streams are omitted.
+Keep the handle alive until every instance connected through its URL has been
+dropped. The handle is process-local: a CI topology spanning several Cargo or
+test-runner processes
 should keep one runner-owned external server and give each process its URL via
 bounded `PocketIcStartupConfig::connect` instead.
 
