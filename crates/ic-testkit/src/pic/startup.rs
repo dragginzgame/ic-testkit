@@ -1289,7 +1289,11 @@ mod tests {
             } else {
                 ""
             };
-            let finish = if matches!(mode, "exit" | "background") {
+            let finish = if mode == "background" {
+                // The caller removes the port only after handing off to the
+                // reaper, so slow native hosts cannot miss this ready server.
+                "while [ -e \"$2\" ]; do sleep 0.01; done\nexit 23\n"
+            } else if mode == "exit" {
                 "sleep 0.03\nexit 23\n"
             } else {
                 "exec sleep 30\n"
@@ -1304,7 +1308,9 @@ mod tests {
                 Ok(server) => {
                     let output = server.output().stdout().to_owned();
                     if mode == "background" {
+                        let port = server.server.files.port.clone();
                         server.server.reap_in_background();
+                        fs::remove_file(port).expect("release the background server after handoff");
                     } else {
                         drop(server);
                     }

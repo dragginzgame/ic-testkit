@@ -24,8 +24,17 @@ Linux gate and PocketIC concurrency checks passed, but macOS startup and
 filesystem fixtures failed. See the [ARM64 startup failure](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725235/job/111788601271),
 [Intel startup failure](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725777/job/111788604408),
 and [ARM64 full-gate results](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725235/job/111788601582).
-The 0.16.1 fixes require fresh native CI confirmation. These earlier runs are
-failure evidence, not macOS qualification for the changed revision.
+These earlier runs are failure evidence, not macOS qualification for a changed
+revision.
+
+At `v0.16.1` (`e06093f9a3169383ba66ab734d36718975d7ff0c`), the
+[native workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37323482068)
+passed the complete gates, MSRV and concurrency checks on all three hosts,
+and portable-host checks on Linux and ARM64 macOS. The
+[Intel portable-host job](https://github.com/dragginzgame/ic-testkit/actions/runs/37323482068/job/111808187977)
+failed because the background-reaper fixture exited before startup observed
+its published port. The current test uses an explicit release after reaper
+handoff; it and the new benchmark driver require fresh native CI confirmation.
 
 ## Prerequisites
 
@@ -42,6 +51,10 @@ failure evidence, not macOS qualification for the changed revision.
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
   `POCKET_IC_BIN` to its exact local path to avoid upstream automatic download.
   Managed startup takes an explicit caller-provided binary and owns its child.
+- The opt-in fixture-reuse benchmark requires the repository's probe canister,
+  prepared Cargo caches, and `uname`. Its Linux RSS sampler reads native `/proc`;
+  macOS uses the system `/bin/ps` process-leader RSS in KiB. The benchmark records
+  its sampling source and does not download a server or dependency upgrades.
 - Publishing additionally requires Cargo registry credentials. Mocked release
   and publish guard checks do not use credentials or perform remote writes.
 
@@ -61,6 +74,7 @@ inputs. The shell guards use fixtures and mock external commands:
 /bin/bash scripts/ci/check-github-actions-pinned.sh
 cargo fetch --locked
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency
 ```
 
@@ -72,6 +86,10 @@ server test is ignored unless explicitly selected as described in the README.
 Process ownership checks cover leader reaping and descendant termination on
 handle drop, readiness timeout, natural exit and background reaping on both
 Linux and macOS.
+The driver checks include native process observations, report bounds and
+subprocess completion on interruption. They use synthetic workers rather than
+running the live benchmark. Passing Linux checks does not qualify macOS; the
+new driver still needs native ARM64 and Intel CI confirmation.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:

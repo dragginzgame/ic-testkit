@@ -4,24 +4,31 @@
 
 # Fixture reuse benchmark
 
-This opt-in Linux benchmark measures PocketIC 16 fixture construction and warm
-baseline reuse. It does not run in `cargo test` or the ordinary CI gate, download
-a server, or change dependency versions.
+This opt-in Rust benchmark measures PocketIC 16 fixture construction and warm
+baseline reuse on native Linux and macOS hosts. The live workload does not run
+in ordinary tests or CI, download a server, or change dependency versions.
+Focused driver and native sampler checks run in CI on Linux, Apple Silicon and
+Intel macOS. Native qualification for the new driver requires those runs to pass.
 
 ```sh
-python3 scripts/dev/benchmark-fixture-reuse.py \
+cargo fetch --locked
+cargo run -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver -- \
   --server /absolute/path/to/pocket-ic \
   --iterations 100 --workers 2 --repeats 3 \
   --state-bytes 1048576 --output /tmp/fixture-reuse.json
 ```
 
-The driver builds the example in release mode and the existing `perf_probe`
-canister in dev mode, using locked dependencies. The Rust Wasm target must
+The driver builds the workload example in release mode and the existing `perf_probe`
+canister in dev mode, using locked dependencies and prepared offline caches.
+The first command explicitly prepares those caches. For an already prepared
+offline host, use `cargo fetch --locked --offline`. The Rust Wasm target must
 already be installed. Use `--profile dev` for a quick development smoke check;
 compare performance only within the same host and canister profiles. The result
 records the binary version/path, Git revision and dirty state, Rust compiler,
 Wasm SHA-256, workload, raw samples, and mean/p50/p95 summaries. Run from a quiet
-host and retain the JSON when comparing changes.
+host and retain the JSON when comparing changes. The driver is repository-local
+and requires the probe canister checkout. The Python driver and its separate
+test script are retired; use this Cargo entry point directly.
 
 ## Workload and correctness
 
@@ -44,7 +51,10 @@ process and one explicit managed PocketIC server. Instances share that server
 within the run. Repeat order rotates over all selected cases.
 
 On Ctrl-C, the driver waits for the current worker to finish so its owned server
-can be torn down normally; it does not start another mode.
+can be torn down normally; it does not start another mode or write a partial
+report. Sampling errors also wait for worker cleanup before returning failure.
+Each worker report is bounded to 16 MiB and checked against the requested
+mode, capacity, task count, worker count, state size and phase measurements.
 
 This workload changes only snapshot-contained state. Cycle policy is
 `PreserveCurrent`; time and cycle balances are not asserted to rewind. Reset and
@@ -69,6 +79,12 @@ controlled workload, not a throughput prediction for a downstream suite.
   Cargo and the driver. Threads are not counted twice; shared pages across
   processes can be counted more than once. This is not unique physical memory
   or a guarantee of capturing short peaks.
+- Linux retains `/proc/<pid>/stat` RSS pages multiplied by native page size.
+  macOS uses `/bin/ps -A -o pid=,ppid=,rss=`, with RSS in 1024-byte units as
+  documented in [Apple's ps manual](https://github.com/apple-oss-distributions/adv_cmds/blob/main/ps/ps.1).
+  `provenance.rss_sampler` identifies the native measurement source. Changing
+  host or sampler requires a new performance baseline; the historical Linux
+  measurements below remain evidence for their original inputs.
 
 Lower wall time at capacity two can require more memory. Report both, and avoid
 adding timing thresholds to correctness tests. The existing 100-restore test
@@ -115,7 +131,7 @@ allows it; they do not establish an optimal capacity for other workloads.
 Repeat this comparison without rebuilding fresh fixtures for every task:
 
 ```sh
-python3 scripts/dev/benchmark-fixture-reuse.py \
+cargo run -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver -- \
   --server /absolute/path/to/pocket-ic \
   --modes pooled --capacities 1 2 --iterations 100 --workers 2 --repeats 3 \
   --state-bytes 1048576 --output /tmp/fixture-reuse-long.json
@@ -130,7 +146,7 @@ case (`fresh`, `pooled-1`, `pooled-2`, and so on).
 Compare any positive pool capacities with one shared worker budget:
 
 ```sh
-python3 scripts/dev/benchmark-fixture-reuse.py \
+cargo run -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver -- \
   --server /absolute/path/to/pocket-ic \
   --modes pooled --capacities 1 2 4 8 \
   --iterations 100 --workers 8 --repeats 3 \
@@ -170,7 +186,7 @@ query would only move the measured cost and add another call.
 Focused sampler checks:
 
 ```sh
-python3 scripts/dev/test-fixture-reuse-benchmark.py
+cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 ```
 
 ## Released 0.14.7 baseline

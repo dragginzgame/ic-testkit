@@ -97,6 +97,8 @@ jobs:
         run: cargo fetch --locked
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+      - name: Check native fixture benchmark driver and sampler
+        run: cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 
   pocket-ic-concurrency:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')

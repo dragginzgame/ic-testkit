@@ -8,6 +8,42 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.17.0
+
+The repository-local fixture benchmark driver is now a Rust example supporting
+native Linux and macOS. Replace the retired Python benchmark command with
+`cargo run -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver --`
+followed by the existing benchmark options. Focused checks use `cargo test`
+with the same example. This operator CLI hard cut is recorded as a minor release
+before 1.0; library APIs and the existing workload are unchanged.
+
+Linux retains native `/proc` RSS-page sampling, and macOS uses process-leader RSS
+from `/bin/ps`. The report stays `ic-testkit-fixture-benchmark-v1` and records its
+sampling source in `provenance.rss_sampler`. Host and sampler changes require
+new performance baselines; previous Linux measurements retain their original
+qualification. Fresh/pooled cases, capacity sweeps, rotated repeats, raw samples
+and summaries retain their measurement boundaries.
+
+Builds use locked, prepared offline dependencies. Provenance is captured before
+measurement. Interrupted runs and sampler errors wait for worker-owned server
+cleanup; caller-owned artifacts are preserved. Worker JSON is bounded and
+validated before summaries. CI adds focused native checks on Linux and both
+macOS architectures; macOS qualification remains pending those runs.
+
+Dependency selections, cache formats, MSRV and workspace package versions are
+unchanged. The [benchmark guide](https://github.com/dragginzgame/ic-testkit/blob/main/docs/fixture-reuse-benchmark.md)
+describes the current Cargo commands and prerequisites.
+
+Focused Linux driver checks pass. A synthetic CLI smoke verifies build flags,
+case rotation and report emission without executing a live PocketIC workload.
+Clippy and workflow validation pass; new native macOS and live performance
+evidence remains pending.
+
+The managed-server background-reaper test now waits for an explicit caller
+release after handoff instead of exiting within a 30 ms readiness window.
+The 0.16.1 Intel macOS portable-host job exposed this test timing race;
+focused Linux startup checks pass and production startup behavior is unchanged.
+
 ## 0.16.1
 
 Native macOS CI for 0.16.0 exposed startup exit-reporting and test-fixture

@@ -1,4 +1,4 @@
-//! Worker for scripts/dev/benchmark-fixture-reuse.py; not part of ordinary tests.
+//! Workload for the fixture_reuse_benchmark_driver example; not an ordinary test.
 //! See docs/fixture-reuse-benchmark.md for the workload and measurement boundaries.
 
 use std::{

@@ -6,6 +6,50 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.17.0] - 2026-10-05 - Native Rust fixture benchmark tooling
+
+### Changed
+
+- Replaced the repository's documented Python benchmark and test commands with
+  `cargo run/test -p ic-testkit --example fixture_reuse_benchmark_driver`.
+  This is a hard cut to the operator entry point, recorded as a pre-1.0 minor
+  release. The existing Rust workload and its measurement boundaries remain.
+- The driver supports native Linux and macOS. Linux retains `/proc` RSS-page
+  sampling; macOS reads process-leader RSS from native `ps` in KiB. Reports retain
+  `ic-testkit-fixture-benchmark-v1` and add `provenance.rss_sampler` to identify
+  the measurement source. Historical Linux measurements keep their original
+  host and sampler qualification.
+- Preserved fresh/pooled selection, capacity sweeps, rotated repeats, exact
+  caller-supplied PocketIC 16 binaries, raw measurements and mean/p50/p95 summaries.
+  Workload builds use the selected lockfile and prepared offline caches. Source,
+  compiler, host and Wasm provenance is captured before cases run.
+- Ctrl-C and sampler errors wait for the current worker to complete owned server
+  cleanup. The driver starts no subsequent case after interruption. It preserves
+  Cargo artifacts and caller-owned reports; only its private scratch is removed.
+- Worker JSON is bounded to 16 MiB and checked against requested workload facts,
+  task identities, phase coverage and finite nonnegative timings before summaries.
+- Added focused native driver/sampler checks to the existing Linux, ARM64 macOS
+  and Intel macOS CI matrix. Full live benchmark measurements remain opt-in;
+  native macOS qualification for this revision remains pending CI.
+- Library APIs, dependency selections, cache formats, MSRV and workspace package
+  versions are unchanged. Python is no longer required for the benchmark workflow.
+
+### Testing
+
+- Replaced the background-reaper test's 30 ms readiness window with an explicit
+  caller release after reaper handoff. The 0.16.1 Intel macOS portable-host job
+  exposed that timing race; focused Linux startup checks pass and production
+  startup behavior is unchanged.
+- Focused Rust driver checks pass on Linux, including argument rejection,
+  process-tree boundaries, native observations, report limits, malformed JSON,
+  preserved raw samples/statistics, and worker completion on interruption.
+- A Linux CLI smoke with substituted Cargo, server and workload programs verified
+  locked offline build arguments, paths containing spaces, rotated cases, report
+  emission and invalid-input exit status. This is functional fixture evidence,
+  not live PocketIC performance data.
+- Example/test-target Clippy checks and workflow validation pass. Native macOS
+  execution of the new driver and live benchmark performance remain unmeasured.
+
 ## [0.16.1] - 2026-10-05 - Managed startup and native macOS fixes
 
 ### Fixed
