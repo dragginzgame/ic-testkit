@@ -34,6 +34,21 @@ branch and tag with `--no-follow-tags --atomic`; package publication remains a
 separate `make publish` action. Native qualification is documented in the
 [host matrix](https://github.com/dragginzgame/ic-testkit/blob/main/docs/hosts.md).
 
+Developer setup uses `make install-format-tools install-hooks` to prepare pinned
+`cargo-sort` 2.1.4 and activate the reviewed repository-local pre-commit hook.
+Both `make fmt` and `make fmt-check` sort all workspace Cargo manifests before
+Rust formatting; the latter checks without mutation. The hook formats an export
+of the exact index, refreshes only selected files, rejects partial staging, and
+preserves unrelated working edits. CI and release gates independently check
+formatting. Prepared release manifests are sorted before their exact payload is
+saved and staged, without changing dependency selections.
+
+Preflight or validation-only failures restart through the normal release target
+after correcting inputs; both gates run afresh against the current source.
+Each attempt retains its identity and full validation log, and a failed retry
+cannot reuse an earlier successful receipt. Once preparation may begin, the
+retained exact plan owns recovery via `make release-resume VERSION=X.Y.Z`.
+
 ## 0.17.3
 
 The root and packaged README installation examples now select

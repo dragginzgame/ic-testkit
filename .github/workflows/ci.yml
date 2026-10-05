@@ -64,6 +64,8 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Prepare the pinned manifest formatter
+        run: make install-format-tools
       - name: Run complete CI gate
         run: make ci
 
@@ -86,6 +88,11 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Prepare the pinned manifest formatter
+        run: make install-format-tools
+      - name: Select system Bash on macOS
+        if: runner.os == 'macOS'
+        run: echo /bin >> "$GITHUB_PATH"
       - name: Prepare selected dependencies
         run: cargo fetch --locked
       - name: Verify portable operator tooling with the system Bash
@@ -96,6 +103,8 @@ jobs:
           /bin/bash scripts/ci/check-installation-version.sh
           /bin/bash scripts/ci/check-publish-guards.sh
           /bin/bash scripts/ci/check-github-actions-pinned.sh
+          /bin/bash scripts/ci/check-git-hooks.sh
+          make fmt-check
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
       - name: Check synthetic PocketIC transport and teardown

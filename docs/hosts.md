@@ -72,6 +72,8 @@ documentation guard.
 - A SHA-256 implementation: Linux `sha256sum` or macOS `shasum -a 256`.
 - Rustup with the repository's pinned toolchain, `rustfmt`, `clippy`, and the
   `wasm32-unknown-unknown` target. Published MSRV checks use Rust 1.88.
+- `cargo-sort` 2.1.4, prepared explicitly with `make install-format-tools`, for
+  hooks, manifest sorting, and independent CI/release formatting checks.
 - `cloc` and `jq` for `make cloc`. These are optional for builds; install them
   using the host's package manager before requesting a LOC report.
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
@@ -86,7 +88,10 @@ documentation guard.
 
 All three maintainer release commands run the same complete `make release-check`
 gate offline, including MSRV, with the caller's temporary-directory environment.
-They retain full validation logs and prepared metadata in the Git directory.
+They retain each validation attempt's identity and full log in a unique Git
+directory location, including failed attempts, and retain prepared metadata.
+Preflight or validation-only failures rerun through the normal target with
+fresh checks. Once preparation may begin, recovery uses the exact saved plan.
 Release validation preserves Cargo artifacts and does not remove temporary files underneath
 upstream background servers. Managed server handles own their process cleanup.
 
@@ -97,6 +102,9 @@ inputs. The shell guards use fixtures and mock external commands:
 
 ```bash
 /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
+make format-tools-check
+make fmt-check
+/bin/bash scripts/ci/check-git-hooks.sh
 cargo fetch --locked
 /bin/bash scripts/ci/check-release-guards.sh
 /bin/bash scripts/ci/check-installation-version.sh
@@ -138,11 +146,20 @@ declared native hosts. For LOC tooling after installing its prerequisites:
 The maintainer owns full pre-push, release and publication gates. Agents run
 only checks affected by their authorized changes.
 
-The adopted release runner comes from reviewed Shared Tooling revision
-`b8537873ac124ad17b30e32aa23e9006a3e6ec21`. Release guard checks exercise its
+The adopted release runner and formatting hook come from reviewed Shared Tooling
+revision `c0206f1943238e21bd00fbe01658e6a0864c24fa`. Release guard checks exercise its
 patch/minor/major ordering, explicit staging, atomic branch/tag push and exact
-resume with command stubs. Consumer metadata checks use isolated workspaces,
-real offline Cargo metadata, and substituted Git/validation commands, so they
-do not commit, tag, push or publish. Native Linux/ARM64/Intel qualification of
-this adoption remains pending matching portable-host CI; the earlier release
-passes do not qualify this new workflow.
+resume, including fresh validation-only retries, with command stubs. Consumer
+metadata checks use isolated workspaces, real offline Cargo metadata and manifest
+sorting, and substituted Git/validation commands, so they do not commit, tag,
+push or publish. Consumer hook checks use isolated indexes with this repository's
+actual Make targets and tracked lockfile, real Cargo/rustfmt, and a substituted
+failing target for rejection. The shared upstream fixture's no-lockfile assertion
+does not apply to this Rust consumer; its failed local trace is retained at
+`/tmp/ic-testkit-git-hooks-c0206f1-trace.log`. The consumer-owned check covers
+automatic refresh, unrelated-edit and lockfile preservation, partial staging,
+formatter failure, idempotence and installer refusal of another hook path.
+Local hook activation uses `make install-hooks`; verify the effective
+`git config --get core.hooksPath` separately from `make fmt-check`.
+Native Linux/ARM64/Intel qualification of this adoption remains pending matching
+portable-host CI; the earlier release passes do not qualify this new workflow.

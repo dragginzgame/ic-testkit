@@ -133,7 +133,8 @@ for view in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
   cmp notes-before "$view"
   [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]]
   [[ ! -e ".release-state/$RELEASE_VERSION.metadata/ready" ]]
-  [[ -s ".release-state/$RELEASE_VERSION.validation.log" ]]
+  logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
+  [[ -s "${logs[0]}" ]]
 done
 
 new_fixture failed-gate
@@ -141,8 +142,33 @@ export ADAPTER_GATE_STATUS=23
 expect_failure verify
 unset ADAPTER_GATE_STATUS
 [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]]
-[[ -s ".release-state/$RELEASE_VERSION.validation.log" ]]
+logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
+[[ -s "${logs[0]}" ]]
 expect_failure prepare
+
+new_fixture validation-retry
+adapter preflight
+adapter verify
+cp ".release-state/$RELEASE_VERSION.validation" passed-receipt
+logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
+first_log="${logs[0]}"
+cp "$first_log" passed-log
+export ADAPTER_GATE_STATUS=23
+expect_failure verify
+unset ADAPTER_GATE_STATUS
+[[ ! -e ".release-state/$RELEASE_VERSION.validation" ]]
+expect_failure prepare
+cmp passed-log "$first_log"
+receipts=(.release-state/"$RELEASE_VERSION".validation.*/prior-validation)
+cmp passed-receipt "${receipts[0]}"
+logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
+[[ "${#logs[@]}" -eq 2 ]]
+for log in "${logs[@]}"; do [[ -s "$log" ]]; done
+adapter preflight
+adapter verify
+adapter prepare
+[[ "$(wc -l < gate-trace)" -eq 3 ]]
+cmp passed-log "$first_log"
 
 new_fixture changed-input
 adapter verify

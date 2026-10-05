@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   [package migration notes](crates/ic-testkit/CHANGELOG.md#0180). Use
   `make release-minor` for this batch.
 
+### Changed
+
+- Formatting now sorts all workspace Cargo manifests with pinned `cargo-sort`
+  before formatting Rust. Developer setup activates a reviewed pre-commit hook
+  that refreshes only selected files and preserves unrelated edits. CI and
+  release gates enforce the same formatting independently.
+- Failed preflight or validation can restart through the normal release target
+  with fresh checks and retained attempt logs. Once preparation may begin,
+  retries still require the exact saved release plan.
+
 ## [0.17.3] - 2026-10-05 - Installation documentation consistency
 
 ### Fixed

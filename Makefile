@@ -1,6 +1,7 @@
 .PHONY: \
 	actions-check build-test-canisters check check-wasm ci clean \
-	clippy docs-check ensure-clean fmt fmt-check help installation-check msrv package publish \
+	clippy docs-check ensure-clean fmt fmt-check format-tools-check git-hooks-check help \
+	install-format-tools install-hooks installation-check msrv package publish \
 	publish-dry-run publish-guards-check release-check \
 	release-guards-check release-minor release-patch release-major release-resume \
 	release-version release-preflight release-verify release-prepare-version \
@@ -20,7 +21,7 @@ $(error Select exactly one release target)
 endif
 
 CI_TARGETS := shared-tooling-check installation-check actions-check publish-guards-check \
-	release-guards-check fmt-check check check-wasm clippy docs-check test \
+	release-guards-check git-hooks-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
 RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
@@ -28,8 +29,11 @@ RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 help:
 	@echo "Available commands:"
 	@echo ""
-	@echo "  fmt             Format Rust code"
-	@echo "  fmt-check       Check Rust formatting"
+	@echo "  install-format-tools Install the pinned manifest formatter during setup"
+	@echo "  install-hooks   Enable the repository-local formatting hook"
+	@echo "  fmt             Sort Cargo manifests and format all workspace Rust code"
+	@echo "  fmt-check       Check manifest sorting and Rust formatting without mutation"
+	@echo "  git-hooks-check Check hook preservation and installation in isolated fixtures"
 	@echo "  check           Check the host crate with locked dependencies"
 	@echo "  check-wasm      Check the crate for wasm32"
 	@echo "  clippy          Run Clippy with warnings denied"
@@ -71,11 +75,26 @@ build-test-canisters:
 test-canisters:
 	cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
 
-fmt:
-	cargo fmt
+format-tools-check:
+	bash scripts/ci/check-format-tools.sh
 
-fmt-check:
-	cargo fmt --check
+install-format-tools:
+	@. "$(REPO_ROOT)ci/tool-versions.env"; \
+		cargo install cargo-sort --version "$$IC_TESTKIT_CARGO_SORT_VERSION" --locked
+
+install-hooks: format-tools-check
+	bash scripts/dev/install-git-hooks.sh
+
+fmt: format-tools-check
+	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo sort --workspace
+	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo fmt --all
+
+fmt-check: format-tools-check
+	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo sort --workspace --check
+	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo fmt --all -- --check
+
+git-hooks-check: format-tools-check
+	bash scripts/ci/check-git-hooks.sh
 
 check:
 	cargo check -p ic-testkit --locked

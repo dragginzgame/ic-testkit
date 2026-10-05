@@ -70,6 +70,8 @@ check_prepared() {
   done
   [[ "$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] \
     || fail "prepared version mismatch"
+  bash "$script_dir/../ci/check-format-tools.sh"
+  cargo sort --workspace --check
   cargo metadata --locked --offline --format-version 1 --no-deps >/dev/null
   bash "$script_dir/../ci/check-installation-version.sh"
 }
@@ -90,18 +92,24 @@ case "$mode" in
   preflight)
     [[ "$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_PREVIOUS" ]] \
       || fail "source version differs from saved selection"
+    bash "$script_dir/../ci/check-format-tools.sh"
     cargo fetch --locked --offline
     ;;
   verify)
-    mkdir -p "$state"
+    attempt="$(mktemp -d "$state/$RELEASE_VERSION.validation.XXXXXX")"
+    # A new attempt cannot reuse an earlier pass if its own gate fails. Retain
+    # that receipt and each attempt's exact identity/log rather than overwrite it.
+    [[ ! -L "$validation" ]] || fail "symlinked validation evidence"
+    if [[ -e "$validation" ]]; then mv "$validation" "$attempt/prior-validation"; fi
     before="$(input_digest)"
+    validation_identity "$before" > "$attempt/identity"
     # Complete gate, identical for patch/minor/major. Retain its full log even
     # on failure, without cleaning Cargo artifacts or resolving dependencies.
     CARGO_NET_OFFLINE=true make --no-print-directory release-check 2>&1 \
-      | tee "$state/$RELEASE_VERSION.validation.log"
+      | tee "$attempt/validation.log"
     [[ "$before" == "$(input_digest)" ]] || fail "inputs changed during validation"
     temporary="$(mktemp "$validation.tmp.XXXXXX")"
-    validation_identity "$before" > "$temporary"
+    cp "$attempt/identity" "$temporary"
     mv "$temporary" "$validation"
     ;;
   prepare)
@@ -127,6 +135,14 @@ case "$mode" in
           $n = s/(\[workspace\.package\]\n(?:(?!\n\[).)*?\nversion = ")\Q$ENV{RELEASE_PREVIOUS}\E("\n)/$1$ENV{RELEASE_VERSION}$2/s;
           die "workspace version not found\n" unless $n == 1;
         ' "$prepared/new/Cargo.toml"
+      bash "$script_dir/../ci/check-format-tools.sh"
+      cargo sort --workspace "$prepared/new"
+      # Member manifests are already sorted inputs, outside the release file
+      # set. Formatting must not introduce an unstaged change to those inputs.
+      for member in crates/ic-testkit canisters/test/perf_probe; do
+        cmp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml" \
+          || fail "member manifest requires formatting before release: $member"
+      done
       cargo metadata --manifest-path "$prepared/new/Cargo.toml" --offline --format-version 1 >/dev/null
       # Ignore only generated versions of this workspace's two local packages;
       # all registry records and dependency edges must remain byte-identical.

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ic-testkit", "canisters/test/perf_probe"]
+members = ["canisters/test/perf_probe", "crates/ic-testkit"]
 resolver = "2"
 
 [workspace.package]
@@ -17,13 +17,13 @@ readme = "README.md"
 
 [workspace.dependencies]
 candid = { version = "0.10", default-features = false }
+fs2 = "0.4"
 ic-cdk = "0.20.2"
 ic-testkit = { path = "crates/ic-testkit" }
 libc = "0.2"
 pocket-ic = "16.0"
 serde = { version = "1.0", default-features = false }
 serde_json = "1.0"
-fs2 = "0.4"
 sha2 = "0.10"
 tokio = { version = "1", features = ["net", "rt", "time"] }
 toml = "1"

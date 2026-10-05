@@ -1479,6 +1479,23 @@ also require the `wasm32-unknown-unknown` target:
 rustup target add wasm32-unknown-unknown
 ```
 
+Developer setup and updates prepare the pinned `cargo-sort` executable and
+activate the reviewed repository-local formatting hook:
+
+```bash
+make install-format-tools install-hooks
+```
+
+The selected version is recorded in `ci/tool-versions.env` and used by CI too.
+Setup installs tools explicitly; formatting never installs or fetches them.
+`make fmt` sorts every workspace Cargo manifest before formatting all Rust code.
+`make fmt-check` performs the matching checks without changing files.
+The pre-commit hook formats an isolated export of the selected index, refreshes
+only selected files, and rejects partial staging. Unrelated working edits stay
+untouched. `make git-hooks-check` exercises preservation and installation with
+isolated fixtures; hook activation is separate from CI formatting evidence.
+See the [hook rules](rules/git-hooks.md) and [host prerequisites](docs/hosts.md).
+
 The maintainer runs the complete pre-push and release gates:
 
 ```bash
@@ -1561,15 +1578,20 @@ succeeds:
 make publish
 ```
 
-Release validation runs offline and retains its full log. It preserves Cargo
+Release validation runs offline and retains each attempt's identity and full log
+in a unique directory under `.git/release-state/`. A failed attempt cannot reuse
+an earlier successful validation receipt. It preserves Cargo
 artifacts and does not remove temporary files around upstream background servers.
 Managed PocketIC handles retain
 ownership of their child processes. See
 [temporary-directory ownership](POCKET-IC.md#temporary-directory-ownership)
 and the [host matrix](docs/hosts.md) for portable checks and qualification gaps.
 The release file set is Cargo.toml, Cargo.lock, both changelogs and both READMEs.
-An interruption retains its exact plan and prepared old/new metadata under the
-repository's Git directory. Inspect the recorded state and resume that release:
+If preflight or validation fails, correct the inputs and rerun the normal release
+target; both gates run afresh against the current source. Once preparation may
+begin, an interruption retains its exact plan and prepared old/new metadata
+under the repository's Git directory. Inspect the recorded state and resume that
+release:
 
 ```bash
 make release-resume VERSION=X.Y.Z
