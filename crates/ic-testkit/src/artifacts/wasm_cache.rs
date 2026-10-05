@@ -859,6 +859,8 @@ impl WasmBuildSpec {
     /// `profile_target_dir` is Cargo's output subdirectory, such as `debug`,
     /// `release`, or the name supplied to `--profile`. It must be one normal
     /// path component so artifacts remain inside their target directories.
+    /// It must match the profile selected by `with_cargo_profile_args`: the
+    /// default, `dev`, and `test` use `debug`; `release` and `bench` use `release`.
     /// Relative `workspace_root` and exact `target_dir` paths are resolved from
     /// the caller's working directory. Shared targets are workspace-relative.
     /// Package names are sorted and deduplicated for identity, discovery,
@@ -903,7 +905,8 @@ impl WasmBuildSpec {
     /// rejected: use Cargo's discovered configuration files or explicit
     /// environment overrides so resolution and execution share tracked inputs.
     /// Help and build-graph flags are rejected because they exit successfully
-    /// without building.
+    /// without building. The selected profile must match `profile_target_dir`;
+    /// declaring an output directory does not select a Cargo profile.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -3424,6 +3427,7 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message: "Cargo workspace, package, target, and configuration inputs are owned by the build specification; use workspace_root, packages, with_target, and discovered Cargo configuration files or with_extra_env instead of command overrides".to_owned(),
         });
     }
+    validate_cargo_profile(spec)?;
     if matches!(
         &spec.cache_mode,
         WasmBuildCacheMode::SharedIncremental { target_dir } if target_dir.as_os_str().is_empty()
@@ -3442,6 +3446,61 @@ fn validate_spec(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
             message:
                 "scheduled shared-target maintenance requires a shared incremental Cargo target"
                     .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_cargo_profile(spec: &WasmBuildSpec) -> Result<(), WasmBuildError> {
+    let mut selected = None;
+    let mut arguments = spec.cargo_profile_args.iter();
+    while let Some(argument) = arguments.next() {
+        let profile = if argument == "--profile" {
+            Some(
+                arguments
+                    .next()
+                    .and_then(|value| value.to_str())
+                    .ok_or_else(|| WasmBuildError::InvalidSpec {
+                        message: "Cargo --profile requires a UTF-8 profile name".to_owned(),
+                    })?,
+            )
+        } else if let Some(profile) = argument.to_str().and_then(|s| s.strip_prefix("--profile=")) {
+            Some(profile)
+        } else {
+            let bytes = argument.as_encoded_bytes();
+            // Only switches before the first value-taking short option count:
+            // -qrFextra selects release, while -Fextra and -j4 do not.
+            let short_option = short_cargo_option(argument);
+            let flags_end = short_option.map_or(bytes.len(), |(_, index)| index);
+            let release = argument == "--release"
+                || (bytes.starts_with(b"-")
+                    && !bytes.starts_with(b"--")
+                    && bytes[..flags_end].contains(&b'r'));
+            if matches!(short_option, Some((_, index)) if index + 1 == bytes.len()) {
+                arguments.next();
+            }
+            release.then_some("release")
+        };
+        if let Some(profile) = profile
+            && (profile.is_empty() || selected.replace(profile).is_some())
+        {
+            return Err(WasmBuildError::InvalidSpec {
+                message: "select one nonempty Cargo profile".to_owned(),
+            });
+        }
+    }
+    let profile = selected.unwrap_or("dev");
+    let expected = match profile {
+        "dev" | "test" => "debug",
+        "bench" => "release",
+        custom => custom,
+    };
+    if spec.profile_target_dir != expected {
+        return Err(WasmBuildError::InvalidSpec {
+            message: format!(
+                "Cargo profile {profile:?} writes to {expected:?}, but profile target directory is {:?}; select matching Cargo profile arguments and output directory",
+                spec.profile_target_dir,
+            ),
         });
     }
     Ok(())

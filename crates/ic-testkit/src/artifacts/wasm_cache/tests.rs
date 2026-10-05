@@ -222,7 +222,10 @@ fn compact_feature_arguments_watch_enabled_optional_dependencies() {
     ] {
         fs::write(&dependency_source, "pub fn optional_dep() -> u8 { 1 }\n")
             .expect("reset optional dependency source");
-        let spec = base.clone().with_cargo_profile_args(&arguments);
+        let mut spec = base.clone().with_cargo_profile_args(&arguments);
+        if arguments == ["-rF=extra"] {
+            spec.profile_target_dir = "release".to_owned();
+        }
         validate_spec(&spec).expect("accept feature selection without input overrides");
         let snapshot = resolve_cargo_build_inputs(&spec).expect("resolve enabled dependency");
         assert!(
@@ -384,7 +387,10 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
         vec!["--features=highlights"],
         vec!["--features", "highlights"],
     ] {
-        let feature_spec = spec.clone().with_cargo_profile_args(&arguments);
+        let mut feature_spec = spec.clone().with_cargo_profile_args(&arguments);
+        if arguments == ["-rF=highlights"] {
+            feature_spec.profile_target_dir = "release".to_owned();
+        }
         super::validate_spec(&feature_spec).expect("accept feature values containing 'h'");
     }
     assert!(!root.join("exact").exists());
@@ -622,7 +628,8 @@ fn semantic_workspace_projection_tracks_selected_dependencies_and_profiles() {
         .expect("write selected projection workspace manifest");
     };
     write_workspace("selected_dep_a", "s");
-    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "release");
+    let spec = WasmBuildSpec::new(&root, &root.join("target"), &["canister"], "release")
+        .with_cargo_profile_args(["--release"]);
 
     let initial = resolve_cargo_build_inputs(&spec).expect("resolve selected projection");
     write_workspace("selected_dep_b", "s");
@@ -826,9 +833,87 @@ fn profile_output_directory_is_confined_before_resolution_or_acquisition() {
         assert!(!absolute.exists());
     }
     for profile in ["debug", "release", "fast", "release-with-debug"] {
-        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], profile);
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], profile)
+            .with_cargo_profile_args(["--profile", profile]);
         validate_spec(&spec).expect("accept a normal profile output directory");
         assert!(super::expected_artifacts(&spec, &target)[0].starts_with(&target));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cargo_profile_arguments_match_output_directories() {
+    for (directory, arguments) in [
+        ("debug", vec![]),
+        ("debug", vec!["--offline"]),
+        ("debug", vec!["--profile", "dev"]),
+        ("debug", vec!["--profile=test"]),
+        ("debug", vec!["--profile=debug"]),
+        ("release", vec!["--release"]),
+        ("release", vec!["-r"]),
+        ("release", vec!["-qr"]),
+        ("release", vec!["-vrFextra"]),
+        ("release", vec!["-rF=extra"]),
+        ("release", vec!["-rF", "extra"]),
+        ("release", vec!["--profile=release"]),
+        ("release", vec!["--profile", "bench"]),
+        ("fast", vec!["--profile", "fast"]),
+        ("fast", vec!["--profile=fast"]),
+        ("debug", vec!["-Fextra"]),
+        ("debug", vec!["-qF=extra"]),
+        ("debug", vec!["-F", "extra"]),
+        ("debug", vec!["--features=release"]),
+        ("debug", vec!["--features", "release"]),
+        ("debug", vec!["-j4"]),
+    ] {
+        let spec = WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], directory)
+            .with_cargo_profile_args(&arguments);
+        validate_spec(&spec)
+            .unwrap_or_else(|error| panic!("{arguments:?} should write to {directory}: {error}"));
+    }
+}
+
+#[test]
+fn mismatched_cargo_profiles_fail_before_resolution_or_acquisition() {
+    let root = unique_temp_directory("wasm-profile-mismatch");
+    let target = root.join("exact");
+    let shared = root.join("shared");
+    for (directory, arguments) in [
+        ("release", vec![]),
+        ("release", vec!["--offline"]),
+        ("release", vec!["--profile", "dev"]),
+        ("release", vec!["--profile=test"]),
+        ("debug", vec!["--release"]),
+        ("debug", vec!["-qrFextra"]),
+        ("debug", vec!["--profile=bench"]),
+        ("debug", vec!["--profile", "fast"]),
+        ("fast", vec!["--release"]),
+        ("debug", vec!["--profile"]),
+        ("debug", vec!["--profile="]),
+        ("release", vec!["--release", "--profile=release"]),
+        ("debug", vec!["--profile=dev", "--profile=test"]),
+    ] {
+        let spec = WasmBuildSpec::new(&root, &target, &["fixture"], directory)
+            .with_cargo_profile_args(&arguments)
+            .with_cargo_program(root.join("missing-cargo"));
+        for spec in [spec.clone(), spec.with_shared_incremental_target(&shared)] {
+            assert!(
+                matches!(
+                    resolve_cargo_build_inputs(&spec),
+                    Err(WasmBuildError::InvalidSpec { .. })
+                ),
+                "{directory}: {arguments:?} must fail before resolution",
+            );
+            assert!(
+                matches!(
+                    super::build_wasm_canisters_cached(&spec),
+                    Err(WasmBuildError::InvalidSpec { .. })
+                ),
+                "{directory}: {arguments:?} must fail before acquisition",
+            );
+            assert!(!target.exists());
+            assert!(!shared.exists());
+        }
     }
     fs::remove_dir_all(root).unwrap();
 }

@@ -8,6 +8,27 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.7
+
+This patch prevents stale shared-target Wasm publication when the declared
+profile output directory disagrees with the Cargo build arguments. Mismatches
+now return `WasmBuildError::InvalidSpec` before input resolution or cache work.
+
+Pair `WasmBuildSpec::new(..., "release")` with
+`.with_cargo_profile_args(["--release"])` or an equivalent explicit release
+selection. Default builds, `--profile dev`, and `--profile test` use `debug`;
+`--release`, `-r`, and `--profile bench` use `release`; custom profiles use their
+own name. Both `--profile name` and `--profile=name` are supported, including
+release flags clustered before feature arguments. Empty or conflicting profile
+selections are rejected.
+
+Previously, Cargo could compile changed sources in debug mode while acquisition
+certified an old release output with the new fingerprint. A real Cargo
+regression covers rejection and subsequent correct release rebuild and reuse.
+Focused checks cover profile matching and rejection without filesystem side
+effects. Public signatures, dependencies, and persisted layouts are unchanged;
+repository-owned formats remain `v1`.
+
 ## 0.15.6
 
 This patch simplifies install retries, artifact paths, and batch bookkeeping.

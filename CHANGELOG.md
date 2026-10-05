@@ -6,6 +6,31 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.7] - 2026-10-05 - Cargo profile and artifact-path agreement
+
+### Fixed
+
+- Wasm acquisition rejects a profile output directory that disagrees with the
+  selected Cargo profile before input resolution or cache work. Previously, a
+  shared-target build could compile changed sources in debug mode and publish
+  an existing release Wasm under the new fingerprint.
+- Validation recognizes default debug builds, `--release`, short `-r` flag
+  clusters, both `--profile` forms, built-in profile directory mappings, and
+  custom profiles. Feature values are not interpreted as profile switches.
+  Empty or conflicting profile selections return `InvalidSpec`.
+- Callers must pair the output directory with matching Cargo arguments;
+  declaring `release` alone does not select release mode. Public signatures,
+  dependencies, and persisted layouts are unchanged; formats remain `v1`.
+
+### Testing
+
+- Reproduced stale release-output publication with real Cargo before fixing.
+  The regression checks early rejection, preservation of shared release output,
+  absence of a debug build, and subsequent release rebuild and reuse.
+- Focused validation checks cover profile aliases, custom profiles, compact
+  flags, feature values, and rejection before tool execution or cache creation.
+  Full pre-push validation remains maintainer-owned.
+
 ## [0.15.6] - 2026-10-05 - Simpler retries and artifact bookkeeping
 
 ### Changed
