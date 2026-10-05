@@ -1,7 +1,5 @@
 #![cfg(unix)]
 
-#[path = "support/executable.rs"]
-mod executable_support;
 mod support;
 
 use ic_testkit::artifacts::{
@@ -24,13 +22,14 @@ fn fixture() -> PathBuf {
     fs::create_dir_all(root.join("workspace/src")).unwrap();
     fs::write(
         root.join("workspace/Cargo.toml"),
-        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n",
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n[workspace]\n\
+         [lib]\ncrate-type = [\"cdylib\"]\n",
     )
     .unwrap();
     fs::write(root.join("workspace/src/lib.rs"), "pub fn fixture() {}\n").unwrap();
     // Use real Cargo metadata but synthetic variant-specific build bytes. No
     // Wasm toolchain or canister runtime is needed to exercise cache ownership.
-    executable_support::write_executable_script(
+    support::executable::write_executable_script(
         &root.join("cargo.sh"),
         br#"#!/bin/sh
 if [ "$1" != build ]; then exec "$REAL_CARGO" "$@"; fi

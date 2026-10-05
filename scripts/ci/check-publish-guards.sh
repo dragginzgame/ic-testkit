@@ -54,7 +54,12 @@ current_version="$(
     bash scripts/release/publish-workspace.sh
 ) >/dev/null
 
-mapfile -t publish_trace <"${publish_case}/trace"
+publish_trace=()
+trace_count=0
+while IFS= read -r trace_line; do
+  publish_trace[trace_count]="$trace_line"
+  trace_count=$((trace_count + 1))
+done <"${publish_case}/trace"
 expected_publish_trace=(
   "cargo info ic-testkit@${current_version} --registry crates-io"
   "cargo publish --locked --registry crates-io -p ic-testkit"
@@ -73,7 +78,12 @@ done
     STATE_DIR="${publish_case}/state" \
     bash scripts/release/publish-workspace.sh
 ) >/dev/null
-mapfile -t republish_trace <"${publish_case}/trace"
+republish_trace=()
+trace_count=0
+while IFS= read -r trace_line; do
+  republish_trace[trace_count]="$trace_line"
+  trace_count=$((trace_count + 1))
+done <"${publish_case}/trace"
 [[ "${republish_trace[0]:-}" == "cargo info ic-testkit@${current_version} --registry crates-io" ]] \
   || fail "the publisher did not check the existing release"
 [[ "${#republish_trace[@]}" -eq 1 ]] \

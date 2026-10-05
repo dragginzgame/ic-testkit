@@ -4,24 +4,29 @@ use super::{
     SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
     WasmBuildBatchInputResolver, WasmBuildError, WasmBuildOutcome, WasmBuildOutputStream,
     WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildProgressPhase, WasmBuildSpec,
-    append_cargo_configuration_inputs, build_wasm_canisters_cached_with_progress,
-    ensure_cache_directory_tag, finish_fingerprint_build, inspect_shared_incremental_target,
+    append_cargo_configuration_inputs, artifact_stamp_path, build_wasm_canisters_cached,
+    build_wasm_canisters_cached_with_progress, ensure_cache_directory_tag, expected_artifacts,
+    finish_fingerprint_build, inspect_shared_incremental_target,
     integrated_shared_maintenance_result, lock_wasm_build_cache,
     lock_wasm_build_cache_with_progress, locked_package_identities,
     maintain_shared_incremental_target, maintain_shared_incremental_target_at_most_every,
-    metadata_arguments, perform_configured_shared_incremental_target_maintenance,
-    prune_wasm_build_cache, prune_wasm_build_cache_locked, resolve_cargo_build_inputs,
-    run_cargo_build, semantic_package_identity, validate_spec,
+    materialize_artifacts, metadata_arguments,
+    perform_configured_shared_incremental_target_maintenance, prune_wasm_build_cache,
+    prune_wasm_build_cache_locked, publish_artifact_stamps, reconstruct_exact_cache_entry,
+    resolve_cargo_build_inputs, run_cargo_build, semantic_package_identity, validate_spec,
+    validated_artifact_set,
 };
 use crate::artifacts::cache_fs::{
     ArtifactCachePrunePolicy, CACHE_DIRECTORY_TAG_SIGNATURE, directory_logical_size,
     write_last_used,
 };
-use crate::artifacts::test_support::unique_temp_directory;
+use crate::artifacts::{
+    WasmBuildInputSnapshot, digest::digest_bytes, test_support::unique_temp_directory,
+};
 use std::{
     collections::BTreeSet,
     ffi::OsString,
-    fs,
+    fs, io,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -33,7 +38,12 @@ use std::{
 };
 
 #[cfg(unix)]
-use crate::artifacts::test_support::write_executable_script;
+use crate::artifacts::test_support::{fake_wasm_build_spec, write_executable_script};
+#[cfg(unix)]
+use std::{
+    fs::FileTimes,
+    os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink},
+};
 
 fn canonical_fixture(path: &Path) -> PathBuf {
     path.canonicalize().expect("canonicalize test fixture path")
@@ -134,9 +144,6 @@ fn metadata_receives_only_resolution_arguments() {
 
 #[test]
 fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
-    use super::{artifact_stamp_path, publish_artifact_stamps, validated_artifact_set};
-    use crate::artifacts::digest::digest_bytes;
-
     let root = unique_temp_directory("wasm-stamp-validation");
     let artifact = root.join("fixture.wasm");
     let artifacts = [artifact.clone()];
@@ -193,8 +200,6 @@ fn wasm_stamps_require_exact_identity_and_unmodified_contents() {
 
 #[test]
 fn compact_feature_arguments_watch_enabled_optional_dependencies() {
-    use crate::artifacts::WasmBuildInputSnapshot;
-
     let root = unique_temp_directory("compact-feature-inputs");
     fs::write(
         root.join("Cargo.toml"),
@@ -282,7 +287,6 @@ fn builders_preserve_os_native_values() {
 
 #[test]
 fn cargo_target_overrides_are_rejected_before_acquisition() {
-    use super::build_wasm_canisters_cached;
     let root = unique_temp_directory("cargo-target-overrides");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug");
     for override_spec in [
@@ -303,9 +307,6 @@ fn cargo_target_overrides_are_rejected_before_acquisition() {
 #[test]
 #[cfg(unix)]
 fn cargo_non_building_commands_cannot_publish_existing_shared_target_outputs() {
-    use super::{build_wasm_canisters_cached, expected_artifacts};
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     // These modes must be rejected before invoking tools or certifying an old output.
     for arguments in [vec!["--help"], vec!["--unit-graph", "-Zunstable-options"]] {
         let (root, spec) = fake_wasm_build_spec("cargo-non-build-shared-output");
@@ -331,8 +332,6 @@ fn cargo_non_building_commands_cannot_publish_existing_shared_target_outputs() {
 
 #[test]
 fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
-    use super::build_wasm_canisters_cached;
-
     let root = unique_temp_directory("cargo-input-overrides");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
         .with_cargo_program(root.join("missing-cargo"));
@@ -400,9 +399,6 @@ fn cargo_input_overrides_are_rejected_before_resolution_or_acquisition() {
 #[cfg(unix)]
 #[test]
 fn shared_target_boundaries_preserve_retained_exact_entries() {
-    use super::build_wasm_canisters_cached;
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     let (root, base) = fake_wasm_build_spec("shared-exact-boundary");
     let unsafe_shared = root.join("shared");
     let mut nested = base.clone();
@@ -452,9 +448,6 @@ fn shared_target_boundaries_preserve_retained_exact_entries() {
 #[cfg(unix)]
 #[test]
 fn relative_exact_target_is_shared_by_cargo_and_cache_operations() {
-    use super::build_wasm_canisters_cached;
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     let (root, mut spec) = fake_wasm_build_spec("relative-exact-target");
     let caller_dir = std::env::current_dir().expect("read caller working directory");
     spec.workspace_root = root.join("nested/workspace/one/two/three/four");
@@ -800,8 +793,6 @@ fn batch_input_snapshot_reuses_compatible_toolchain_and_metadata_resolution() {
 
 #[test]
 fn profile_output_directory_is_confined_before_resolution_or_acquisition() {
-    use super::build_wasm_canisters_cached;
-
     let root = unique_temp_directory("wasm-profile-boundary");
     let target = root.join("target");
     let absolute = root.join("outside");
@@ -878,8 +869,6 @@ fn cargo_profile_arguments_match_output_directories() {
 #[cfg(unix)]
 #[test]
 fn wasm_output_validation_distinguishes_libraries_from_cdylib_examples() {
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     let (root, spec) = fake_wasm_build_spec("wasm-library-versus-example");
     fs::create_dir_all(root.join("fixture/examples")).unwrap();
     fs::write(
@@ -1511,8 +1500,6 @@ done
 
 #[test]
 fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
-    use std::io;
-
     struct InterruptedReader {
         contents: &'static [u8],
         attempts: usize,
@@ -1618,8 +1605,6 @@ fn observed_output_reader_stops_when_the_consumer_disconnects() {
 
 #[test]
 fn observed_output_reader_propagates_permanent_errors() {
-    use std::io;
-
     struct FailedReader;
 
     impl io::Read for FailedReader {
@@ -1736,12 +1721,6 @@ fn failed_build_removes_its_incomplete_fingerprint_directory() {
 
 #[test]
 fn reconstructed_wasm_stamps_describe_the_bytes_actually_copied() {
-    use super::{
-        expected_artifacts, publish_artifact_stamps, reconstruct_exact_cache_entry,
-        validated_artifact_set,
-    };
-    use crate::artifacts::digest::digest_bytes;
-
     let root = unique_temp_directory("reconstructed-wasm-bytes");
     let source = root.join("public.wasm");
     fs::write(&source, b"original").unwrap();
@@ -1772,9 +1751,6 @@ fn reconstructed_wasm_stamps_describe_the_bytes_actually_copied() {
 
 #[test]
 fn reconstruction_rejects_empty_copies_and_removes_the_incomplete_entry() {
-    use super::{expected_artifacts, publish_artifact_stamps, reconstruct_exact_cache_entry};
-    use crate::artifacts::digest::digest_bytes;
-
     let root = unique_temp_directory("empty-reconstructed-wasm");
     let sources = [root.join("public.wasm")];
     fs::write(&sources[0], b"original").unwrap();
@@ -1795,9 +1771,6 @@ fn reconstruction_rejects_empty_copies_and_removes_the_incomplete_entry() {
 
 #[test]
 fn failed_exact_entry_reconstruction_removes_partial_outputs() {
-    use super::reconstruct_exact_cache_entry;
-    use crate::artifacts::digest::digest_bytes;
-
     let root = unique_temp_directory("failed-exact-entry-reconstruction");
     let entry = root.join("cache-entry");
     let sources = [root.join("first.wasm"), root.join("missing.wasm")];
@@ -1829,9 +1802,6 @@ fn failed_exact_entry_reconstruction_removes_partial_outputs() {
 #[test]
 #[cfg(unix)]
 fn oversized_wasm_cache_stamp_recovers_from_verified_public_outputs() {
-    use super::{artifact_stamp_path, build_wasm_canisters_cached, validated_artifact_set};
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     let (root, spec) = fake_wasm_build_spec("oversized-wasm-cache-stamp");
     let cold = build_wasm_canisters_cached(&spec).expect("build cold artifact");
     let fingerprint = cold.record().fingerprint();
@@ -1865,13 +1835,6 @@ fn oversized_wasm_cache_stamp_recovers_from_verified_public_outputs() {
 #[test]
 #[cfg(unix)]
 fn warm_wasm_outputs_follow_retained_entry_and_preserve_matching_files() {
-    use super::{
-        artifact_stamp_path, build_wasm_canisters_cached, expected_artifacts,
-        publish_artifact_stamps,
-    };
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-    use std::{fs::FileTimes, os::unix::fs::MetadataExt as _};
-
     for mode in ["isolated", "shared", "scheduled"] {
         let (root, mut spec) = fake_wasm_build_spec("warm-wasm-publication");
         if mode != "isolated" {
@@ -1942,10 +1905,6 @@ fn warm_wasm_outputs_follow_retained_entry_and_preserve_matching_files() {
 #[test]
 #[cfg(unix)]
 fn warm_wasm_publication_detaches_linked_or_restricted_outputs_and_stamps() {
-    use super::{artifact_stamp_path, build_wasm_canisters_cached, expected_artifacts};
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-    use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
-
     let (root, spec) = fake_wasm_build_spec("warm-wasm-ownership");
     let cold = build_wasm_canisters_cached(&spec).unwrap();
     let public = expected_artifacts(&spec, &spec.target_dir);
@@ -1989,12 +1948,6 @@ fn warm_wasm_publication_detaches_linked_or_restricted_outputs_and_stamps() {
 #[test]
 #[cfg(unix)]
 fn warm_wasm_materialization_repairs_only_changed_members() {
-    use super::{
-        artifact_stamp_path, materialize_artifacts, publish_artifact_stamps, validated_artifact_set,
-    };
-    use crate::artifacts::digest::digest_bytes;
-    use std::{fs::FileTimes, os::unix::fs::MetadataExt as _};
-
     let root = unique_temp_directory("selective-wasm-materialization");
     let cached = [root.join("first.wasm"), root.join("second.wasm")];
     fs::write(&cached[0], b"first").unwrap();
@@ -2032,9 +1985,6 @@ fn warm_wasm_materialization_repairs_only_changed_members() {
 
 #[test]
 fn failed_wasm_materialization_does_not_stamp_a_partial_public_set() {
-    use super::{artifact_stamp_path, materialize_artifacts, publish_artifact_stamps};
-    use crate::artifacts::digest::digest_bytes;
-
     let root = unique_temp_directory("partial-wasm-materialization");
     let cached = [root.join("first.wasm"), root.join("second.wasm")];
     for path in &cached {
@@ -2066,9 +2016,6 @@ fn failed_wasm_materialization_does_not_stamp_a_partial_public_set() {
 #[test]
 #[cfg(unix)]
 fn warm_caller_artifacts_reconstruct_a_missing_exact_entry() {
-    use super::build_wasm_canisters_cached;
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     let (root, spec) = fake_wasm_build_spec("reconstruct-exact-entry");
     let built = build_wasm_canisters_cached(&spec).expect("build initial exact entry");
     let entry = built.record().exact_cache_path().to_owned();
@@ -2266,8 +2213,6 @@ fn cargo_configuration_discovery_matches_cargo_search_and_include_rules() {
 #[test]
 #[cfg(unix)]
 fn cargo_configuration_symlinks_preserve_include_locations_and_mutation_guards() {
-    use std::os::unix::fs::symlink;
-
     let root = unique_temp_directory("cargo-configuration-symlinks");
     let workspace = root.join("workspace");
     let workspace_cargo = workspace.join(".cargo");
@@ -2338,8 +2283,6 @@ fn cargo_configuration_symlinks_preserve_include_locations_and_mutation_guards()
 #[test]
 #[cfg(unix)]
 fn cargo_configuration_guards_follow_each_directory_alias() {
-    use std::os::unix::fs::symlink;
-
     let root = unique_temp_directory("cargo-configuration-directory-aliases");
     let workspace = root.join("workspace");
     let cargo_dir = workspace.join(".cargo");
@@ -2437,9 +2380,6 @@ fn create_cache_entry(
 #[cfg(unix)]
 #[test]
 fn warm_hits_reject_source_mutation_for_active_and_materialized_artifacts() {
-    use super::build_wasm_canisters_cached;
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     for mode in ["isolated", "shared", "scheduled"] {
         for active_artifact in [true, false] {
             let (root, mut spec) = fake_wasm_build_spec("warm-hit-source-race");

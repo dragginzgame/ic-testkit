@@ -20,6 +20,16 @@ use std::{
     time::Duration,
 };
 
+#[cfg(unix)]
+use std::{
+    fs::FileTimes,
+    os::unix::{
+        ffi::OsStringExt as _,
+        fs::{MetadataExt as _, PermissionsExt as _, symlink},
+    },
+    time::UNIX_EPOCH,
+};
+
 #[test]
 fn os_native_argument_and_environment_builders_affect_identity() {
     let root = unique_temp_directory("os-native-identity");
@@ -122,8 +132,6 @@ fn cargo_snapshot_keys_semantic_identity_and_guards_raw_workspace_inputs() {
 #[test]
 #[cfg(unix)]
 fn non_utf8_argument_bytes_affect_artifact_identity_exactly() {
-    use std::os::unix::ffi::OsStringExt as _;
-
     let root = unique_temp_directory("non-utf8-identity");
     let input = root.join("input");
     fs::write(&input, b"input").expect("write non-UTF-8 identity input");
@@ -180,8 +188,6 @@ fn one_output_is_built_materialized_repaired_and_reused() {
 #[cfg(unix)]
 #[test]
 fn warm_outputs_preserve_matching_files_and_repair_changed_or_missing_files() {
-    use std::{fs::FileTimes, os::unix::fs::MetadataExt as _, time::UNIX_EPOCH};
-
     let root = unique_temp_directory("matching-public-outputs");
     let mut spec = ArtifactCacheSpec::new(&root.join("cache"), "outputs", "recipe/v1");
     for name in ["matching", "changed", "missing"] {
@@ -246,8 +252,6 @@ fn warm_outputs_preserve_matching_files_and_repair_changed_or_missing_files() {
 #[cfg(unix)]
 #[test]
 fn warm_output_repair_detaches_links_and_replaces_restricted_files() {
-    use std::os::unix::fs::{PermissionsExt as _, symlink};
-
     for replacement in [
         "symlink",
         "cyclic-symlink",
@@ -939,10 +943,7 @@ fn undeclared_output_names_reject_staging_and_cached_entries() {
     .into_iter()
     .map(OsString::from);
     #[cfg(unix)]
-    let names = {
-        use std::os::unix::ffi::OsStringExt as _;
-        names.chain([OsString::from_vec(b"0000.artifact\xff".to_vec())])
-    };
+    let names = names.chain([OsString::from_vec(b"0000.artifact\xff".to_vec())]);
     for name in names {
         let transaction = expect_build(prepare_artifact_cache(&spec).unwrap());
         fs::write(transaction.output_path("output").unwrap(), b"declared")
@@ -1121,8 +1122,6 @@ fn filesystem_boundaries_reject_cache_inputs_and_destination_aliases() {
 
     #[cfg(unix)]
     {
-        use std::os::unix::fs::symlink;
-
         let public = root.join("symlink-public");
         fs::create_dir_all(&public).expect("create symlink destination directory");
         let alias = root.join("symlink-alias");
@@ -1151,7 +1150,6 @@ fn filesystem_boundaries_reject_cache_inputs_and_destination_aliases() {
 #[cfg(unix)]
 #[test]
 fn symlink_destination_boundaries_validate_the_replaced_entry() {
-    use std::os::unix::fs::symlink;
     let root = unique_temp_directory("symlink-destination-boundaries");
     let cache = root.join("cache");
     let public = root.join("public");
@@ -1317,12 +1315,14 @@ fn missing_declared_input_and_tool_errors_include_the_failed_path() {
         let staging = transaction.staging_directory().to_owned();
         fs::remove_file(&missing).unwrap();
         let error = transaction.commit().unwrap_err();
+        assert!(matches!(&error, ArtifactCacheError::Io { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound));
+        // The nested failed input path is currently diagnostic context, not the
+        // outer cache path. This assertion covers that display contract.
         assert!(
             error.to_string().contains(&missing.display().to_string()),
             "{error}"
         );
-        assert!(matches!(error, ArtifactCacheError::Io { source, .. }
-            if source.kind() == std::io::ErrorKind::NotFound));
         assert!(!staging.exists());
         fs::remove_dir_all(root).unwrap();
     }

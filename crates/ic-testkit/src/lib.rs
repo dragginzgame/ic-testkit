@@ -39,7 +39,6 @@ pub mod pic;
 pub mod performance;
 
 #[cfg(all(test, unix, not(target_arch = "wasm32")))]
-#[path = "../tests/support/executable.rs"]
 mod test_executable;
 
 use candid::Principal;

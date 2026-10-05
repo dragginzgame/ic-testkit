@@ -6,7 +6,31 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.15.10] - 2026-10-05 - Declared Wasm library output validation
+## [0.16.0] - 2026-10-05 - Wasm library contracts and shared engineering baseline
+
+### Changed
+
+- This minor release records the incompatible Wasm library contract: acquired
+  packages must declare a same-name `cdylib` library, and acquisition builds
+  only libraries. Non-library targets must be built separately; `--all-targets`
+  and binary/example/test/bench selectors are rejected. Earlier 0.15 patch
+  releases introduced related behavior cuts; future pre-1.0 contract changes
+  require a minor release.
+- Adopted the reviewed Shared Tooling baseline at
+  `41e1fd0ba41460bd2127cbf98ac8a4b2b2020d3e` with a local overlay and checksum
+  verification in CI. LOC reporting now uses the canonical Cargo-workspace
+  script, replacing the stale Canic-specific implementation.
+- Release CI delegates directly to ordinary CI and preserves the caller's
+  temporary-directory environment. Retired the private-scratch process scanner
+  and its Linux-only Python/pidfd requirements. Managed server handles retain
+  child ownership; upstream background servers retain their normal lifecycle.
+- Portable guard scripts support Bash 3.2. CI adds native macOS 15 ARM64 and
+  Intel checks for CI, MSRV, operator tooling, managed startup and PocketIC concurrency;
+  the local host matrix distinguishes required support from passing evidence.
+- Centralized `libc` under workspace dependency ownership. Test modules use
+  ordinary module discovery and file-top imports, and failure assertions use
+  structured errors or artifact bytes. The version helper preserves selected
+  external dependencies through offline lockfile updates.
 
 ### Fixed
 
@@ -37,6 +61,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   continuation, session and prepared-reader validation, failure phases, and
   generic transactional Cargo snapshots. Full pre-push validation remains
   maintainer-owned.
+- Aligned the synthetic artifact-handoff fixture's manifest with the required
+  `cdylib` contract and reran its cold/warm retention and process handoff tests.
+  Portable shell guards, snapshot checks, workflow lint and focused Clippy pass.
 
 ## [0.15.9] - 2026-10-05 - Library-only Wasm acquisition
 

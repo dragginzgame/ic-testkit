@@ -3,14 +3,14 @@
 	clippy docs-check ensure-clean fmt fmt-check help msrv package patch publish \
 	minor publish-dry-run publish-guards-check release-check release-commit \
 	release-ci release-guards-check release-minor release-patch release-push release-stage \
-	release-tag-check tags test test-canisters version
+	release-tag-check shared-tooling-check tags test test-canisters version
 
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
 MSRV ?= 1.88.0
 CHANGELOG_VERSION ?=
 
-CI_TARGETS := changelog-check actions-check publish-guards-check \
+CI_TARGETS := shared-tooling-check changelog-check actions-check publish-guards-check \
 	release-guards-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
@@ -25,6 +25,7 @@ help:
 	@echo "  check-wasm      Check the crate for wasm32"
 	@echo "  clippy          Run Clippy with warnings denied"
 	@echo "  docs-check      Build public API documentation with warnings denied"
+	@echo "  shared-tooling-check Verify the reviewed shared snapshot offline"
 	@echo "  test            Run the ic-testkit test suite"
 	@echo "  test-canisters  Run the PocketIC canister integration test"
 	@echo "  msrv            Check the crate with the declared MSRV"
@@ -78,6 +79,9 @@ clippy:
 docs-check:
 	RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit --locked --no-deps
 
+shared-tooling-check:
+	bash scripts/ci/verify-shared-tooling-snapshot.sh
+
 msrv:
 	cargo +$(MSRV) check -p ic-testkit --locked
 
@@ -110,7 +114,7 @@ release-check:
 	done
 
 release-ci:
-	+MAKE="$(MAKE)" bash scripts/release/run-ci.sh
+	+$(MAKE) --no-print-directory ci
 
 publish: ensure-clean release-tag-check
 	bash scripts/release/publish-workspace.sh

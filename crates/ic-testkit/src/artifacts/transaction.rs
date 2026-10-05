@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     ffi::{OsStr, OsString},
+    fmt::Write as _,
     fs::{self, File},
     io,
     path::{Path, PathBuf},
@@ -1639,7 +1640,6 @@ fn manifest_contents(
 ) -> String {
     let mut manifest = manifest_header(key);
     for ((index, output), info) in spec.outputs.iter().enumerate().zip(output_info) {
-        use std::fmt::Write as _;
         writeln!(
             manifest,
             "output:{index}:{}:{}:{}:{}",
@@ -2002,5 +2002,4 @@ impl std::error::Error for ArtifactCacheError {
 }
 
 #[cfg(test)]
-#[path = "transaction/tests.rs"]
 mod tests;

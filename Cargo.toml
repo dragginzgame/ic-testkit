@@ -19,6 +19,7 @@ readme = "README.md"
 candid = { version = "0.10", default-features = false }
 ic-cdk = "0.20.2"
 ic-testkit = { path = "crates/ic-testkit" }
+libc = "0.2"
 pocket-ic = "16.0"
 serde = { version = "1.0", default-features = false }
 serde_json = "1.0"

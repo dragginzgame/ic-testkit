@@ -1,6 +1,4 @@
 mod support;
-#[path = "support/wait.rs"]
-mod wait_support;
 
 use ic_testkit::artifacts::{
     ArtifactCacheOutcome, ArtifactCachePreparation, ArtifactCacheSpec, prepare_artifact_cache,
@@ -14,7 +12,7 @@ use std::{
     time::Duration,
 };
 use support::unique_temp_directory;
-use wait_support::wait_for_path;
+use support::wait::wait_for_path;
 
 const WORKER_ROOT_ENV: &str = "IC_TESTKIT_ARTIFACT_PROCESS_ROOT";
 const WORKER_ID_ENV: &str = "IC_TESTKIT_ARTIFACT_PROCESS_WORKER";

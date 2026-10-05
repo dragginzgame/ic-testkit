@@ -18,10 +18,15 @@ if grep -R -n -E -- 'cargo[[:space:]]+clean' \
   fail "a CI, release, or publish script invokes the Cargo clean subcommand"
 fi
 
-mapfile -t makefile_cargo_clean < <(
+makefile_cargo_clean=()
+trace_count=0
+while IFS= read -r trace_line; do
+  makefile_cargo_clean[trace_count]="$trace_line"
+  trace_count=$((trace_count + 1))
+done < <(
   grep -n -E -- 'cargo[[:space:]]+clean' "${repo_root}/Makefile"
 )
-[[ "${#makefile_cargo_clean[@]}" -eq 1 ]] \
+[[ "${trace_count}" -eq 1 ]] \
   || fail "Cargo clean must exist only as the standalone Make target"
 expected_manual_clean_recipe=$'\tcargo '"clean"
 [[ "${makefile_cargo_clean[0]#*:}" == "${expected_manual_clean_recipe}" ]] \
@@ -125,7 +130,11 @@ esac
 EOF
 cat >"${bump_case}/bin/cargo" <<'EOF'
 #!/bin/bash
-[[ "$*" == "generate-lockfile" ]] || exit 2
+case "$*" in
+  "metadata --locked --offline --format-version 1") exit "${METADATA_STATUS:-0}" ;;
+  "metadata --offline --format-version 1") exit 0 ;;
+  *) exit 2 ;;
+esac
 EOF
 chmod +x "${bump_case}/bin/git" "${bump_case}/bin/bash" \
   "${bump_case}/bin/make" "${bump_case}/bin/cargo"
@@ -143,7 +152,12 @@ set -e
   || fail "the bump script did not preserve a changelog failure"
 [[ "$(<"${bump_case}/Cargo.toml")" == "${before_bump}" ]] \
   || fail "the bump script edited version metadata after a failed changelog gate"
-mapfile -t changelog_trace <"${bump_case}/trace"
+changelog_trace=()
+trace_count=0
+while IFS= read -r trace_line; do
+  changelog_trace[trace_count]="$trace_line"
+  trace_count=$((trace_count + 1))
+done <"${bump_case}/trace"
 [[ "${changelog_trace[0]:-}" == "changelog scripts/ci/check-changelog-version.sh 0.8.1" ]] \
   || fail "the bump script did not check the target-version changelog first"
 [[ "${#changelog_trace[@]}" -eq 1 ]] \
@@ -161,7 +175,12 @@ set -e
 [[ "${ci_status}" -eq 23 ]] || fail "the bump script did not preserve a CI failure"
 [[ "$(<"${bump_case}/Cargo.toml")" == "${before_bump}" ]] \
   || fail "the bump script edited version metadata before CI passed"
-mapfile -t ci_trace <"${bump_case}/trace"
+ci_trace=()
+trace_count=0
+while IFS= read -r trace_line; do
+  ci_trace[trace_count]="$trace_line"
+  trace_count=$((trace_count + 1))
+done <"${bump_case}/trace"
 [[ "${ci_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
   || fail "the bump script did not check cleanliness before CI"
 [[ "${ci_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
@@ -176,7 +195,12 @@ mapfile -t ci_trace <"${bump_case}/trace"
 ) >/dev/null 2>&1
 [[ "$(<"${bump_case}/Cargo.toml")" == $'[workspace.package]\nversion = "0.9.0"' ]] \
   || fail "the minor bump script did not reset the patch component"
-mapfile -t minor_trace <"${bump_case}/trace"
+minor_trace=()
+trace_count=0
+while IFS= read -r trace_line; do
+  minor_trace[trace_count]="$trace_line"
+  trace_count=$((trace_count + 1))
+done <"${bump_case}/trace"
 [[ "${minor_trace[0]:-}" == "changelog scripts/ci/check-changelog-version.sh 0.9.0" ]] \
   || fail "the minor bump script did not check the target-version changelog first"
 [[ "${minor_trace[1]:-}" == "make --no-print-directory ensure-clean" ]] \
@@ -184,59 +208,19 @@ mapfile -t minor_trace <"${bump_case}/trace"
 [[ "${minor_trace[2]:-}" == "make --no-print-directory release-ci" ]] \
   || fail "the minor bump script did not run release CI before editing version metadata"
 
-cleanup_case="${work_dir}/cleanup"
-mkdir -p "${cleanup_case}/bin" "${cleanup_case}/tmp"
-cat >"${cleanup_case}/bin/make" <<'EOF'
-#!/usr/bin/env bash
-printf 'make %s\n' "$*" >>"${TRACE_FILE}"
-[[ "$*" == "--no-print-directory ci" ]] || exit 2
-printf '%s\n' "${TMPDIR:-}" >"${TMPDIR_TRACE}"
-mkdir -p "${TMPDIR}/nested-artifact"
-exit "${CI_STATUS:-0}"
-EOF
-cat >"${cleanup_case}/bin/cargo" <<'EOF'
-#!/usr/bin/env bash
-printf 'cargo %s\n' "$*" >>"${TRACE_FILE}"
-exit 97
-EOF
-chmod +x "${cleanup_case}/bin/make" "${cleanup_case}/bin/cargo"
+# An unprepared offline cache must fail before version metadata is changed.
+printf '[workspace.package]\nversion = "0.8.0"\n' >"${bump_case}/Cargo.toml"
 set +e
 (
-  cd "${repo_root}"
-  PATH="${cleanup_case}/bin:${PATH}" TRACE_FILE="${cleanup_case}/trace" \
-    TMPDIR_TRACE="${cleanup_case}/tmpdir" TMPDIR="${cleanup_case}/tmp" CI_STATUS=23 \
-    /bin/bash scripts/release/run-ci.sh
+  cd "${bump_case}"
+  PATH="${bump_case}/bin:${PATH}" TRACE_FILE="${bump_case}/trace" METADATA_STATUS=31 \
+    /bin/bash "${repo_root}/scripts/release/bump-version.sh" patch
 ) >/dev/null 2>&1
-cleanup_ci_status="$?"
+metadata_status="$?"
 set -e
-[[ "${cleanup_ci_status}" -eq 23 ]] \
-  || fail "release CI cleanup did not preserve the CI failure"
-mapfile -t cleanup_trace <"${cleanup_case}/trace"
-[[ "${cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
-  || fail "the release CI wrapper did not run the CI gate"
-[[ "${#cleanup_trace[@]}" -eq 1 ]] \
-  || fail "the failed release CI wrapper invoked Cargo during cleanup"
-ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
-[[ "${ci_tmp_dir}" == "${cleanup_case}/tmp/ic-testkit-release-ci."* ]] \
-  || fail "the release CI wrapper did not isolate temporary artifacts"
-[[ ! -e "${ci_tmp_dir}" ]] \
-  || fail "the release CI wrapper left its temporary directory behind"
-
-: >"${cleanup_case}/trace"
-(
-  cd "${repo_root}"
-  PATH="${cleanup_case}/bin:${PATH}" TRACE_FILE="${cleanup_case}/trace" \
-    TMPDIR_TRACE="${cleanup_case}/tmpdir" TMPDIR="${cleanup_case}/tmp" CI_STATUS=0 \
-    /bin/bash scripts/release/run-ci.sh
-) >/dev/null
-mapfile -t successful_cleanup_trace <"${cleanup_case}/trace"
-[[ "${successful_cleanup_trace[0]:-}" == "make --no-print-directory ci" ]] \
-  || fail "the successful release CI wrapper did not run the CI gate"
-[[ "${#successful_cleanup_trace[@]}" -eq 1 ]] \
-  || fail "the successful release CI wrapper invoked Cargo during cleanup"
-successful_ci_tmp_dir="$(<"${cleanup_case}/tmpdir")"
-[[ ! -e "${successful_ci_tmp_dir}" ]] \
-  || fail "the successful release CI wrapper left its temporary directory behind"
+[[ "${metadata_status}" -eq 31 ]] || fail "the bump script hid an offline metadata failure"
+[[ "$(<"${bump_case}/Cargo.toml")" == "${before_bump}" ]] \
+  || fail "the bump script edited version metadata before offline dependency readiness"
 
 commit_case="${work_dir}/commit"
 mkdir -p "${commit_case}/bin"
@@ -384,5 +368,4 @@ check_make_sequence() {
 check_make_sequence release-patch "patch release-stage release-commit release-push"
 check_make_sequence release-minor "minor release-stage release-commit release-push"
 check_make_sequence ci "check-first check-second check-third"
-
-PYTHONDONTWRITEBYTECODE=1 python3 "${repo_root}/scripts/ci/test-release-pocketic-cleanup.py"
+check_make_sequence release-ci "ci"

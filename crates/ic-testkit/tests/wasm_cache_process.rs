@@ -1,12 +1,7 @@
 #![cfg(unix)]
 
-#[path = "support/executable.rs"]
-mod executable_support;
 mod support;
-#[path = "support/wait.rs"]
-mod wait_support;
 
-use executable_support::write_executable_script;
 use ic_testkit::artifacts::{
     SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
     WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
@@ -19,8 +14,9 @@ use std::{
     process::Command,
     time::Duration,
 };
+use support::executable::write_executable_script;
 use support::unique_temp_directory;
-use wait_support::wait_for_path;
+use support::wait::wait_for_path;
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 const WORKER_ROOT_ENV: &str = "IC_TESTKIT_WASM_PROCESS_ROOT";

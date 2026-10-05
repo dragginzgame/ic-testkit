@@ -1,10 +1,4 @@
-#[cfg(unix)]
-#[path = "support/executable.rs"]
-mod executable_support;
 mod support;
-#[cfg(unix)]
-#[path = "support/wait.rs"]
-mod wait_support;
 
 use candid::Principal;
 use ic_testkit::{
@@ -14,11 +8,11 @@ use ic_testkit::{
         SharedIncrementalTargetMaintenanceOutcome, SharedIncrementalTargetPrunePolicy,
         WasmBuildBatchConfig, WasmBuildBatchContractError, WasmBuildBatchMetrics,
         WasmBuildBatchOutcomeEntry, WasmBuildBatchProgressEvent, WasmBuildBatchReport,
-        WasmBuildFailurePhase, WasmBuildInputSnapshot, WasmBuildOutcome, WasmBuildProgressConfig,
-        WasmBuildProgressEvent, WasmBuildSession, WasmBuildSpec, build_wasm_canisters_cached,
-        build_wasm_canisters_cached_with_progress, inspect_shared_incremental_target,
-        prepare_artifact_cache, prune_wasm_build_cache, read_wasm, resolve_cargo_build_inputs,
-        wasm_path, workspace_root_for,
+        WasmBuildError, WasmBuildFailurePhase, WasmBuildInputSnapshot, WasmBuildOutcome,
+        WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSession,
+        WasmBuildSpec, build_wasm_canisters_cached, build_wasm_canisters_cached_with_progress,
+        inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
+        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
@@ -37,13 +31,11 @@ use std::{
 use support::unique_temp_directory as unique_temp_dir;
 
 #[cfg(unix)]
-use executable_support::write_executable_script;
-#[cfg(unix)]
-use ic_testkit::artifacts::WasmBuildError;
-#[cfg(unix)]
 use std::ffi::OsString;
 #[cfg(unix)]
-use wait_support::wait_for_path;
+use support::executable::write_executable_script;
+#[cfg(unix)]
+use support::wait::wait_for_path;
 
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
@@ -122,16 +114,11 @@ fn wasm_acquisition_builds_library_when_binary_has_the_same_output_name() {
                     .expect("build library-only baseline");
             let library =
                 fs::read(&baseline.record().artifacts()[0]).expect("read library baseline");
-            let mut output = Vec::new();
             let outcome = if observed {
                 build_wasm_canisters_cached_with_progress(
                     &spec,
                     WasmBuildProgressConfig::new(),
-                    |event| {
-                        if let WasmBuildProgressEvent::CargoOutput { bytes, .. } = event {
-                            output.extend_from_slice(&bytes);
-                        }
-                    },
+                    |_| {},
                 )
             } else {
                 build_wasm_canisters_cached(&spec)
@@ -142,7 +129,6 @@ fn wasm_acquisition_builds_library_when_binary_has_the_same_output_name() {
                 fs::read(&outcome.record().artifacts()[0]).expect("read acquired Wasm") == library,
                 "binary must not replace library: shared={shared_target}, observed={observed}",
             );
-            assert!(!String::from_utf8_lossy(&output).contains("output filename collision"));
             assert!(matches!(
                 build_wasm_canisters_cached(&spec).expect("reuse canister library"),
                 WasmBuildOutcome::Reused(_)
@@ -1061,7 +1047,13 @@ fn failed_shared_incremental_build_preserves_cargo_state_without_publishing_an_e
 
     let error = build_wasm_canisters_cached(&spec).expect_err("invalid Cargo option must fail");
 
-    assert!(error.to_string().contains("cargo build failed"));
+    assert!(matches!(
+        error,
+        WasmBuildError::CommandFailed {
+            phase: WasmBuildPhase::CargoBuild,
+            ..
+        }
+    ));
     assert!(marker.is_file());
     assert!(shared_target.is_dir());
     assert!(

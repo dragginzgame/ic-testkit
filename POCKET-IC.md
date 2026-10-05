@@ -172,7 +172,7 @@ the upstream instance directly. The isolated patch experiment introduced in
 0.10.3 was removed in 0.10.4. The reproduction above remains evidence of the
 current limitation.
 
-### Release Temporary-Directory Cleanup
+### Temporary-Directory Ownership
 
 PocketIC 16's server HTTP adapter destructor calls
 `remove_file(self.uds_path.clone()).unwrap()` at
@@ -185,27 +185,17 @@ A focused before/after probe against the released PocketIC 16.0.0 binary
 reproduced that exact panic with directory deletion first. Stopping the owned
 server first completed without it; no canister Wasm build was required.
 
-The release CI runner stops servers with port files inside its private scratch
-directory before removing that directory. Cleanup uses Linux `/proc` to check
-the complete argument list and match the running executable's device/inode to
-the selected server binary. It accepts `POCKET_IC_BIN` and
-`IC_TESTKIT_POCKET_IC_SERVER`, including renamed binaries, relative paths and
-bare names resolved through `PATH`. Without `POCKET_IC_BIN`, it recognises
-PocketIC 16's exact default download path under scratch,
-`pocket-ic-server-16.0.0/pocket-ic`; keep that path aligned with upstream's
-`LATEST_SERVER_VERSION` when updating the dependency. A caller-selected binary
-outside these paths is unknown to the runner and retains scratch if still alive.
-Missing, replaced or inaccessible selected binaries also retain scratch when a
-live process uses a private port file; an executable name alone cannot establish
-ownership.
+Release CI now invokes ordinary `make ci` directly and inherits the caller's
+temporary-directory environment. It does not introduce a private scratch
+lifetime that ends before upstream background servers exit. Upstream owns its
+background-server lifecycle; callers who supply temporary directories must
+keep them available for that lifetime. Explicit managed server handles own
+and terminate their child processes before removing their startup files.
 
-Cleanup uses pidfds to signal and await the exact processes;
-servers with external port files are left alone. It requests termination, waits
-up to five seconds, then uses forced termination with another five-second bound.
-If cleanup fails or safe process ownership is unavailable, it retains scratch
-instead of removing files under a potentially live server. The targeted
-`scripts/ci/test-release-pocketic-cleanup.py` regressions run as part of the
-release guard checks.
+The Linux-only release process scanner and its pidfd/Python prerequisites are
+retired. The portable release guards check CI delegation and failure propagation
+without launching servers or invoking real release effects. Native managed
+startup and ownership tests run on the declared hosts in [docs/hosts.md](docs/hosts.md).
 
 ### Install-Code Rate Limiting
 

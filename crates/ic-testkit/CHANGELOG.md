@@ -8,7 +8,24 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## 0.15.10
+## 0.16.0
+
+This is a minor release because the acquired-package contract excludes outputs
+that previous versions accepted. Acquisition builds only libraries; remove
+`--all-targets` and binary/example/test/bench selectors from acquisition specs,
+and build those targets separately. Each acquired package must declare the
+same-name `cdylib` library described below. Related cuts shipped in earlier
+0.15 patches; future incompatible pre-1.0 behavior changes use minor releases.
+
+Repository tooling now adopts a pinned, verified Shared Tooling baseline.
+Release CI uses ordinary CI and the caller's temporary-directory environment;
+the private scratch/process scanner and Linux-only Python/pidfd dependency are
+retired. Caller-owned temporary directories must outlive upstream background
+servers; explicit managed handles own their child cleanup. The host matrix and
+native macOS CI cover Bash 3.2 guard tooling, startup and concurrency. Test helper
+modules follow ordinary Rust discovery, error assertions use structured failures,
+and `libc` is workspace-owned. Release version helpers preserve existing
+external dependency selections using offline metadata updates.
 
 Wasm acquisition now checks Cargo metadata for a `cdylib` library whose name
 matches the package's expected `<package>.wasm` output. Missing, non-`cdylib`,

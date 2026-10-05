@@ -1,3 +1,10 @@
+// Each integration target uses only the fixtures it needs.
+#![allow(dead_code)]
+
+#[cfg(unix)]
+pub mod executable;
+pub mod wait;
+
 use std::{
     fs,
     path::PathBuf,

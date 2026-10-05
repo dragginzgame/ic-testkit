@@ -49,8 +49,12 @@ echo "Running full CI gate before version bump..."
 make --no-print-directory ensure-clean
 CHANGELOG_VERSION="${new_version}" make --no-print-directory release-ci
 
+# Check selected dependencies are available before changing the manifest. Updating
+# workspace package versions must retain the existing dependency selections.
+cargo metadata --locked --offline --format-version 1 >/dev/null
+
 perl -0pi -e "s/version = \"\\Q${previous_version}\\E\"/version = \"${new_version}\"/g" Cargo.toml
-cargo generate-lockfile >/dev/null
+cargo metadata --offline --format-version 1 >/dev/null
 
 echo "Bumped: ${previous_version} -> ${new_version}"
 echo "Next:"

@@ -11,7 +11,12 @@ use crate::artifacts::{
 use std::{path::Path, time::Duration};
 
 #[cfg(unix)]
-use crate::artifacts::test_support::{unique_temp_directory, write_executable_script};
+use crate::artifacts::{
+    SharedIncrementalTargetMaintenanceOutcome, WasmBuildInputSnapshot, WasmBuildSession,
+    test_support::{fake_wasm_build_spec, unique_temp_directory, write_executable_script},
+};
+#[cfg(unix)]
+use std::{fs, os::unix::fs::symlink, sync::Mutex};
 
 #[test]
 fn empty_independent_batch_succeeds_without_work() {
@@ -29,10 +34,6 @@ fn empty_independent_batch_succeeds_without_work() {
 #[cfg(unix)]
 #[test]
 fn library_output_validation_survives_batch_session_and_prepared_resolution() {
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-    use crate::artifacts::{WasmBuildInputSnapshot, WasmBuildSession};
-    use std::{fs, sync::Mutex};
-
     let (root, valid) = fake_wasm_build_spec("batch-library-output-validation");
     fs::create_dir_all(root.join("ordinary/src")).unwrap();
     fs::write(
@@ -163,8 +164,6 @@ fn batch_failure_retains_partial_metadata_timing() {
 #[cfg(unix)]
 #[test]
 fn malformed_shared_metadata_is_reported_for_every_entry() {
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-
     let (root, spec) = fake_wasm_build_spec("batch-malformed-metadata");
     let cargo = root.join("cargo.sh");
     write_executable_script(
@@ -287,10 +286,6 @@ fn batch_maintenance_configures_each_shared_target_once() {
 #[cfg(unix)]
 #[test]
 fn batch_maintenance_distinguishes_workspaces_and_deduplicates_aliases() {
-    use crate::artifacts::SharedIncrementalTargetMaintenanceOutcome;
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-    use std::{fs, os::unix::fs::symlink};
-
     let (first_root, first) = fake_wasm_build_spec("batch-maintenance-first");
     let (second_root, second) = fake_wasm_build_spec("batch-maintenance-second");
     let alias_root = unique_temp_directory("batch-maintenance-alias");
@@ -374,9 +369,6 @@ fn batch_maintenance_rejects_per_spec_policy_ownership() {
 #[cfg(unix)]
 #[test]
 fn unsafe_shared_target_does_not_fail_other_compatible_batch_entries() {
-    use crate::artifacts::test_support::fake_wasm_build_spec;
-    use std::fs;
-
     let (root, spec) = fake_wasm_build_spec("batch-source-boundary");
     let unsafe_target = root.join("fixture/src/generated-target");
     fs::create_dir_all(&unsafe_target).expect("create unsafe shared target");
@@ -418,7 +410,6 @@ fn unsafe_shared_target_does_not_fail_other_compatible_batch_entries() {
 #[cfg(unix)]
 #[test]
 fn a_missing_input_does_not_fail_other_compatible_batch_entries() {
-    use crate::artifacts::test_support::fake_wasm_build_spec;
     for invalid_first in [true, false] {
         for observed in [true, false] {
             let (root, spec) = fake_wasm_build_spec("batch-hash-isolation");

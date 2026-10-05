@@ -1501,9 +1501,17 @@ IC_TESTKIT_POCKET_IC_SERVER=/path/to/pocket-ic \
   -- --ignored --exact
 ```
 
+The repository adopts a [reviewed Shared Tooling snapshot](.shared-tooling.snapshot)
+through [AGENTS.md](AGENTS.md). `make shared-tooling-check` verifies its contents.
+Host prerequisites and native qualification commands are in [docs/hosts.md](docs/hosts.md).
+
 ## Releases
 
 ### Upgrading from an earlier release
+
+The `0.16.0` release requires acquired packages to declare a same-name `cdylib`
+library. Its [migration guide](crates/ic-testkit/CHANGELOG.md#0160) describes the
+library-only build contract and rejected target selectors.
 
 The `0.14.0` release makes standalone fixture pools own their fixture builder.
 See the packaged [0.14.0 migration guide](crates/ic-testkit/CHANGELOG.md#0140)
@@ -1535,15 +1543,14 @@ succeeds:
 make publish
 ```
 
-Release CI cleanup uses Linux `/proc` and Python 3 with pidfd support to stop
-PocketIC servers whose port files belong to its private temporary directory
-and whose executable identity matches the selected binary before deleting that
-directory. The runner recognizes `POCKET_IC_BIN`,
-`IC_TESTKIT_POCKET_IC_SERVER`, and PocketIC 16's default scratch download path.
-It leaves servers with external port files alone. See
-[release cleanup ownership](POCKET-IC.md#release-temporary-directory-cleanup)
-for the matching rules. If server cleanup fails, it retains the directory
-for diagnosis and reports failure while preserving any earlier CI failure.
+Release CI invokes the ordinary `make ci` gate with the caller's environment;
+it preserves Cargo artifacts and does not create or remove a private temporary
+directory around upstream background servers. Managed PocketIC handles retain
+ownership of their child processes. See
+[temporary-directory ownership](POCKET-IC.md#temporary-directory-ownership)
+and the [host matrix](docs/hosts.md) for portable checks and qualification gaps.
+The version helper checks offline dependency availability and updates workspace
+lockfile versions without regenerating external dependency selections.
 
 Publication requires a clean worktree and a matching `v<version>` tag at
 `HEAD`. Re-running `make publish` is safe when that version already exists on
