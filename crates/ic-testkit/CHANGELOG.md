@@ -8,7 +8,7 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.18.0]
+## [0.18.0] - 2026-10-05
 
 The repository's maintainer release CLI makes a hard cut to the reviewed
 Shared Tooling runner ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
