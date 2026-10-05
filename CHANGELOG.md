@@ -6,6 +6,34 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.15.9] - 2026-10-05 - Library-only Wasm acquisition
+
+### Fixed
+
+- Wasm acquisition always invokes Cargo with `--lib`. When a binary and a
+  canister library share a name, Cargo's default build can overwrite the library
+  Wasm with the binary Wasm while reporting success. Acquisition now builds only
+  the library in both isolated and shared targets, including observed builds.
+- `--all-targets` now returns `InvalidSpec` before input resolution or cache
+  work because it can reintroduce the collision. Explicit `--lib` arguments
+  remain accepted and are emitted only once in the build command. Other target
+  selectors remain rejected; build non-library targets separately.
+- Build fingerprints include library target selection so artifacts acquired
+  under the previous build behavior are not reused. This causes a fresh exact
+  acquisition after upgrading; shared Cargo compilation can still reuse its
+  library outputs. Public signatures and persisted layouts are unchanged;
+  repository-owned formats remain `v1`.
+
+### Testing
+
+- Reproduced binary replacement with real Cargo before fixing, including a
+  failing acquisition regression. The regression compares acquired bytes with
+  a library-only baseline in isolated/shared targets and observed/silent builds,
+  then checks exact-cache reuse.
+- Focused checks cover early target-selector rejection and the actual Cargo
+  invocation in both output modes. Full pre-push validation remains
+  maintainer-owned.
+
 ## [0.15.8] - 2026-10-05 - Canister library target validation
 
 ### Fixed

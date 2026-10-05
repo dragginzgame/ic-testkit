@@ -108,7 +108,7 @@ fn package_selection_agrees_across_identity_artifacts_and_cargo_invocation() {
         run_cargo_build(&spec, &root.join("cargo-target"), &mut progress).unwrap();
         assert_eq!(
             fs::read_to_string(&arguments).unwrap(),
-            "--target\nwasm32-unknown-unknown\n-p\nalpha\n-p\nzeta\n",
+            "--lib\n--target\nwasm32-unknown-unknown\n-p\nalpha\n-p\nzeta\n",
         );
         fs::remove_file(&arguments).unwrap();
     }
@@ -846,7 +846,6 @@ fn cargo_profile_arguments_match_output_directories() {
     for (directory, arguments) in [
         ("debug", vec![]),
         ("debug", vec!["--lib"]),
-        ("debug", vec!["--all-targets"]),
         ("debug", vec!["--offline"]),
         ("debug", vec!["--profile", "dev"]),
         ("debug", vec!["--profile=test"]),
@@ -893,6 +892,7 @@ fn cargo_target_selectors_fail_before_resolution_or_acquisition() {
         vec!["--bench", "helper"],
         vec!["--bench=helper"],
         vec!["--benches"],
+        vec!["--all-targets"],
         vec!["--lib", "--bin=helper"],
     ] {
         let spec = WasmBuildSpec::new(&root, &target, &["fixture"], "debug")

@@ -865,6 +865,8 @@ impl WasmBuildSpec {
     /// the caller's working directory. Shared targets are workspace-relative.
     /// Package names are sorted and deduplicated for identity, discovery,
     /// Cargo invocation, and artifact paths.
+    /// Acquisition always builds package libraries with Cargo's `--lib` flag;
+    /// binary and other targets cannot replace the canister library output.
     #[must_use]
     pub fn new(
         workspace_root: &Path,
@@ -907,8 +909,9 @@ impl WasmBuildSpec {
     /// Help and build-graph flags are rejected because they exit successfully
     /// without building. The selected profile must match `profile_target_dir`;
     /// declaring an output directory does not select a Cargo profile.
-    /// Binary, example, test, and bench selectors are rejected because they can
-    /// skip the canister library artifact. `--lib` and `--all-targets` are supported.
+    /// Binary, example, test, bench, and all-target selectors are rejected to
+    /// keep acquisition restricted to canister libraries. `--lib` is supported
+    /// and already included in every build command.
     #[must_use]
     pub fn with_cargo_profile_args<I, S>(mut self, arguments: I) -> Self
     where
@@ -3471,10 +3474,11 @@ fn validate_cargo_target_selection(spec: &WasmBuildSpec) -> Result<(), WasmBuild
                 | b"--tests"
                 | b"--bench"
                 | b"--benches"
+                | b"--all-targets"
         )
     }) {
         return Err(WasmBuildError::InvalidSpec {
-            message: "Cargo target selectors can skip canister library artifacts; use default target selection or --lib for Wasm acquisition".to_owned(),
+            message: "Wasm acquisition builds canister libraries only; remove other Cargo target selectors".to_owned(),
         });
     }
     Ok(())
@@ -3609,6 +3613,7 @@ fn finish_build_fingerprint(
         hasher.field("package", package.as_bytes());
     }
     hasher.field("target", spec.target.as_bytes());
+    hasher.field("cargo-target-selection", b"lib");
     hasher.field("profile-target-dir", spec.profile_target_dir.as_bytes());
     for argument in &spec.cargo_profile_args {
         hasher.field("cargo-argument", &os_bytes(argument));
@@ -4707,8 +4712,12 @@ fn run_cargo_build(
     command
         .current_dir(&spec.workspace_root)
         .env("CARGO_TARGET_DIR", absolute_target_dir)
-        .args(["build", "--target", &spec.target])
-        .args(&spec.cargo_profile_args);
+        .args(["build", "--lib", "--target", &spec.target])
+        .args(
+            spec.cargo_profile_args
+                .iter()
+                .filter(|argument| argument.as_os_str() != OsStr::new("--lib")),
+        );
     apply_command_environment(&mut command, spec);
     for package in &spec.packages {
         command.args(["-p", package]);

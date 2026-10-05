@@ -846,6 +846,12 @@ The profile output directory must match the Cargo arguments: default builds and
 returns `InvalidSpec` before input resolution or cache work. Setting the output
 directory alone does not select a Cargo profile.
 
+Wasm acquisition always builds package libraries with Cargo's `--lib` flag.
+Binary, example, test, bench, and `--all-targets` selectors return `InvalidSpec`
+before input resolution or cache work. Run other targets separately; they can
+share the library's output filename and overwrite the canister Wasm. An explicit
+`--lib` in `with_cargo_profile_args` remains accepted.
+
 Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
 retaining exact immutable final Wasm entries:
 

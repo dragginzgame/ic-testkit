@@ -48,6 +48,57 @@ use wait_support::wait_for_path;
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
 #[test]
+fn wasm_acquisition_builds_library_when_binary_has_the_same_output_name() {
+    for shared_target in [false, true] {
+        for observed in [false, true] {
+            let root = unique_temp_dir("ic-testkit-library-output-collision");
+            let workspace = root.join("workspace");
+            write_independent_feature_workspace(&workspace);
+            fs::write(workspace.join("feature_a/src/main.rs"), "fn main() {}\n")
+                .expect("write same-name binary target");
+            let mut spec =
+                WasmBuildSpec::new(&workspace, &root.join("exact"), &["feature_a"], "debug");
+            if shared_target {
+                spec = spec.with_shared_incremental_target(root.join("shared"));
+            }
+            let baseline =
+                build_wasm_canisters_cached(&spec.clone().with_cargo_profile_args(["--lib"]))
+                    .expect("build library-only baseline");
+            let library =
+                fs::read(&baseline.record().artifacts()[0]).expect("read library baseline");
+            let mut output = Vec::new();
+            let outcome = if observed {
+                build_wasm_canisters_cached_with_progress(
+                    &spec,
+                    WasmBuildProgressConfig::new(),
+                    |event| {
+                        if let WasmBuildProgressEvent::CargoOutput { bytes, .. } = event {
+                            output.extend_from_slice(&bytes);
+                        }
+                    },
+                )
+            } else {
+                build_wasm_canisters_cached(&spec)
+            }
+            .expect("acquire default library build");
+            assert!(matches!(outcome, WasmBuildOutcome::Built(_)));
+            assert!(
+                fs::read(&outcome.record().artifacts()[0]).expect("read acquired Wasm") == library,
+                "binary must not replace library: shared={shared_target}, observed={observed}",
+            );
+            assert!(!String::from_utf8_lossy(&output).contains("output filename collision"));
+            assert!(matches!(
+                build_wasm_canisters_cached(&spec).expect("reuse canister library"),
+                WasmBuildOutcome::Reused(_)
+            ));
+            drop(baseline);
+            drop(outcome);
+            fs::remove_dir_all(root).expect("remove library-output fixture");
+        }
+    }
+}
+
+#[test]
 fn shared_wasm_target_rejects_binary_only_build_before_publication() {
     let root = unique_temp_dir("ic-testkit-shared-binary-only");
     let workspace = root.join("workspace");

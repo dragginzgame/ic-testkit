@@ -8,6 +8,33 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.15.9
+
+Wasm acquisition now always builds package libraries with Cargo's `--lib` flag.
+Previously, a package containing a binary and a canister library with the same
+name could build successfully while the binary overwrote the library Wasm.
+Both isolated and shared acquisition now publish the library artifact, including
+builds with progress observers.
+
+Remove `--all-targets` from `with_cargo_profile_args`: it now returns
+`WasmBuildError::InvalidSpec` before input resolution or cache work because it
+can reintroduce the collision. Binary, example, test, and bench selectors remain
+rejected. Run those builds separately from canister acquisition. Packages used
+for acquisition must provide a library that produces the declared Wasm output;
+binary-only packages are no longer built by acquisition. Explicit `--lib` remains
+accepted and is included only once in the Cargo invocation.
+
+Fingerprints now include library target selection, triggering a fresh exact
+acquisition after upgrading. Shared Cargo targets can still reuse library
+compilation outputs. Public signatures and persisted layouts are unchanged;
+repository-owned formats remain `v1`.
+
+A real Cargo regression reproduced binary replacement before fixing. It checks
+library bytes and exact-cache reuse for isolated/shared targets and
+observed/silent builds. Focused checks cover early selector rejection and actual
+Cargo arguments in both output modes. Full pre-push validation remains
+maintainer-owned.
+
 ## 0.15.8
 
 This patch prevents stale shared-target canister Wasm publication when Cargo
