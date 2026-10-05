@@ -8,10 +8,10 @@ mod sampling;
 use std::{
     collections::BTreeMap,
     error::Error as StdError,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Read as _, Seek as _},
+    io::{self, Read as _, Seek as _, Write as _},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -140,12 +140,26 @@ struct ScratchOutput {
 
 impl ScratchOutput {
     fn create() -> Result<Self, Error> {
+        Self::create_in(&std::env::temp_dir(), None)
+    }
+
+    fn create_in(parent: &Path, reserved_name: Option<&OsStr>) -> Result<Self, Error> {
         loop {
             let sequence = SCRATCH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-            let directory = std::env::temp_dir().join(format!(
+            let name = format!(
                 "ic-testkit-fixture-benchmark-{}-{sequence}",
                 std::process::id()
-            ));
+            );
+            // Do not allocate the destination itself, even on case-insensitive
+            // filesystems or when an operator uses our temporary-name namespace.
+            if reserved_name.is_some_and(|reserved| {
+                reserved
+                    .as_encoded_bytes()
+                    .eq_ignore_ascii_case(name.as_bytes())
+            }) {
+                continue;
+            }
+            let directory = parent.join(name);
             let mut builder = fs::DirBuilder::new();
             #[cfg(unix)]
             builder.mode(0o700);
@@ -175,6 +189,31 @@ impl Drop for ScratchOutput {
         // or the operator's requested report. Open handles close normally.
         let _ = fs::remove_dir_all(&self.directory);
     }
+}
+
+fn publish_report(
+    output: &Path,
+    write: impl FnOnce(&mut File) -> Result<(), Error>,
+) -> Result<(), Error> {
+    check_interrupted()?;
+    let name = output.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "report path requires a file name",
+        )
+    })?;
+    let parent = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    // The private directory is beside the report, so rename never crosses
+    // filesystems. The destination is untouched until this final commit point.
+    let mut scratch = ScratchOutput::create_in(parent, Some(name))?;
+    write(&mut scratch.file)?;
+    scratch.file.sync_all()?;
+    check_interrupted()?;
+    fs::rename(scratch.directory.join("worker.json"), output)?;
+    Ok(())
 }
 
 struct CapturedRun {
@@ -304,6 +343,32 @@ struct Inputs {
     provenance: Value,
 }
 
+fn tool_program(program: OsString) -> Result<PathBuf, Error> {
+    if program.is_empty() {
+        return Err(
+            io::Error::new(io::ErrorKind::InvalidInput, "tool name must not be empty").into(),
+        );
+    }
+    let path = PathBuf::from(program);
+    // Preserve the invocation name used by multicall proxies such as rustup.
+    // Anchor explicit relative paths before commands switch to the workspace;
+    // bare names retain Command's native PATH lookup.
+    if path.is_relative() && path.components().count() > 1 {
+        Ok(std::env::current_dir()?.join(path))
+    } else {
+        Ok(path)
+    }
+}
+
+fn cargo_command(cargo: &Path, root: &Path, rustc: Option<&Path>) -> Command {
+    let mut command = Command::new(cargo);
+    command.current_dir(root);
+    if let Some(rustc) = rustc {
+        command.env("RUSTC", rustc);
+    }
+    command
+}
+
 fn prepare(options: &Options) -> Result<Inputs, Error> {
     let root = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !root.join("canisters/test/perf_probe/Cargo.toml").is_file() {
@@ -318,19 +383,17 @@ fn prepare(options: &Options) -> Result<Inputs, Error> {
     if !pocket_ic_16(&server_version) {
         return Err(Error::InvalidData("expected pocket-ic-server 16.x.y"));
     }
-    let cargo =
-        resolve_executable(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))?;
+    let cargo = tool_program(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))?;
+    let rustc = std::env::var_os("RUSTC").map(tool_program).transpose()?;
     let metadata: Value = serde_json::from_str(&text_command(
-        Command::new(&cargo)
-            .args([
-                "metadata",
-                "--locked",
-                "--offline",
-                "--no-deps",
-                "--format-version",
-                "1",
-            ])
-            .current_dir(&root),
+        cargo_command(&cargo, &root, rustc.as_deref()).args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--no-deps",
+            "--format-version",
+            "1",
+        ]),
     )?)?;
     let target = metadata["target_directory"]
         .as_str()
@@ -338,34 +401,26 @@ fn prepare(options: &Options) -> Result<Inputs, Error> {
         .ok_or(Error::InvalidData(
             "Cargo metadata lacks absolute target directory",
         ))?;
-    build_command(
-        Command::new(&cargo)
-            .args([
-                "build",
-                "--locked",
-                "--offline",
-                "-p",
-                "ic-testkit",
-                "--profile",
-                &options.profile,
-                "--example",
-                "fixture_reuse_benchmark",
-            ])
-            .current_dir(&root),
-    )?;
-    build_command(
-        Command::new(&cargo)
-            .args([
-                "build",
-                "--locked",
-                "--offline",
-                "--target",
-                "wasm32-unknown-unknown",
-                "-p",
-                "ic_testkit_perf_probe",
-            ])
-            .current_dir(&root),
-    )?;
+    build_command(cargo_command(&cargo, &root, rustc.as_deref()).args([
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "ic-testkit",
+        "--profile",
+        &options.profile,
+        "--example",
+        "fixture_reuse_benchmark",
+    ]))?;
+    build_command(cargo_command(&cargo, &root, rustc.as_deref()).args([
+        "build",
+        "--locked",
+        "--offline",
+        "--target",
+        "wasm32-unknown-unknown",
+        "-p",
+        "ic_testkit_perf_probe",
+    ]))?;
     let worker = Path::new(target)
         .join(if options.profile == "dev" {
             "debug"
@@ -374,7 +429,14 @@ fn prepare(options: &Options) -> Result<Inputs, Error> {
         })
         .join("examples/fixture_reuse_benchmark");
     let wasm = Path::new(target).join("wasm32-unknown-unknown/debug/ic_testkit_perf_probe.wasm");
-    let provenance = provenance(&root, options, &server, &server_version, &wasm)?;
+    let provenance = provenance(
+        &root,
+        options,
+        &server,
+        &server_version,
+        &wasm,
+        rustc.as_deref(),
+    )?;
     Ok(Inputs {
         root,
         server,
@@ -390,6 +452,7 @@ fn provenance(
     server: &Path,
     server_version: &str,
     wasm: &Path,
+    rustc: Option<&Path>,
 ) -> Result<Value, Error> {
     // Capture the selected build and source facts before running cases.
     // SAFETY: sysconf reads the host's online CPU count with no pointer arguments.
@@ -404,7 +467,7 @@ fn provenance(
     Ok(json!({
         "server": server, "server_version": server_version,
         "platform": text_command(Command::new("uname").arg("-srm"))?, "logical_cpus": cpus,
-        "rustc": text_command(Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into())).arg("--version"))?,
+        "rustc": text_command(Command::new(rustc.unwrap_or_else(|| Path::new("rustc"))).arg("--version").current_dir(root))?,
         "revision": text_command(Command::new("git").args(["rev-parse", "HEAD"]).current_dir(root))?,
         "working_tree_dirty": !text_command(Command::new("git").args(["status", "--porcelain"]).current_dir(root))?.is_empty(),
         "host_profile": options.profile, "wasm_profile": "dev", "wasm_sha256": format!("{:x}", Sha256::digest(fs::read(wasm)?)),
@@ -468,9 +531,11 @@ pub fn run() -> Result<(), Error> {
     check_interrupted()?;
     if let Some(output) = &options.output {
         let document = json!({"format": "ic-testkit-fixture-benchmark-v1", "provenance": inputs.provenance, "runs": runs, "summary": summaries});
-        let mut encoded = serde_json::to_vec_pretty(&document)?;
-        encoded.push(b'\n');
-        fs::write(output, encoded)?;
+        publish_report(output, |file| {
+            serde_json::to_writer_pretty(&mut *file, &document)?;
+            file.write_all(b"\n")?;
+            Ok(())
+        })?;
     }
     print_summary(
         &summaries,
@@ -483,12 +548,253 @@ pub fn run() -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Error, REPORT_LIMIT, ScratchOutput, measure, pocket_ic_16};
+    use super::arguments::parse_arguments;
+    use super::{
+        Error, REPORT_LIMIT, ScratchOutput, measure, pocket_ic_16, prepare, publish_report,
+    };
 
     #[cfg(unix)]
     use super::InterruptHandler;
     use serde_json::json;
-    use std::{fs, process::Command};
+    use std::{
+        ffi::OsString,
+        fs,
+        io::{self, Read as _, Write as _},
+        path::{Path, PathBuf},
+        process::Command,
+    };
+
+    #[cfg(unix)]
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    #[cfg(unix)]
+    fn assert_prepared_tool_context(root: &Path, missing: bool) {
+        let options = parse_arguments([
+            OsString::from("--server"),
+            root.join("server").into_os_string(),
+        ])
+        .unwrap()
+        .unwrap();
+        if missing {
+            assert!(
+                matches!(prepare(&options), Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound)
+            );
+        } else {
+            let inputs = prepare(&options).unwrap();
+            assert_eq!(inputs.provenance["rustc"], "fixture rustc");
+            let trace = fs::read_to_string(root.join("trace")).unwrap();
+            let calls = trace.lines().collect::<Vec<_>>();
+            assert!(!calls.is_empty());
+            assert_eq!(calls.len() % 3, 0);
+            for call in calls.chunks_exact(3) {
+                assert_eq!(call[1], inputs.root.to_str().unwrap());
+                if call[0].ends_with("/cargo") || call[0] == "cargo" {
+                    assert!(call[2].contains("--locked"));
+                    assert!(call[2].contains("--offline"));
+                } else {
+                    assert!(call[0].ends_with("/rustc") || call[0] == "rustc");
+                    assert_eq!(call[2], "--version");
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn standalone_tools_preserve_proxy_names_and_workspace_context() {
+        const ROOT_ENV: &str = "IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT";
+        const MISSING_ENV: &str = "IC_TESTKIT_BENCHMARK_TOOL_EXPECT_MISSING";
+        if let Some(root) = std::env::var_os(ROOT_ENV) {
+            assert_prepared_tool_context(
+                &PathBuf::from(root),
+                std::env::var_os(MISSING_ENV).is_some(),
+            );
+            return;
+        }
+
+        let scratch = ScratchOutput::create().unwrap();
+        let root = scratch.directory.canonicalize().unwrap();
+        let bin = root.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let target = root.join("target");
+        let wasm = target.join("wasm32-unknown-unknown/debug/ic_testkit_perf_probe.wasm");
+        fs::create_dir_all(wasm.parent().unwrap()).unwrap();
+        fs::write(wasm, b"\0asm\x01\0\0\0").unwrap();
+        fs::write(
+            root.join("metadata.json"),
+            serde_json::to_vec(&json!({"target_directory": target})).unwrap(),
+        )
+        .unwrap();
+        let proxy = root.join("multicall-proxy");
+        fs::write(
+            &proxy,
+            r#"#!/bin/sh
+set -eu
+printf '%s\n%s\n%s\n' "$0" "$PWD" "$*" >> "$IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT/trace"
+case "${0##*/}" in
+  cargo)
+    if [ -n "${RUSTC-}" ]; then
+      [ "$RUSTC" = "$IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT/bin/rustc" ] || exit 98
+      "$RUSTC" --version >/dev/null
+    fi
+    case "$1" in
+      metadata) cat "$IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT/metadata.json" ;;
+      build) ;;
+      *) exit 96 ;;
+    esac ;;
+  rustc) printf 'fixture rustc\n' ;;
+  *) exit 97 ;;
+esac
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&proxy, fs::Permissions::from_mode(0o700)).unwrap();
+        symlink(&proxy, bin.join("cargo")).unwrap();
+        symlink(&proxy, bin.join("rustc")).unwrap();
+        let server = root.join("server");
+        fs::write(&server, b"#!/bin/sh\nprintf 'pocket-ic-server 16.0.0\\n'\n").unwrap();
+        fs::set_permissions(server, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(bin.clone())
+                .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+        )
+        .unwrap();
+        for (cargo, rustc, missing) in [
+            (None, None, false),
+            (
+                Some(bin.join("cargo").into_os_string()),
+                Some(bin.join("rustc").into_os_string()),
+                false,
+            ),
+            (
+                Some(OsString::from("bin/cargo")),
+                Some(OsString::from("bin/rustc")),
+                false,
+            ),
+            (
+                Some(root.join("missing-cargo").into_os_string()),
+                None,
+                true,
+            ),
+        ] {
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child.args(["--exact", "fixture_reuse_driver::tests::standalone_tools_preserve_proxy_names_and_workspace_context", "--test-threads=1"])
+                .current_dir(&root)
+                .env(ROOT_ENV, &root)
+                .env("PATH", &path)
+                .env_remove("CARGO")
+                .env_remove("RUSTC")
+                .env_remove(MISSING_ENV);
+            if let Some(cargo) = cargo {
+                child.env("CARGO", cargo);
+            }
+            if let Some(rustc) = rustc {
+                child.env("RUSTC", rustc);
+            }
+            if missing {
+                child.env(MISSING_ENV, "1");
+            }
+            let output = child.output().unwrap();
+            assert!(
+                output.status.success(),
+                "tool invocation failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if !missing {
+                fs::remove_file(root.join("trace")).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn report_write_failure_preserves_existing_report_and_cleans_scratch() {
+        let scratch = ScratchOutput::create().unwrap();
+        let report = scratch.directory.join("report.json");
+        fs::write(&report, b"previous complete report").unwrap();
+        let result = publish_report(&report, |file| {
+            file.write_all(b"partial replacement")?;
+            assert_eq!(fs::read(&report).unwrap(), b"previous complete report");
+            Err(io::Error::from(io::ErrorKind::StorageFull).into())
+        });
+        assert!(
+            matches!(result, Err(Error::Io(error)) if error.kind() == io::ErrorKind::StorageFull)
+        );
+        assert_eq!(fs::read(&report).unwrap(), b"previous complete report");
+        assert_eq!(fs::read_dir(&scratch.directory).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn report_rename_failure_preserves_destination_and_cleans_scratch() {
+        let scratch = ScratchOutput::create().unwrap();
+        let report = scratch.directory.join("report.json");
+        fs::create_dir(&report).unwrap();
+        let retained = report.join("retained report.json");
+        fs::write(&retained, b"caller-owned evidence").unwrap();
+        assert!(matches!(
+            publish_report(&report, |file| Ok(file.write_all(b"replacement")?)),
+            Err(Error::Io(_))
+        ));
+        assert_eq!(fs::read(retained).unwrap(), b"caller-owned evidence");
+        assert_eq!(fs::read_dir(&scratch.directory).unwrap().count(), 2);
+        assert!(matches!(
+            publish_report(&scratch.directory.join("missing/report.json"), |_| {
+                panic!("a missing parent must fail before writing")
+            }),
+            Err(Error::Io(error)) if error.kind() == io::ErrorKind::NotFound
+        ));
+    }
+
+    #[test]
+    fn report_replacement_keeps_old_readers_and_publishes_complete_json() {
+        let scratch = ScratchOutput::create().unwrap();
+        let report = scratch.directory.join("report with spaces.json");
+        fs::write(&report, b"previous complete report").unwrap();
+        let mut old_reader = fs::File::open(&report).unwrap();
+        let retained = scratch.directory.join("retained.json");
+        fs::hard_link(&report, &retained).unwrap();
+        let document = json!({"format": "ic-testkit-fixture-benchmark-v1", "complete": true});
+        publish_report(&report, |file| {
+            serde_json::to_writer_pretty(&mut *file, &document)?;
+            Ok(file.write_all(b"\n")?)
+        })
+        .unwrap();
+        let mut previous = String::new();
+        old_reader.read_to_string(&mut previous).unwrap();
+        assert_eq!(previous, "previous complete report");
+        assert_eq!(fs::read(retained).unwrap(), previous.as_bytes());
+        let published = fs::read(&report).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&published).unwrap(),
+            document
+        );
+        assert!(published.ends_with(b"\n"));
+        assert_eq!(fs::read_dir(&scratch.directory).unwrap().count(), 3);
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&report).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn report_replacement_preserves_symlink_target() {
+        let scratch = ScratchOutput::create().unwrap();
+        let target = scratch.directory.join("original.json");
+        let report = scratch.directory.join("linked.json");
+        fs::write(&target, b"caller-owned target").unwrap();
+        symlink(&target, &report).unwrap();
+        publish_report(&report, |file| Ok(file.write_all(b"complete replacement")?)).unwrap();
+        assert!(
+            !fs::symlink_metadata(&report)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(report).unwrap(), b"complete replacement");
+        assert_eq!(fs::read(target).unwrap(), b"caller-owned target");
+    }
 
     #[test]
     fn exact_server_major_is_required() {
@@ -590,5 +896,20 @@ mod tests {
         );
         assert!(matches!(result, Err(Error::Interrupted)));
         assert_eq!(fs::read(finished).unwrap(), b"done");
+
+        let _publication_handler = InterruptHandler::install().unwrap();
+        let report = scratch.directory.join("report.json");
+        fs::write(&report, b"previous complete report").unwrap();
+        let before = fs::read_dir(&scratch.directory).unwrap().count();
+        let result = publish_report(&report, |file| {
+            file.write_all(b"partial replacement")?;
+            // SAFETY: the scoped handler is installed on this isolated test
+            // process; raise delivers SIGINT to the calling thread.
+            assert_eq!(unsafe { libc::raise(libc::SIGINT) }, 0);
+            Ok(())
+        });
+        assert!(matches!(result, Err(Error::Interrupted)));
+        assert_eq!(fs::read(report).unwrap(), b"previous complete report");
+        assert_eq!(fs::read_dir(&scratch.directory).unwrap().count(), before);
     }
 }

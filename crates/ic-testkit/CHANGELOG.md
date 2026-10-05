@@ -8,6 +8,40 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## 0.17.1
+
+The repository-local benchmark publishes `--output` reports with an atomic
+replacement after encoding and syncing private scratch on the destination's
+filesystem. Failed writes, encoding, syncing, observed interruption before
+commit and failed renames preserve the previous report. The parent directory
+must already exist; only driver-owned scratch is cleaned up.
+
+Published Unix reports have mode `0600`. Replacement changes the requested
+directory entry, preserving old readers, hard links and any symlink target.
+Library APIs, report fields, the `v1` format and dependency selections are
+unchanged. Atomic visibility is not a power-loss durability guarantee.
+
+Standalone driver launches retain the Cargo/rustc invocation names required by
+rustup proxies. Cargo and compiler provenance use the repository's workspace
+context. Explicit relative `CARGO`/`RUSTC` overrides resolve from the caller's
+directory, and the selected compiler feeds both builds and provenance. Invalid
+explicit tools propagate failures without selecting another tool.
+
+Focused Linux driver tests and Clippy pass. The released 0.17.0 startup and
+driver checks passed on all three native CI hosts; the new publication and
+tool-launch checks still require a matching native CI run. A deterministic
+subprocess regression failed before the proxy fix and passes afterward.
+A standalone launch from outside the checkout also completed a three-task live
+Linux PocketIC smoke with Cargo/compiler/toolchain overrides unset, using the
+real rustup proxies and locked offline builds. The dev-profile report records
+the workspace-selected Rust 1.99.0 compiler.
+
+A live Linux PocketIC 16.0.0 benchmark completed 108 tasks with three rotating
+repeats over fresh fixtures and pooled capacities one/two, two workers and
+1 MiB of state per canister. A relative output path received the complete
+private report. Its dirty-source provenance and changed Wasm identity describe
+this working-tree run, not a clean released performance baseline.
+
 ## 0.17.0
 
 The repository-local fixture benchmark driver is now a Rust example supporting

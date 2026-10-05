@@ -8,7 +8,7 @@ This opt-in Rust benchmark measures PocketIC 16 fixture construction and warm
 baseline reuse on native Linux and macOS hosts. The live workload does not run
 in ordinary tests or CI, download a server, or change dependency versions.
 Focused driver and native sampler checks run in CI on Linux, Apple Silicon and
-Intel macOS. Native qualification for the new driver requires those runs to pass.
+Intel macOS. Native qualification evidence is recorded in the [host matrix](hosts.md).
 
 ```sh
 cargo fetch --locked
@@ -29,6 +29,15 @@ Wasm SHA-256, workload, raw samples, and mean/p50/p95 summaries. Run from a quie
 host and retain the JSON when comparing changes. The driver is repository-local
 and requires the probe canister checkout. The Python driver and its separate
 test script are retired; use this Cargo entry point directly.
+
+The built `target/debug/examples/fixture_reuse_benchmark_driver` executable can
+also be invoked directly while its repository checkout remains available.
+It uses `CARGO`/`RUSTC` when set and native PATH lookup otherwise, preserving
+rustup proxy names. Cargo and compiler provenance run from the workspace to
+apply its toolchain selection. Explicit relative tool paths are interpreted
+from the caller's directory before commands enter the workspace. The selected
+Rust toolchain and Wasm target must already be installed; an invalid override
+returns failure rather than switching tools.
 
 ## Workload and correctness
 
@@ -55,6 +64,15 @@ can be torn down normally; it does not start another mode or write a partial
 report. Sampling errors also wait for worker cleanup before returning failure.
 Each worker report is bounded to 16 MiB and checked against the requested
 mode, capacity, task count, worker count, state size and phase measurements.
+
+`--output` publishes the completed JSON by encoding into private scratch beside
+the requested path, syncing the file, and atomically renaming it into place.
+The parent directory must already exist. Write, encoding, sync or rename failure,
+and interruption observed before the rename, preserve any previous report.
+Normal completion and failure remove only the driver's scratch. Published Unix
+reports have mode `0600`; replacing a symlink changes the link itself and leaves
+its target untouched. Existing readers and hard links retain the old contents.
+This provides atomic visibility, not a power-loss durability guarantee.
 
 This workload changes only snapshot-contained state. Cycle policy is
 `PreserveCurrent`; time and cycle balances are not asserted to rewind. Reset and
@@ -89,6 +107,51 @@ controlled workload, not a throughput prediction for a downstream suite.
 Lower wall time at capacity two can require more memory. Report both, and avoid
 adding timing thresholds to correctness tests. The existing 100-restore test
 continues to guard correctness independently of this benchmark.
+
+## Rust driver live verification, 2026-10-05
+
+The 0.17.1 publication change was measured in a dirty working tree based on
+`380b328717c22c6f68d27ad8a47537a281acbc1c`. PocketIC 16.0.0 ran on native
+Linux `7.0.0-38-generic x86_64`, with 64 logical CPUs and Rust 1.99.0.
+The workload used the host release profile and probe dev profile, 12 tasks
+per case, two workers, three rotating repeats, and 1 MiB per canister.
+All 108 tasks validated seeded/restored state and subsequent mutations.
+
+| Mode | Median task-loop wall | Median including preparation and instance teardown | Median tasks/s | Median sampled peak MiB |
+| --- | ---: | ---: | ---: | ---: |
+| Fresh | 6.40 s | 6.40 s | 1.88 | 1078 |
+| Pooled, capacity 1 | 1.06 s | 2.17 s | 11.27 | 540 |
+| Pooled, capacity 2 | 0.54 s | 2.63 s | 22.33 | 749 |
+
+The report used `linux-proc-stat`, retained 1,232 RSS observations and was
+published to a relative filename with mode `0600`. Its SHA-256 is
+`8824d3b1d5391384f1c82f38ac72651dd0c20c01133c4a365abcc2b308a6f06b`;
+the captured source diff has SHA-256
+`4a9fca15b3c86383e2c553fc2e33228de56efb7fcf33c758d91f396703eb5c47`.
+The probe Wasm SHA-256 is
+`3651b92bf02d80f75d195467ec0e191831ba65c674c8797d621fdd4dfaa81c17`.
+This is live verification of the current driver and publication path, not a
+clean released baseline. The host and Wasm identity differ from the historical
+measurements below, so these numbers do not establish a release speedup or
+macOS performance.
+
+The retained setup logs include a standalone launch that resolved a rustup
+shim incorrectly, an outside-checkout Cargo invocation whose default toolchain
+lacked the Wasm target, and a sandbox-blocked loopback bind. The completed run
+used the Cargo entry point with `+1.99.0` and local loopback access; builds stayed
+locked and offline. No server or dependency installation was performed.
+The later standalone-launch fix preserves proxy names and workspace toolchain
+context. These measurements precede that fix and retain their original identity.
+
+A subsequent direct launch from outside the checkout, with `CARGO`, `RUSTC`
+and `RUSTUP_TOOLCHAIN` unset, completed one task in each of the three cases
+using real rustup proxies and the workspace's Rust 1.99.0 selection. That smoke
+used the dev workload profile, one worker, one repeat and zero seeded payload;
+it proves standalone tool invocation and complete report publication rather
+than comparable performance. Its report SHA-256 is
+`0fccd4b28437fda9d762e86b91f849d74e6a345e57167a9de7ece70c9d5d0231`,
+and its captured source diff SHA-256 is
+`ae0724dd828c05863187fd97b1de10328d693481006d07bb98fccb47a8ab693d`.
 
 ## Initial sample, 2026-10-04
 

@@ -6,6 +6,51 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.17.1] - 2026-10-05 - Benchmark report and standalone tooling fixes
+
+### Fixed
+
+- Benchmark `--output` reports are encoded into private scratch beside the
+  destination, synced, and atomically renamed into place. Partial writes,
+  encoding errors, sync failures, observed interruption before publication,
+  and rename failures leave the previous report untouched. Scratch cleanup
+  removes only files owned by the driver; parent directories must already exist.
+- Published reports use the staged file's private Unix permissions (`0600`).
+  Replacement operates on the requested directory entry: existing readers and
+  hard links keep the previous contents, and a replaced symlink's target is
+  untouched. Report fields, `v1` format and library APIs are unchanged.
+- Standalone benchmark launches preserve Cargo and rustc proxy names rather
+  than invoking the canonical rustup binary as a different command. Cargo and
+  compiler provenance run from the repository workspace so rustup applies the
+  same toolchain-selection context. Explicit relative `CARGO` and
+  `RUSTC` paths are anchored to the caller's directory before work begins;
+  the same selected compiler is passed to Cargo and used for provenance.
+  Invalid explicit tool selections fail without falling back to another tool.
+
+### Testing
+
+- Focused Linux driver checks pass, including injected storage exhaustion after
+  a partial staged write, a real rename failure, complete JSON replacement,
+  retained readers/hard links, symlink target preservation and interruption
+  before commit. Clippy passes with warnings denied.
+- A subprocess regression reproduces the proxy-name failure before the fix and
+  passes afterward. It exercises PATH lookup, absolute and relative overrides,
+  workspace context, offline build flags and rejection of a missing override
+  with deterministic multicall tool substitutes.
+- A standalone Linux launch from outside the checkout, with `CARGO`, `RUSTC`
+  and `RUSTUP_TOOLCHAIN` unset, used the real rustup proxies and completed a
+  three-task live PocketIC smoke. Builds stayed locked/offline, and the atomic
+  report records the workspace's Rust 1.99.0 compiler. This is dev-profile
+  functional evidence, separate from the earlier 108-task performance run.
+- The released 0.17.0 startup and driver checks passed natively on Linux and
+  ARM64/Intel macOS. The new publication and tool-launch checks require their
+  own native CI run.
+- A live Linux PocketIC 16.0.0 run completed 108 tasks across fresh fixtures and
+  pooled capacities one/two, with three rotating repeats, two workers and 1 MiB
+  of state per canister. The relative output path received a complete `0600`
+  report. Provenance records the dirty working tree and new Wasm identity;
+  this is live functional evidence, not a release-to-release speedup claim.
+
 ## [0.17.0] - 2026-10-05 - Native Rust fixture benchmark tooling
 
 ### Changed

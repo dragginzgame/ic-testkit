@@ -34,7 +34,15 @@ and portable-host checks on Linux and ARM64 macOS. The
 [Intel portable-host job](https://github.com/dragginzgame/ic-testkit/actions/runs/37323482068/job/111808187977)
 failed because the background-reaper fixture exited before startup observed
 its published port. The current test uses an explicit release after reaper
-handoff; it and the new benchmark driver require fresh native CI confirmation.
+handoff.
+
+At `v0.17.0` (`380b328717c22c6f68d27ad8a47537a281acbc1c`), the
+[portable-host checks](https://github.com/dragginzgame/ic-testkit/actions/runs/37329182304)
+passed on all three hosts, including managed-server lifecycle and the native
+benchmark driver/sampler. This confirms the Intel test timing fix and native
+driver behavior for that revision. The new report publication and tool-launch
+checks require a matching native run; these passes are not live benchmark
+measurements.
 
 ## Prerequisites
 
@@ -86,10 +94,11 @@ server test is ignored unless explicitly selected as described in the README.
 Process ownership checks cover leader reaping and descendant termination on
 handle drop, readiness timeout, natural exit and background reaping on both
 Linux and macOS.
-The driver checks include native process observations, report bounds and
-subprocess completion on interruption. They use synthetic workers rather than
-running the live benchmark. Passing Linux checks does not qualify macOS; the
-new driver still needs native ARM64 and Intel CI confirmation.
+The driver checks include native process observations, report bounds, atomic
+report replacement, standalone proxy invocation and subprocess completion on
+interruption. They use synthetic workers rather than running the live benchmark.
+Passing Linux checks does not qualify macOS; the new publication and tool-launch
+checks still need native ARM64 and Intel CI confirmation.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:
