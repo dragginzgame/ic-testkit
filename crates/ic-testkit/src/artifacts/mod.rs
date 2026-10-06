@@ -46,7 +46,6 @@
 mod cache_fs;
 mod digest;
 mod icp;
-mod tool;
 mod transaction;
 mod transaction_batch;
 mod wasm;
@@ -57,12 +56,14 @@ mod workspace;
 #[cfg(test)]
 mod test_support;
 
+#[cfg(all(test, unix))]
+mod host_tests;
+
 pub use cache_fs::{ArtifactCacheMaintenance, ArtifactCachePrunePolicy, ArtifactCachePruneReport};
 pub use digest::InputDigest;
 pub use icp::{
     WatchedInputSnapshot, icp_artifact_ready_for_build, icp_artifact_ready_with_snapshot,
 };
-pub use tool::resolve_executable;
 pub use transaction::{
     ArtifactBuildTransaction, ArtifactCacheArtifact, ArtifactCacheError, ArtifactCacheOutcome,
     ArtifactCachePreparation, ArtifactCacheRecord, ArtifactCacheSpec, ArtifactCacheTimings,

@@ -6,6 +6,35 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.19.0]
+
+### Breaking
+
+- Shared host APIs are available through `ic_testkit::ic_host_tools`. Replace
+  `artifacts::resolve_executable` with the shared Unix resolver using explicit
+  paths and search directories; Wasm reads now require a byte limit and return
+  typed errors. The external-transform example now requires digest/version
+  authority and uses shared verified execution. The shared dependency checker
+  replaces `make actions-check`.
+  See the [migration guide](crates/ic-testkit/CHANGELOG.md#0190).
+
+### Added
+
+- Explicit `make install-tools` setup for pinned local host parsers and IC
+  executables, with offline `tools-check` and dependency declaration checks in
+  CI and release validation.
+
+### Fixed
+
+- Release preparation stops before publishing metadata when README validation
+  fails under macOS's system Bash. Portable release and hook checks enforce
+  their preservation assertions, and metadata fixtures exercise the actual
+  Make callbacks, including rejection of incorrect selected commits
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). See the
+  [package tooling notes](crates/ic-testkit/CHANGELOG.md#0190).
+- Source-tree fingerprinting reuses bounded file buffers and avoids extra native
+  filename copies on Unix, reducing allocations while preserving cache digests.
+
 ## [0.18.3] - 2026-10-06
 
 ### Fixed

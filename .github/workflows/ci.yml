@@ -68,6 +68,12 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Prepare the pinned manifest formatter
         run: make install-format-tools
+      - name: Prepare pinned local host and IC tools
+        run: |
+          make install-tools
+          echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
+          echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
       - name: Run complete CI gate
         run: make ci
 
@@ -94,6 +100,13 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Prepare the pinned manifest formatter
         run: make install-format-tools
+      - name: Prepare pinned local host and IC tools with the system Bash
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        run: |
+          make install-tools
+          echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
+          echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
+          echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
       - name: Select system Bash on macOS
         if: runner.os == 'macOS'
         run: echo /bin >> "$GITHUB_PATH"
@@ -103,14 +116,21 @@ jobs:
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         run: |
           /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
+          make tools-check dependency-pins-check
+          /bin/bash scripts/ci/test-host-tools.sh
+          /bin/bash scripts/ci/test-ic-tools.sh
+          /bin/bash scripts/ci/test-dependency-pins.sh
           /bin/bash scripts/ci/check-release-guards.sh
           /bin/bash scripts/ci/check-installation-version.sh
           /bin/bash scripts/ci/check-publish-guards.sh
-          /bin/bash scripts/ci/check-github-actions-pinned.sh
           /bin/bash scripts/ci/check-git-hooks.sh
           make fmt-check
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+      - name: Check shared host-tool and bounded Wasm integration
+        run: |
+          cargo test -p ic-testkit --locked --offline --lib artifacts::host_tests
+          cargo test -p ic-testkit --locked --offline --lib artifacts::wasm::tests
       - name: Check synthetic PocketIC transport and teardown
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
       - name: Check native fixture benchmark driver and sampler

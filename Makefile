@@ -1,5 +1,5 @@
 .PHONY: \
-	actions-check build-test-canisters check check-wasm ci clean \
+	build-test-canisters check check-wasm ci clean \
 	clippy docs-check ensure-clean fmt fmt-check format-tools-check git-hooks-check help \
 	install-format-tools install-hooks installation-check msrv package publish \
 	publish-dry-run publish-guards-check release-check \
@@ -10,6 +10,12 @@
 	release-tag-check shared-tooling-check tags test test-canisters version
 
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+IC_TOOL_PINS ?= $(REPO_ROOT)ci/ic-tools.tsv
+HOST_TOOL_VERSIONS ?= $(REPO_ROOT)ci/tool-versions.env
+export PATH := $(REPO_ROOT).tools/host/bin:$(REPO_ROOT).tools/ic/bin:$(PATH)
+export POCKET_IC_BIN ?= $(REPO_ROOT).tools/ic/bin/pocket-ic
+
+.PHONY: install-tools tools-check install-host-tools host-tools-check install-ic-tools ic-tools-check dependency-pins-check
 
 MSRV ?= 1.88.0
 .DEFAULT_GOAL := help
@@ -20,7 +26,7 @@ ifneq ($(word 2,$(filter release-patch release-minor release-major release-resum
 $(error Select exactly one release target)
 endif
 
-CI_TARGETS := shared-tooling-check installation-check actions-check publish-guards-check \
+CI_TARGETS := shared-tooling-check tools-check dependency-pins-check installation-check publish-guards-check \
 	release-guards-check git-hooks-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
@@ -29,6 +35,9 @@ RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 help:
 	@echo "Available commands:"
 	@echo ""
+	@echo "  install-tools   Explicitly install pinned local jq/yq and IC executables"
+	@echo "  tools-check     Verify installed host and IC tools offline"
+	@echo "  dependency-pins-check Check dependency declarations and tracked lockfiles offline"
 	@echo "  install-format-tools Install the pinned manifest formatter during setup"
 	@echo "  install-hooks   Enable the repository-local formatting hook"
 	@echo "  fmt             Sort Cargo manifests and format all workspace Rust code"
@@ -81,7 +90,30 @@ format-tools-check:
 
 install-format-tools:
 	@. "$(REPO_ROOT)ci/tool-versions.env"; \
-		cargo install cargo-sort --version "$$IC_TESTKIT_CARGO_SORT_VERSION" --locked
+		cargo install cargo-sort --version "$$SHARED_TOOLING_CARGO_SORT_VERSION" --locked
+
+install-tools:
+	+$(MAKE) --no-print-directory install-host-tools
+	+$(MAKE) --no-print-directory install-ic-tools
+
+tools-check:
+	+$(MAKE) --no-print-directory host-tools-check
+	+$(MAKE) --no-print-directory ic-tools-check
+
+install-host-tools:
+	bash scripts/dev/install-host-tools.sh --versions "$(HOST_TOOL_VERSIONS)"
+
+host-tools-check:
+	bash scripts/dev/install-host-tools.sh --versions "$(HOST_TOOL_VERSIONS)" --check
+
+install-ic-tools:
+	bash scripts/dev/install-ic-tools.sh --pins "$(IC_TOOL_PINS)"
+
+ic-tools-check:
+	bash scripts/dev/install-ic-tools.sh --pins "$(IC_TOOL_PINS)" --check
+
+dependency-pins-check:
+	bash scripts/ci/check-dependency-pins.sh
 
 install-hooks: format-tools-check
 	bash scripts/dev/install-git-hooks.sh
@@ -114,9 +146,6 @@ shared-tooling-check:
 
 msrv:
 	cargo +$(MSRV) check -p ic-testkit --locked
-
-actions-check:
-	bash scripts/ci/check-github-actions-pinned.sh
 
 installation-check:
 	bash scripts/ci/check-installation-version.sh

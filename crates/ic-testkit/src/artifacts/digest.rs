@@ -71,11 +71,17 @@ impl std::fmt::Display for InputDigest {
     }
 }
 
-pub(super) struct InputHasher(Sha256);
+pub(super) struct InputHasher {
+    state: Sha256,
+    read_buffer: Vec<u8>,
+}
 
 impl InputHasher {
     pub(super) fn new(domain: &str) -> Self {
-        let mut hasher = Self(Sha256::new());
+        let mut hasher = Self {
+            state: Sha256::new(),
+            read_buffer: Vec::new(),
+        };
         hasher.field("domain", domain.as_bytes());
         hasher
     }
@@ -85,17 +91,17 @@ impl InputHasher {
             label,
             u64::try_from(value.len()).expect("input value length must fit in u64"),
         );
-        self.0.update(value);
+        self.state.update(value);
     }
 
     fn field_header(&mut self, label: &str, value_len: u64) {
-        self.0.update(
+        self.state.update(
             u64::try_from(label.len())
                 .expect("input label length must fit in u64")
                 .to_le_bytes(),
         );
-        self.0.update(label.as_bytes());
-        self.0.update(value_len.to_le_bytes());
+        self.state.update(label.as_bytes());
+        self.state.update(value_len.to_le_bytes());
     }
 
     fn file_field(&mut self, label: &str, path: &Path) -> io::Result<u64> {
@@ -108,9 +114,17 @@ impl InputHasher {
         // Even empty files need a nonempty read buffer to detect growth.
         let buffer_len = usize::try_from(expected_len.clamp(1, 64 * 1024))
             .expect("bounded artifact buffer length must fit in usize");
-        let mut buffer = vec![0_u8; buffer_len];
+        // A tree hashes many files with one hasher. Retain its bounded scratch
+        // space, reading only this file's window and hashing only returned bytes.
+        if self.read_buffer.len() < buffer_len {
+            // Geometric growth near the read limit would retain almost twice
+            // the scratch space required by any file in this hashing pass.
+            self.read_buffer
+                .reserve_exact(buffer_len - self.read_buffer.len());
+            self.read_buffer.resize(buffer_len, 0);
+        }
         loop {
-            let read = file.read(&mut buffer)?;
+            let read = file.read(&mut self.read_buffer[..buffer_len])?;
             if read == 0 {
                 break;
             }
@@ -119,7 +133,7 @@ impl InputHasher {
             if actual_len > expected_len {
                 break;
             }
-            self.0.update(&buffer[..read]);
+            self.state.update(&self.read_buffer[..read]);
         }
         if actual_len != expected_len {
             return Err(io::Error::new(
@@ -133,7 +147,7 @@ impl InputHasher {
     }
 
     pub(super) fn finish(self) -> InputDigest {
-        InputDigest(self.0.finalize().into())
+        InputDigest(self.state.finalize().into())
     }
 }
 
@@ -171,14 +185,20 @@ pub(super) fn read_stamp_with_limit(path: &Path, maximum_len: usize) -> io::Resu
 
 /// Read at most the format's maximum length plus one byte to detect oversized files.
 pub(super) fn read_file_with_limit(path: &Path, maximum_len: usize) -> io::Result<Option<Vec<u8>>> {
-    let mut contents = Vec::with_capacity(maximum_len + 1);
-    File::open(path)?
-        .take((maximum_len + 1) as u64)
-        .read_to_end(&mut contents)?;
-    if contents.len() > maximum_len {
-        return Ok(None);
+    use ic_host_tools::artifact::{ArtifactError, read_file};
+
+    // The shared library owns bounded reading and allocation. Cache policy owns
+    // the meaning of overflow: an oversized stamp or manifest is a cache miss.
+    match read_file(path, maximum_len) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(ArtifactError::LimitExceeded { .. }) => Ok(None),
+        Err(ArtifactError::Io(source)) => Err(source),
+        Err(ArtifactError::NotRegularFile) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            ArtifactError::NotRegularFile,
+        )),
+        Err(error) => Err(io::Error::other(error)),
     }
-    Ok(Some(contents))
 }
 
 /// Only reuse an independent, caller-owned writable destination. The caller
@@ -427,14 +447,21 @@ fn hash_path(
 
     let mut entries = fs::read_dir(path)
         .map_err(context)?
+        .map(|entry| entry.map(|entry| entry.file_name()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(context)?;
-    entries.sort_by_cached_key(|entry| os_bytes(&entry.file_name()).into_owned());
-    for entry in entries {
+    // Unix names already own their native byte ordering. Compare borrowed
+    // bytes rather than allocating a second name and cached key per entry.
+    #[cfg(unix)]
+    entries.sort_unstable_by(|left, right| os_bytes(left).cmp(&os_bytes(right)));
+    // Other hosts may need an allocated native encoding; compute it once.
+    #[cfg(not(unix))]
+    entries.sort_by_cached_key(|name| os_bytes(name).into_owned());
+    for name in entries {
         hash_path(
             hasher,
-            &label.join(entry.file_name()),
-            &entry.path(),
+            &label.join(&name),
+            &path.join(&name),
             excluded_roots,
             visited_directories,
             false,
@@ -653,6 +680,25 @@ mod tests {
     fn native_names_preserve_utf16_little_endian_encoding() {
         let value = OsString::from_wide(&[0x0061, 0xd800, 0x0100]);
         assert_eq!(super::os_bytes(&value).as_ref(), &[0x61, 0, 0, 0xd8, 0, 1]);
+    }
+
+    #[test]
+    fn streamed_fields_preserve_bytes_across_different_file_sizes() {
+        let root = unique_temp_directory("streamed-field-sizes");
+        let source = root.join("source");
+        let contents = (0..192 * 1024 + 37)
+            .map(|index| u8::try_from(index % 251).unwrap())
+            .collect::<Vec<_>>();
+        let mut streamed = super::InputHasher::new("streamed-fields-v1");
+        let mut expected = super::InputHasher::new("streamed-fields-v1");
+        for length in [1, 64 * 1024 - 1, contents.len(), 0, 7, 1024, 64 * 1024 + 1] {
+            let bytes = &contents[..length];
+            fs::write(&source, bytes).unwrap();
+            assert_eq!(streamed.file_field("part", &source).unwrap(), length as u64);
+            expected.field("part", bytes);
+        }
+        assert_eq!(streamed.finish(), expected.finish());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

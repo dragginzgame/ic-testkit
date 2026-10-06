@@ -1,4 +1,5 @@
 /target/
+/.tools/
 /.shared-tooling-refresh.*/
 # Atomic release publication stages beside files in these two directories.
 /.release-metadata.*

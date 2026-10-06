@@ -85,8 +85,14 @@ documentation guard for that revision, including Intel macOS. It precedes the
   hooks, manifest sorting, and independent CI/release formatting checks.
   Hook setup and formatting checks also require an already prepared `rustfmt`
   component; use `rustup component add rustfmt` during explicit setup.
-- `cloc` and `jq` for `make cloc`. These are optional for builds; install them
-  using the host's package manager before requesting a LOC report.
+- `curl`, gzip and xz-capable tar for explicit tool setup. Run `make install-tools`
+  to prepare pinned jq/yq and IC executables locally, then `make tools-check` for
+  offline byte/version verification. Versions and native digests have one owner
+  in `ci/tool-versions.env` and `ci/ic-tools.tsv`. See the shared
+  [bootstrap instructions](local-setup.md#bootstrap-prerequisites).
+  Make selects `.tools/host/bin` and `.tools/ic/bin`; direct Cargo calls use the
+  explicit PATH and `POCKET_IC_BIN` exports in the README.
+- `cloc` for the optional LOC report; jq comes from local host-tool setup.
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
   `POCKET_IC_BIN` to its exact local path to avoid upstream automatic download.
   Managed startup takes an explicit caller-provided binary and owns its child.
@@ -119,6 +125,10 @@ files. Fixtures cover later documentation, changed/missing/non-regular selected
 files, complete-output inspection failure and retained evidence preservation.
 Preparation and recovery reject symlinks in retained metadata before copying
 backups or publishing files, preserving current metadata and linked targets.
+README preparation explicitly checks both commands and their subshell result
+before recording readiness or publishing metadata. Metadata fixture assertions
+and command-stub admission use explicit rejection because Bash 3.2 does not
+apply `errexit` to standalone conditional commands.
 After partial metadata publication, preflight checks offline caches using the
 verified saved workspace and unchanged member manifests. It does not rewrite
 the mixed live manifest/lockfile to perform that check or repeat validation.
@@ -159,6 +169,10 @@ inputs. The shell guards use fixtures and mock external commands:
 
 ```bash
 /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
+make tools-check dependency-pins-check
+/bin/bash scripts/ci/test-host-tools.sh
+/bin/bash scripts/ci/test-ic-tools.sh
+/bin/bash scripts/ci/test-dependency-pins.sh
 make format-tools-check
 make fmt-check
 /bin/bash scripts/ci/check-git-hooks.sh
@@ -166,8 +180,9 @@ cargo fetch --locked
 /bin/bash scripts/ci/check-release-guards.sh
 /bin/bash scripts/ci/check-installation-version.sh
 /bin/bash scripts/ci/check-publish-guards.sh
-/bin/bash scripts/ci/check-github-actions-pinned.sh
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+cargo test -p ic-testkit --locked --offline --lib artifacts::host_tests
+cargo test -p ic-testkit --locked --offline --lib artifacts::wasm::tests
 cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
 cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency
@@ -206,11 +221,12 @@ The maintainer owns full pre-push, release and publication gates. Agents run
 only checks affected by their authorized changes.
 
 The adopted release runner and formatting hook come from reviewed Shared Tooling
-revision `9437bab201bb6071da0bdc4de0336daf553113f5`. Release guard checks exercise its
+revision `a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3`. Release guard checks exercise its
 patch/minor/major ordering, explicit staging, atomic branch/tag push and exact
 automatic recovery, including fresh validation-only retries, with command stubs.
-Consumer metadata checks use isolated workspaces, real offline Cargo metadata and manifest
-sorting, and substituted Git/validation commands, so they do not commit, tag,
+Consumer metadata checks use the actual Make callbacks in isolated workspaces,
+copied consumer helpers, real offline Cargo metadata and manifest sorting,
+and substituted Git/validation commands, so they do not commit, tag,
 push or publish. Consumer hook checks use isolated indexes with this repository's
 actual Make targets and tracked lockfile, real Cargo/rustfmt, and a substituted
 failing target for rejection. The canonical upstream fixture now preserves
@@ -222,6 +238,9 @@ automatic refresh, unrelated-edit and lockfile preservation, partial staging,
 formatter failure, idempotence and installer refusal of another hook path.
 Local hook activation uses `make install-hooks`; verify the effective
 `git config --get core.hooksPath` separately from `make fmt-check`.
+Consumer hook assertions explicitly stop on failure under Bash 3.2, including
+index preservation, activation and the offline formatter environment; strict
+mode alone does not enforce standalone conditional commands on that shell.
 The reviewed installer canonicalizes both its own root and Git's repository
 root; qualification fixtures canonicalize their private temporary directories.
 An aliased-directory setup case exercises the actual Make target, including
@@ -267,3 +286,47 @@ completed successfully. This qualifies the digest-status, raw-byte and README
 preparation checks on all three native hosts. It precedes the 0.18.3 adoption
 of Shared Tooling `9437bab201bb6071da0bdc4de0336daf553113f5` and the consumer's
 selected-commit metadata checks; those changes need matching native CI.
+
+At `v0.18.3` (`b6fbfe8fbaf75bef03473325451b8d363701b52b`), the
+[ARM64 macOS checks](https://github.com/dragginzgame/ic-testkit/actions/runs/37430485768/job/112159943359)
+and [Intel macOS portable checks](https://github.com/dragginzgame/ic-testkit/actions/runs/37430485482/job/112159942819)
+failed because a Git stub continued after receiving the wrong selected commit under
+system Bash 3.2. Enforcing the fixture assertions also reproduced publication
+after failed README validation in a subshell. The pending 0.18.4 checks pass
+locally under privately built GNU Bash 3.2.57 on Linux, using real offline Cargo
+metadata and substituted Git/validation commands. That shell reproduction does
+not qualify the change on native macOS; matching CI remains required.
+
+The developer setup prepared before host-library integration adopts Shared Tooling 0.1.6 at
+`a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3`, whose
+[upstream workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37450707625)
+passed. On Linux, explicit installation of the actual pinned jq/yq and six IC
+executables, offline byte/version verification, dependency declarations,
+installer rejection/preservation fixtures, formatting, consumer hooks and
+release guards passed. Installer and declaration fixtures also passed under
+privately built GNU Bash 3.2.57 on Linux. The initial sandboxed host installation
+failed DNS resolution and retained its staging directory; explicitly authorized
+network setup then passed without changing pins. Upstream qualification and
+Linux shell substitutes do not qualify this consumer on native macOS. Its
+portable CI matrix now performs explicit installation, offline checks and those
+fixtures on all three declared hosts; matching runs remain required.
+
+Pending release 0.19.0 adds the registry `ic-host-tools` 0.1.10 dependency and
+removes local executable resolution in favor of its explicit Unix resolver.
+`read_wasm` uses its bounded, typed file reader; cache sidecar reads keep their
+local miss/error policy and retained identities. Portable native jobs select
+focused transactional admitted-tool and bounded-Wasm integration tests in
+addition to the benchmark driver. These changes require their own matching
+native qualification; earlier 0.18 checks do not qualify them. Rust toolchain,
+MSRV and supported host requirements are unchanged. Package versions remain
+maintainer-owned until the minor release is prepared.
+
+Local Linux checks for this pending integration passed: shared admitted-tool
+transaction publication/reuse and changed-executable rejection, bounded Wasm
+reads, watched-input and Wasm stamp recovery, malformed manifest recovery, the
+benchmark driver/sampler, all-target Clippy, Rust 1.88 host compilation and the
+canister-target check. Actual runs of the external-transform example built then
+reused output; wrong digest and version authority rejected before changing its
+public output. The registry archive digest matches the lockfile, and its source
+matches reviewed upstream commit `e9417d0afb83c2a596fada3671fe941ac01ca2ae`.
+These are local consumer checks, not a complete gate or native macOS evidence.

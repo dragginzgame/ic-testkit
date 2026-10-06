@@ -1206,9 +1206,38 @@ indexed error, and later entries still run.
 `ResolvedCargoBuildInputs::is_current` resolves the semantic fingerprint again,
 while `is_content_current` cheaply rehashes the conservative validation paths.
 The generic builders preserve dynamic and non-UTF-8 argument and environment
-bytes. Use
-`resolve_executable` to turn a bare `PATH` program into a canonical executable
-file before declaring it through `ArtifactCacheSpec::with_tool`.
+bytes. Shared host operations come from the complete upstream
+`ic_testkit::ic_host_tools` re-export. For Unix tool selection, use
+`ic_host_tools::tool::resolve_executable(requested, current_dir, search_directories)`
+with an absolute working directory and explicit search order before declaring
+the selected path through `ArtifactCacheSpec::with_tool`. Resolution reads no
+ambient `PATH`; filesystem errors stop search. It selects a path without admitting
+it for execution. `ic_host_tools::tool::AdmittedTool` adds caller-supplied digest
+and exact version admission, bounded output, an explicit environment and a deadline
+for external transforms. Keep the executable and its parent directories protected
+from concurrent writers during admission and execution.
+
+`read_wasm(target_dir, crate_name, profile_target_dir, max_bytes)` now returns
+`Result<Vec<u8>, ic_host_tools::artifact::ArtifactError>`. The caller chooses the
+byte limit; failures are typed rather than panics. Shared `artifact`, `wasm`,
+`archive`, `response`, `tool`, `candid` and `provenance` APIs stay with their
+upstream owner (execution, resolution, Candid and provenance are Unix-only).
+Structural Wasm inspection does not replace PocketIC's runtime validation.
+
+The `transactional_artifact_cache` example uses shared digest/version admission
+and bounded execution for its transformer. Supply a reviewed raw executable
+SHA-256 and the exact trimmed stdout of its `--version` command:
+
+```bash
+cargo run -p ic-testkit --locked --offline --example transactional_artifact_cache -- \
+  /path/to/transformer "$TOOL_SHA256" 'transformer 1.0.0' \
+  input.wasm output.wasm target/transform-cache
+```
+
+It runs with an empty environment, a 60-second deadline and 64 KiB per output
+stream, admitting executables up to 256 MiB. A failed admission or execution
+does not commit output. The operator owns interpreter/library trust and any
+effects the transform has beyond its declared output.
 
 External transforms derived from a Cargo package closure can pass both the
 build spec and its resolved snapshot to
@@ -1484,10 +1513,25 @@ the pinned `cargo-sort` executable, and the reviewed repository-local hook:
 
 ```bash
 rustup component add rustfmt
+make install-tools
 make install-format-tools install-hooks
+make tools-check dependency-pins-check
 ```
 
-The selected version is recorded in `ci/tool-versions.env` and used by CI too.
+The selected versions are recorded in `ci/tool-versions.env` and `ci/ic-tools.tsv`
+and used by CI too. `make install-tools` prepares pinned jq/yq and the common
+IC executables under `.tools/host/bin` and `.tools/ic/bin`. Make selects those
+directories and the local PocketIC server; direct Cargo commands should export
+them explicitly:
+
+```bash
+export PATH="$PWD/.tools/host/bin:$PWD/.tools/ic/bin:$PATH"
+export POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic"
+```
+
+See [bootstrap prerequisites](docs/local-setup.md#bootstrap-prerequisites) and
+[IC tool identities](docs/ic-tools.md). Offline checks verify the prepared
+tools and dependency declarations without downloading or upgrading anything.
 Setup installs tools explicitly; formatting never installs or fetches them.
 Hook activation and formatting checks reject missing formatter prerequisites.
 `make fmt` sorts every workspace Cargo manifest before formatting all Rust code.

@@ -11,7 +11,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     fs::{self, File, OpenOptions},
-    io::{self, Read as _, Seek as _, Write as _},
+    io::{self, Seek as _, Write as _},
     path::{Path, PathBuf},
     process::{Command, ExitStatus, Stdio},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
@@ -25,15 +25,21 @@ use std::os::unix::{
     process::CommandExt as _,
 };
 
-use ic_testkit::artifacts::{resolve_executable, workspace_root_for};
+use ic_testkit::{
+    artifacts::workspace_root_for,
+    ic_host_tools::{
+        artifact::{ArtifactError, hash_file, read_opened_file},
+        tool::{ResolutionError, resolve_executable},
+    },
+};
 use serde_json::{Map, Value, json};
-use sha2::{Digest as _, Sha256};
 
 use arguments::{HELP, Options, parse_arguments};
 use report::{MeasuredRun, Summary, summarize};
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 const REPORT_LIMIT: u64 = 16 * 1024 * 1024;
+const WASM_LIMIT: u64 = 128 * 1024 * 1024;
 static SCRATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
@@ -43,6 +49,8 @@ pub enum Error {
     InvalidData(&'static str),
     Io(io::Error),
     Json(serde_json::Error),
+    Artifact(ArtifactError),
+    Resolution(ResolutionError),
     CommandFailed {
         program: PathBuf,
         status: ExitStatus,
@@ -57,6 +65,8 @@ impl fmt::Display for Error {
             Self::InvalidData(message) => write!(f, "invalid benchmark data: {message}"),
             Self::Io(error) => error.fmt(f),
             Self::Json(error) => error.fmt(f),
+            Self::Artifact(error) => error.fmt(f),
+            Self::Resolution(error) => error.fmt(f),
             Self::CommandFailed { program, status } => {
                 write!(f, "{} exited with {status}", program.display())
             }
@@ -70,6 +80,8 @@ impl StdError for Error {
         match self {
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
+            Self::Artifact(error) => Some(error),
+            Self::Resolution(error) => Some(error),
             _ => None,
         }
     }
@@ -254,11 +266,13 @@ fn measure(command: &mut Command) -> Result<CapturedRun, Error> {
             status,
         });
     }
-    if scratch.file.metadata()?.len() > REPORT_LIMIT {
-        return Err(Error::InvalidData("worker JSON exceeds 16 MiB"));
-    }
     scratch.file.rewind()?;
-    let raw = serde_json::from_reader((&mut scratch.file).take(REPORT_LIMIT + 1))?;
+    let bytes = read_opened_file(
+        scratch.file.try_clone()?,
+        usize::try_from(REPORT_LIMIT).expect("report limit fits supported hosts"),
+    )
+    .map_err(Error::Artifact)?;
+    let raw = serde_json::from_slice(&bytes)?;
     Ok(CapturedRun { raw, rss })
 }
 
@@ -378,7 +392,8 @@ fn prepare(options: &Options) -> Result<Inputs, Error> {
     }
     // The operator supplies an exact path. Canonicalization prevents a bare name
     // from silently turning into discovery through PATH.
-    let server = resolve_executable(fs::canonicalize(&options.server)?)?;
+    let server = resolve_executable(&fs::canonicalize(&options.server)?, &root, &[])
+        .map_err(Error::Resolution)?;
     let server_version = text_command(Command::new(&server).arg("--version"))?;
     if !pocket_ic_16(&server_version) {
         return Err(Error::InvalidData("expected pocket-ic-server 16.x.y"));
@@ -470,7 +485,7 @@ fn provenance(
         "rustc": text_command(Command::new(rustc.unwrap_or_else(|| Path::new("rustc"))).arg("--version").current_dir(root))?,
         "revision": text_command(Command::new("git").args(["rev-parse", "HEAD"]).current_dir(root))?,
         "working_tree_dirty": !text_command(Command::new("git").args(["status", "--porcelain"]).current_dir(root))?.is_empty(),
-        "host_profile": options.profile, "wasm_profile": "dev", "wasm_sha256": format!("{:x}", Sha256::digest(fs::read(wasm)?)),
+        "host_profile": options.profile, "wasm_profile": "dev", "wasm_sha256": hash_file(wasm, WASM_LIMIT).map_err(Error::Artifact)?.sha256.to_string(),
         "rss_sample_interval_ms": SAMPLE_INTERVAL.as_millis(), "rss_sampler": sampling::source(),
         "iterations": options.iterations.get(), "workers": options.workers.get(), "repeats": options.repeats.get(),
         "state_bytes_per_canister": options.state_bytes, "modes": options.modes.iter().map(|mode| mode.as_str()).collect::<Vec<_>>(),
@@ -850,7 +865,12 @@ esac
                 .args(["-c", "cat \"$1\"", "large-worker"])
                 .arg(&input),
         );
-        assert!(matches!(result, Err(Error::InvalidData(_))));
+        assert!(matches!(
+            result,
+            Err(Error::Artifact(
+                ic_testkit::ic_host_tools::artifact::ArtifactError::LimitExceeded { .. }
+            ))
+        ));
         assert_eq!(fs::metadata(input).unwrap().len(), REPORT_LIMIT + 1);
         assert!(matches!(
             measure(Command::new("/bin/sh").args(["-c", "printf 'not json'"])),

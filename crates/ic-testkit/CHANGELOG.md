@@ -8,6 +8,98 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.19.0]
+
+### Shared host APIs and migration
+
+The host-only dependency `ic-host-tools` 0.1.10 is selected from crates.io and
+re-exported as `ic_testkit::ic_host_tools`; no sibling checkout enters builds.
+Consumers use its canonical bounded reads, Wasm inspection, archive/response
+decoding and verified executable APIs directly. Unix-only executable, Candid
+and provenance operations retain the upstream platform contract.
+
+The local `artifacts::resolve_executable` API and implementation are removed.
+Use `ic_testkit::ic_host_tools::tool::resolve_executable(&requested, &absolute_cwd,
+&search_directories)`. The shared resolver reads no ambient PATH, returns
+`ResolutionError`, and stops on filesystem errors such as a non-directory search
+entry instead of silently selecting a later executable. Resolution alone does
+not admit execution. For transforms, use shared `AdmittedTool` with exact
+digest/version authority and explicit environment, output bounds and deadline;
+declare the same executable in `ArtifactCacheSpec::with_tool`.
+
+`read_wasm` requires a fourth `max_bytes: usize` argument and returns
+`Result<Vec<u8>, ic_host_tools::artifact::ArtifactError>` instead of panicking.
+Handle or propagate the typed failure. Reads follow links in caller-controlled
+target directories, reject non-regular files, and enforce the bound independently
+of metadata. They do not validate Wasm. The shared reader also replaces local
+cache-sidecar allocation/read loops while preserving oversized-data cache misses,
+UTF-8 checks, digest framing and retained `v1` cache layouts and identities.
+
+The fixture benchmark uses shared bounded descriptor reads for its 16 MiB report
+budget and shared streaming raw SHA-256 for its 128 MiB Wasm budget. Report
+overflow is now a shared typed artifact error; reported digests remain raw SHA-256.
+The shared parser-based `dependency-pins-check` replaces the local action scanner
+and `actions-check` target. Native portable jobs exercise shared admitted tools
+through transactional output publication and bounded Wasm reads. Cargo build
+progress, benchmark worker ownership and PocketIC process-tree cleanup remain
+with their consumer owners; shared execution owns direct-child capture only.
+
+The transactional external-transform example removes direct `Command` execution
+and delegates admission and capture to shared `AdmittedTool`. Its arguments now
+include the reviewed raw executable SHA-256 and exact trimmed version stdout:
+`<tool-path> <sha256> <exact-version-stdout> <input> <public-output> <cache-root>`.
+Admission is required before cache lookup and rechecked before running. The
+example uses an empty environment, a 256 MiB executable bound, 64 KiB per output
+stream and a 60-second deadline. Its recipe identity becomes
+`example/admitted-transform/v1`, so outputs produced by the former inherited
+environment are rebuilt rather than reused. Existing cache entries remain
+preserved under the unchanged layout. Failures preserve the uncommitted transaction's
+normal recovery disposition. Callers retain interpreter/library trust and
+responsibility for effects outside the declared staging output.
+
+### Developer setup and retained fixes
+
+Developer setup adopts Shared Tooling 0.1.6 at
+`a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3`. `make install-tools` explicitly
+prepares pinned jq/yq and quill, icp, didc, ic-wasm, PocketIC and wasm-opt under
+the checkout's `.tools/` directory. Make selects the local executable paths
+and PocketIC binary. `make tools-check` verifies installed bytes and versions
+offline; `make dependency-pins-check` checks dependency declarations and tracked
+workspace lockfiles without changing dependency selections. Both checks are in
+the complete CI/release gates, and CI explicitly prepares tools first. Native
+portable jobs also exercise installer rejection and preservation fixtures.
+Existing developers should run `make install-tools` before those complete gates;
+ordinary focused Cargo checks do not require this toolset. Rust toolchain,
+MSRV, cargo-sort version and PocketIC client major version are unchanged.
+
+Release metadata preparation explicitly checks README rewriting and validation,
+including the subshell result, before recording readiness or publishing files.
+This preserves live metadata when either maintained installation example is
+malformed or duplicated under Bash 3.2, the macOS system shell.
+
+The portable metadata fixtures also reject unexpected Git/Make commands and
+enforce their file, version, validation-log and gate-count assertions explicitly.
+Bash 3.2's `set -e` alone does not stop standalone conditional commands; relying
+on it caused the selected-commit rejection fixture to fail in native macOS CI
+and left other assertions unenforced. Consumer hook qualification now explicitly
+enforces formatting, index preservation, hook activation and formatter-policy
+assertions too. Metadata fixtures use the repository's actual Make callbacks
+with copied consumer helpers, while substituting Git effects and the complete
+validation gate
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). Those release-metadata
+fixes preserve package metadata and retained `v1` formats; the public API cuts
+in this release are listed above.
+
+Source-tree fingerprinting reuses one file-read buffer per hashing pass, bounded
+at 64 KiB, instead of allocating it for each file. Growth reserves the required
+space explicitly to avoid geometric over-allocation near that limit.
+Directory traversal retains
+filenames once and compares borrowed native bytes on Unix; other platforms keep
+cached encoded sort keys. Digest domains, field encoding, native filename order,
+size-change detection and retained cache keys are unchanged. File-digest coverage
+includes successive small, large and empty fields to verify that reused scratch
+bytes never enter a later field's digest.
+
 ## [0.18.3] - 2026-10-06
 
 The reviewed Shared Tooling snapshot advances to

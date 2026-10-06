@@ -216,10 +216,14 @@ case "$mode" in
           > "$prepared/new/$file"
       done
       (
-        cd "$prepared/new"
-        bash "$script_dir/../ci/check-installation-version.sh" --rewrite "$RELEASE_VERSION"
-        bash "$script_dir/../ci/check-installation-version.sh" "$RELEASE_VERSION"
-      )
+        # Bash 3.2 does not stop the parent on a failed subshell. Check every
+        # command explicitly before publishing the readiness record or files.
+        cd "$prepared/new" || fail "cannot enter prepared workspace"
+        bash "$script_dir/../ci/check-installation-version.sh" --rewrite "$RELEASE_VERSION" \
+          || fail "cannot prepare installation requirements"
+        bash "$script_dir/../ci/check-installation-version.sh" "$RELEASE_VERSION" \
+          || fail "prepared installation requirements are invalid"
+      ) || fail "installation preparation failed"
       prepared_identity > "$prepared/ready.tmp"
       mv "$prepared/ready.tmp" "$prepared/ready"
     fi

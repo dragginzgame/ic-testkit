@@ -19,6 +19,7 @@ readme = "README.md"
 candid = { version = "0.10", default-features = false }
 fs2 = "0.4"
 ic-cdk = "0.20.2"
+ic-host-tools = "0.1.10"
 ic-testkit = { path = "crates/ic-testkit" }
 libc = "0.2"
 pocket-ic = "16.0"

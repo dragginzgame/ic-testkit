@@ -48,6 +48,11 @@ setup, examples, local checks, and release notes.
 The [documentation index](https://github.com/dragginzgame/ic-testkit/blob/main/docs/README.md)
 links current usage guidance and historical design records.
 
+Host-only bounded artifact and verified executable APIs are available through
+the complete `ic_testkit::ic_host_tools` re-export. The pending
+[0.19 migration guide](CHANGELOG.md#0190) covers explicit tool resolution,
+bounded fallible `read_wasm`, and verified external-transform arguments.
+
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
 the [0.14.0 standalone pool migration](CHANGELOG.md#0140),
 the [0.13.0 benchmark and reset-requirement migration](CHANGELOG.md#0130),

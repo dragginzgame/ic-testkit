@@ -27,6 +27,10 @@ Use `make shared-tooling-check` after snapshot changes and the focused commands
 listed in that matrix after portable tooling changes. Full CI and release gates
 remain maintainer-owned unless explicitly requested.
 
-Developer setup uses `make install-format-tools install-hooks`. Formatting and
+Developer setup uses `make install-tools`, then `make install-format-tools install-hooks`.
+`make tools-check` and `make dependency-pins-check` verify prepared selections
+offline; they never install tools. Shared audit methods live in `audits/`;
+product boundaries and focused qualification remain in this overlay and the
+host matrix. Formatting and
 manifest ordering follow `rules/git-hooks.md`; `make fmt-check` is the focused,
 non-mutating check. Validation never installs formatter tools implicitly.

@@ -14,6 +14,8 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+fail() { echo "hook qualification failed: $*" >&2; exit 1; }
+# System Bash 3.2 needs explicit rejection for standalone conditional commands.
 # macOS temporary paths and caller-supplied TMPDIR may be logical aliases.
 # Keep private fixture identities physical across subsequent Git operations.
 fixture="$(cd "$fixture" && pwd -P)"
@@ -56,16 +58,16 @@ git add -- "$rust_file"
 printf '\nUnrelated working edit.\n' >> README.md
 cp README.md unrelated-before
 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 bash .githooks/pre-commit > formatted.log
-[[ "$(git show ":$rust_file" | tail -n 1)" == 'pub fn hook_fixture() {}' ]]
+[[ "$(git show ":$rust_file" | tail -n 1)" == 'pub fn hook_fixture() {}' ]] || fail "fixture invariant in $PWD at line $LINENO"
 git diff --quiet -- "$rust_file"
 cmp unrelated-before README.md
-[[ "$(git show :README.md)" == "$(git show HEAD:README.md)" ]]
+[[ "$(git show :README.md)" == "$(git show HEAD:README.md)" ]] || fail "fixture invariant in $PWD at line $LINENO"
 cmp selected-lock Cargo.lock
-[[ ! -e target ]]
+[[ ! -e target ]] || fail "fixture invariant in $PWD at line $LINENO"
 make --no-print-directory fmt-check > checked.log
 tree="$(git write-tree)"
 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 bash .githooks/pre-commit > repeated.log
-[[ "$(git write-tree)" == "$tree" ]]
+[[ "$(git write-tree)" == "$tree" ]] || fail "fixture invariant in $PWD at line $LINENO"
 cmp selected-lock Cargo.lock
 
 new_fixture partial
@@ -75,7 +77,7 @@ printf '\n// Unstaged edit.\n' >> "$rust_file"
 tree="$(git write-tree)"
 cp "$rust_file" partially-staged-before
 expect_failure bash .githooks/pre-commit
-[[ "$(git write-tree)" == "$tree" ]]
+[[ "$(git write-tree)" == "$tree" ]] || fail "fixture invariant in $PWD at line $LINENO"
 cmp partially-staged-before "$rust_file"
 cmp selected-lock Cargo.lock
 
@@ -84,21 +86,21 @@ printf '\nfmt:\n\t@false\n' >> Makefile
 git add Makefile
 tree="$(git write-tree)"
 expect_failure bash .githooks/pre-commit
-[[ "$(git write-tree)" == "$tree" ]]
+[[ "$(git write-tree)" == "$tree" ]] || fail "fixture invariant in $PWD at line $LINENO"
 git diff --quiet -- Makefile Cargo.toml
 cmp selected-lock Cargo.lock
 
 new_fixture installer
 ln -s "$PWD" "$fixture/installer-alias"
 (
-    cd "$fixture/installer-alias"
-    make --no-print-directory install-hooks
-) > installed.log
-[[ "$(git config --get core.hooksPath)" == .githooks ]]
+    cd "$fixture/installer-alias" || fail "cannot enter installer alias"
+    make --no-print-directory install-hooks || fail "installer rejected its directory alias"
+) > installed.log || fail "aliased installer failed"
+[[ "$(git config --get core.hooksPath)" == .githooks ]] || fail "fixture invariant in $PWD at line $LINENO"
 make --no-print-directory install-hooks >> installed.log
 git config --local core.hooksPath custom-hooks
 expect_failure make --no-print-directory install-hooks
-[[ "$(git config --get core.hooksPath)" == custom-hooks ]]
+[[ "$(git config --get core.hooksPath)" == custom-hooks ]] || fail "fixture invariant in $PWD at line $LINENO"
 
 # Setup must not activate a hook whose Rust formatter is unavailable. Substitute
 # Cargo only at the availability boundary, without removing any installed tools.
@@ -107,13 +109,13 @@ mkdir tool-bin
 cat > tool-bin/cargo <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$CARGO_NET_OFFLINE" == true && "$RUSTUP_AUTO_INSTALL" == 0 ]]
+[[ "$CARGO_NET_OFFLINE" == true && "$RUSTUP_AUTO_INSTALL" == 0 ]] || exit 97
 printf '%s\n' "$*" >> formatter-trace
 case "$*" in
     'sort --version')
         # shellcheck source=/dev/null
         source ci/tool-versions.env
-        printf 'cargo-sort %s\n' "$IC_TESTKIT_CARGO_SORT_VERSION"
+        printf 'cargo-sort %s\n' "$SHARED_TOOLING_CARGO_SORT_VERSION"
         ;;
     'fmt --version') exit 1 ;;
     *) echo "unexpected formatter effect: $*" >&2; exit 97 ;;
@@ -122,9 +124,9 @@ STUB
 chmod +x tool-bin/cargo
 tree="$(git write-tree)"
 expect_failure env PATH="$PWD/tool-bin:$PATH" make --no-print-directory install-hooks
-[[ -z "$(git config --local --get core.hooksPath || true)" ]]
-[[ "$(cat formatter-trace)" == $'sort --version\nfmt --version' ]]
-[[ "$(git write-tree)" == "$tree" ]]
+[[ -z "$(git config --local --get core.hooksPath || true)" ]] || fail "fixture invariant in $PWD at line $LINENO"
+[[ "$(cat formatter-trace)" == $'sort --version\nfmt --version' ]] || fail "fixture invariant in $PWD at line $LINENO"
+[[ "$(git write-tree)" == "$tree" ]] || fail "fixture invariant in $PWD at line $LINENO"
 git diff --quiet -- Makefile Cargo.toml
 cmp selected-lock Cargo.lock
 echo 'Consumer hook formatting, lockfile preservation, rejection and activation checks passed'
