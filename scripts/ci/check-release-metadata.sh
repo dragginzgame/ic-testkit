@@ -151,7 +151,10 @@ adapter() {
     push) target=release-push-check ;;
     *) fail "unknown fixture phase: $1" ;;
   esac
-  "$real_make" --no-print-directory -f "$repo_root/Makefile" "$target"
+  # This private release owns its identity. Recursive Make command-line
+  # overrides from an outer release otherwise beat the fixture's environment.
+  MAKEFLAGS= MAKEOVERRIDES= MFLAGS= \
+    "$real_make" --no-print-directory -f "$repo_root/Makefile" "$target"
 }
 expect_failure() {
   if adapter "$1" > rejected.log 2>&1; then
@@ -179,7 +182,10 @@ HISTORY
   adapter verify
   cp CHANGELOG.md history-root
   cp crates/ic-testkit/CHANGELOG.md history-package
-  adapter prepare
+  # Simulate another valid release identity inherited through recursive Make.
+  # The private patch/minor/major candidate and its notes must remain authoritative.
+  MAKEFLAGS='-- RELEASE_PREVIOUS=98.0.0 RELEASE_KIND=major RELEASE_VERSION=99.0.0 RELEASE_DATE=2099-01-01' \
+    adapter prepare
   adapter prepared
   [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] || fail "fixture invariant in $PWD at line $LINENO"
   # The exact generated metadata, dependency selection and retained old bytes

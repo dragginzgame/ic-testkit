@@ -59,6 +59,14 @@ responsibility for effects outside the declared staging output.
 
 ### Developer setup and retained fixes
 
+Release metadata qualification clears inherited Make flags and command-line
+overrides when invoking the actual callbacks in its private workspaces.
+Previously, `make release-minor` passed its selected version through recursive
+Make and overrode the patch fixture's environment, so finalization rejected
+the fixture notes as ambiguous. Each fixture now supplies its own identity
+while the real maintainer release keeps its selected identity unchanged
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
 Developer setup adopts Shared Tooling 0.1.6 at
 `a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3`. `make install-tools` explicitly
 prepares pinned jq/yq and quill, icp, didc, ic-wasm, PocketIC and wasm-opt under

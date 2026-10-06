@@ -26,6 +26,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Release qualification isolates fixture identities from recursive Make
+  overrides, so minor and major release gates can validate patch fixtures
+  without inheriting the outer release candidate
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
 - Release preparation stops before publishing metadata when README validation
   fails under macOS's system Bash. Portable release and hook checks enforce
   their preservation assertions, and metadata fixtures exercise the actual
