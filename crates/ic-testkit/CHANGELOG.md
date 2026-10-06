@@ -8,7 +8,7 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.18.2]
+## [0.18.2] - 2026-10-06
 
 Release source and payload inspection requires each Git command to complete
 successfully before comparing its digest. Previously, a failed diff or hash
