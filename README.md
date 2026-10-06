@@ -1601,8 +1601,7 @@ This chooses release notes without changing package metadata. Select the matchin
 release command; a conflicting pending version is rejected during preparation.
 Commit implementation changes before releasing; only the declared release
 metadata may remain dirty.
-Prepare the selected offline dependency cache and both supported Rust toolchains,
-then select exactly one maintainer command:
+Prepare both supported Rust toolchains, then select exactly one maintainer command:
 
 ```bash
 make release-patch
@@ -1624,12 +1623,11 @@ succeeds:
 make publish
 ```
 
-Release validation preserves the caller's network policy; its locked
-`cargo publish --dry-run` check requires registry access without uploading a
-package. Do not force `CARGO_NET_OFFLINE=true` for this complete gate. Cache
-availability and metadata preparation are checked offline without dependency
-upgrades. An explicitly offline gate fails when registry access is required;
-it never retries online automatically.
+Preflight prepares locked dependencies using Cargo's configured network policy.
+Metadata preparation stays offline and preserves dependency selections. The
+complete gate includes `cargo publish --dry-run`, which requires registry access
+without uploading a package. Explicit offline requests fail on missing cache
+entries or required registry access; no step retries online automatically.
 Validation retains each attempt's identity and full log in a unique directory
 under `.git/release-state/`. A failed attempt cannot reuse
 an earlier successful validation receipt. Failed reads of retained validation

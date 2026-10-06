@@ -158,7 +158,9 @@ case "$mode" in
       # verified, consistent saved workspace without rewriting live metadata.
       cache_manifest="$prepared/new/Cargo.toml"
     fi
-    cargo fetch --manifest-path "$cache_manifest" --locked --offline
+    # Prepare the selected cache using Cargo's caller-owned network policy.
+    # An explicit offline policy still fails on a miss; never retry it online.
+    cargo fetch --manifest-path "$cache_manifest" --locked
     ;;
   verify)
     attempt="$(mktemp -d "$state/$RELEASE_VERSION.validation.XXXXXX")"

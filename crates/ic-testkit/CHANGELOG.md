@@ -50,6 +50,22 @@ changing dependency selection or allowing validation to retry online
 ([#7](https://github.com/dragginzgame/ic-testkit/issues/7),
 [#9](https://github.com/dragginzgame/ic-testkit/issues/9)).
 
+### Release cache preparation
+
+Normal release preflight runs a locked fetch under Cargo's configured network
+policy. It can download missing selected dependencies before the gate and
+offline metadata preparation; maintainers no longer need a separate cache-fetch
+command for ordinary releases. Explicit offline environment or Cargo configuration
+still rejects missing cache entries without an online fallback.
+
+Recovery fetches against the verified saved workspace when live metadata is
+partially published. Fetch failure preserves live metadata, receipts and retained
+identity, and stops before validation or version mutation. Focused fixtures cover
+missing-cache policy, failure and an explicit retry using the same retained
+identity. This corrects the consumer's forced-offline preflight; Shared Tooling's
+locked cache-preparation contract is unchanged
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
 ## [0.19.1] - 2026-10-06
 
 ### Publication admission

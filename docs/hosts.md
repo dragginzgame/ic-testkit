@@ -109,8 +109,9 @@ documentation guard for that revision, including Intel macOS. It precedes the
 All three maintainer release commands run the same complete `make release-check`
 gate, including MSRV, with the caller's network policy and temporary-directory
 environment. The locked publish dry run requires registry HTTP access without
-uploading a package; the complete gate must not be forced offline. Cache checks
-and metadata preparation remain offline. Explicit offline requests are preserved
+uploading a package; the complete gate must not be forced offline. Preflight
+prepares the locked dependency cache under Cargo's configured network policy;
+metadata preparation remains offline. Explicit offline requests are preserved
 and failures are not automatically retried online.
 They retain each validation attempt's identity and full log in a unique Git
 directory location, including failed attempts, and retain prepared metadata.
@@ -401,3 +402,13 @@ Portable jobs retain their existing locked fetch. Actionlint and the dependency
 declaration checker pass locally; the focused release guard passes against
 prepared caches. Native CI for this correction remains outstanding; no full
 gate, workflow rerun or package publication was executed locally.
+
+The pending release adapter also removes forced offline mode from preflight
+fetching. Normal releases prepare missing locked dependencies automatically;
+explicit offline requests still fail on cache misses. Recovery selects the
+verified saved manifest rather than mixed live metadata. Metadata fixtures pass
+with current Bash and private GNU Bash 3.2.57 for default/online/offline policy,
+failed fetching with retained records and an explicit successful retry.
+One scoped policy fixture checks both cache admission and the complete gate.
+Network/cache-miss effects are
+substituted; other metadata operations use the prepared real offline cache.

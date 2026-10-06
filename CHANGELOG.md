@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Release preflight prepares missing locked dependencies using Cargo's configured
+  network policy, so normal releases need no separate cache-fetch command.
+  Explicit offline requests remain offline, including during recovery
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
 - Linux and macOS CI explicitly prepare ripgrep and locked dependency caches
   before portable and offline release checks
   ([#7](https://github.com/dragginzgame/ic-testkit/issues/7),

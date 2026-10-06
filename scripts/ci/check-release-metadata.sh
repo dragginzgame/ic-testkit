@@ -19,6 +19,8 @@ export REAL_GIT
 REAL_GIT="$(command -v git)"
 export REAL_CAT
 REAL_CAT="$(command -v cat)"
+export REAL_CARGO
+REAL_CARGO="$(command -v cargo)"
 real_make="$(command -v make)"
 mkdir -p "$work_dir/bin"
 cat > "$work_dir/bin/git" <<'STUB'
@@ -84,7 +86,8 @@ echo 'substituted complete validation gate'
 if [[ -n "${ADAPTER_AFTER_GATE_DIFF_STATUS:-}" ]]; then
   printf '%s\n' "$ADAPTER_AFTER_GATE_DIFF_STATUS" > input-diff-status
 fi
-if [[ "${ADAPTER_REGISTRY_CHECK:-}" == true && "${CARGO_NET_OFFLINE:-}" == true ]]; then
+if [[ "${ADAPTER_REGISTRY_CHECK:-}" == true &&
+      ( "${CARGO_NET_OFFLINE:-}" == true || "${CARGO_NET_OFFLINE:-}" == 1 ) ]]; then
   echo 'substituted registry check requires HTTP' >&2
   exit 101
 fi
@@ -100,6 +103,22 @@ if [[ "$#" == 1 && "$1" == "${ADAPTER_READ_PATH:-}" ]]; then
 fi
 STUB
 chmod +x "$work_dir/bin/cat"
+cat > "$work_dir/bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == fetch && "${ADAPTER_FETCH_TEST:-}" == true ]]; then
+  printf '%s\n' "$*" >> fetch-trace
+  printf '%s\n' "${CARGO_NET_OFFLINE-unset}" >> fetch-policy
+  for argument in "$@"; do
+    [[ "$argument" != --offline ]] || exit 27
+  done
+  [[ "${CARGO_NET_OFFLINE:-}" != true && "${CARGO_NET_OFFLINE:-}" != 1 ]] || exit 27
+  exit "${ADAPTER_FETCH_STATUS:-0}"
+fi
+# Real metadata fixtures use the explicitly prepared cache, never live downloads.
+CARGO_NET_OFFLINE=true exec "$REAL_CARGO" "$@"
+STUB
+chmod +x "$work_dir/bin/cargo"
 export PATH="$work_dir/bin:$PATH"
 
 previous="$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
@@ -172,6 +191,43 @@ expect_failure() {
     fail "adapter unexpectedly accepted $1 in $PWD (${conflict:-no selected-commit conflict})"
   fi
 }
+
+# One private policy selection drives both cache preparation and gate admission.
+# Local exported variables cannot leak into another fixture.
+check_network_policy() {
+  local policy="$1" ADAPTER_FETCH_TEST=true ADAPTER_REGISTRY_CHECK=true CARGO_NET_OFFLINE
+  export ADAPTER_FETCH_TEST ADAPTER_REGISTRY_CHECK CARGO_NET_OFFLINE
+  if [[ "$policy" == unset ]]; then unset CARGO_NET_OFFLINE;
+  else CARGO_NET_OFFLINE="$policy"; fi
+  if [[ "$policy" == true || "$policy" == 1 ]]; then
+    expect_failure preflight
+  else
+    adapter preflight || fail "cache preparation rejected network policy: $policy"
+  fi
+  [[ "$(cat fetch-trace)" == 'fetch --manifest-path Cargo.toml --locked' ]] || fail 'cache preparation changed locked fetch arguments'
+  [[ "$(cat fetch-policy)" == "$policy" ]] || fail 'cache preparation changed caller policy'
+  [[ ! -e gate-trace && ! -e .release-state/"$RELEASE_VERSION".metadata ]] || fail 'cache preparation dispatched validation or metadata effects'
+  cmp "$repo_root/Cargo.toml" Cargo.toml || fail 'network fixture changed manifest'
+  cmp "$repo_root/Cargo.lock" Cargo.lock || fail 'network fixture changed lock selection'
+
+  # Verify the gate independently, even when offline cache admission failed.
+  if [[ "$policy" == true || "$policy" == 1 ]]; then
+    expect_failure verify
+    expect_failure prepare
+    [[ ! -e ".release-state/$RELEASE_VERSION.validation" ]] || fail 'offline gate recorded validation'
+  else
+    adapter verify || fail "validation rejected network policy: $policy"
+    [[ -s ".release-state/$RELEASE_VERSION.validation" ]] || fail 'successful gate omitted validation'
+  fi
+  [[ "$(cat gate-environment)" == "$policy" ]] || fail 'gate changed caller policy'
+  [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail 'gate retried implicitly'
+  cmp "$repo_root/Cargo.toml" Cargo.toml || fail 'network fixture changed manifest'
+  cmp "$repo_root/Cargo.lock" Cargo.lock || fail 'network fixture changed lock selection'
+}
+for policy in unset false true 1; do
+  new_fixture "network-$policy"
+  check_network_policy "$policy" || fail "network-policy qualification failed: $policy"
+done
 
 for kind in patch minor major; do
   new_fixture "$kind" "$kind"
@@ -605,6 +661,34 @@ for helper in scripts/release/read-workspace-version.sh scripts/ci/next-release-
   adapter prepared
 done
 
+new_fixture cache-fetch-recovery
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+receipt=".release-state/$RELEASE_VERSION.validation"
+cp "$retained/ready" cache-ready
+cp "$receipt" cache-receipt
+cp "$retained/old/Cargo.toml" Cargo.toml
+export ADAPTER_FETCH_TEST=true ADAPTER_FETCH_STATUS=23
+CARGO_NET_OFFLINE=false expect_failure preflight
+[[ "$(cat fetch-trace)" == "fetch --manifest-path $retained/new/Cargo.toml --locked" ]] || fail 'recovery fetched the mixed live workspace'
+cmp cache-ready "$retained/ready"
+cmp cache-receipt "$receipt"
+[[ "$(wc -l < gate-trace)" -eq 1 ]] || fail 'failed cache fetch dispatched another gate'
+for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+  tree=new
+  if [[ "$file" == Cargo.toml ]]; then tree=old; fi
+  cmp "$retained/$tree/$file" "$file"
+done
+export ADAPTER_FETCH_STATUS=0
+CARGO_NET_OFFLINE=false adapter preflight
+[[ "$(wc -l < fetch-trace)" -eq 2 ]] || fail 'cache fetch retried implicitly'
+cmp cache-ready "$retained/ready"
+cmp cache-receipt "$receipt"
+unset ADAPTER_FETCH_TEST ADAPTER_FETCH_STATUS
+cp "$retained/new/Cargo.toml" Cargo.toml
+adapter prepared
+
 new_fixture changed-input
 adapter verify
 echo 'source changed after validation' >> CHANGELOG.md
@@ -663,28 +747,4 @@ unset ADAPTER_UNSTAGED
 export RELEASE_SOURCE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 expect_failure prepared
 
-# The complete gate's registry dry run has a different network boundary from
-# offline metadata preparation. Preserve explicit caller policy without fallback.
-for policy in unset false true; do
-  new_fixture "network-$policy"
-  (
-    if [[ "$policy" == unset ]]; then
-      unset CARGO_NET_OFFLINE
-    else
-      export CARGO_NET_OFFLINE="$policy"
-    fi
-    export ADAPTER_REGISTRY_CHECK=true
-    if [[ "$policy" == true ]]; then
-      expect_failure verify
-      expect_failure prepare
-      [[ ! -e ".release-state/$RELEASE_VERSION.validation" ]] || fail "fixture invariant in $PWD at line $LINENO"
-    else
-      adapter verify || fail "validation rejected network policy: $policy"
-      [[ -s ".release-state/$RELEASE_VERSION.validation" ]] || fail "fixture invariant in $PWD at line $LINENO"
-    fi
-    [[ "$(cat gate-environment)" == "$policy" ]] || fail "fixture invariant in $PWD at line $LINENO"
-    [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail "fixture invariant in $PWD at line $LINENO"
-    [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
-  ) || fail "network-policy qualification failed: $policy"
-done
 echo 'release metadata isolated checks passed'
