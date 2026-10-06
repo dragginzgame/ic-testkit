@@ -1632,8 +1632,12 @@ upgrades. An explicitly offline gate fails when registry access is required;
 it never retries online automatically.
 Validation retains each attempt's identity and full log in a unique directory
 under `.git/release-state/`. A failed attempt cannot reuse
-an earlier successful validation receipt. It preserves Cargo
-artifacts and does not remove temporary files around upstream background servers.
+an earlier successful validation receipt. Failed reads of retained validation
+or readiness records stop admission even if they return apparently complete
+bytes, preserving metadata and saved evidence for retry. It preserves Cargo
+artifacts. Version reads and next-version derivation must complete successfully
+before their output can admit a release. Validation does not remove temporary
+files around upstream background servers.
 Managed PocketIC handles retain
 ownership of their child processes. See
 [temporary-directory ownership](POCKET-IC.md#temporary-directory-ownership)
@@ -1682,6 +1686,9 @@ same TOML example locator to update only those requirements, then checks its
 exact prepared installation line before staging. Historical migration notes,
 other code examples and surrounding formatting are preserved.
 
-Publication requires a clean worktree and a matching `v<version>` tag at
-`HEAD`. Re-running `make publish` is safe when that version already exists on
-crates.io.
+Publication requires a clean worktree and an annotated `v<version>` tag bound
+exactly to `HEAD`. Failed Git inspections stop admission. The exact crates.io
+package/version lookup uses `curl`: HTTP 200 skips an already published version,
+and a successful HTTP 404 permits Cargo publication. Transport failures and
+unexpected responses stop the command. Explicit `CARGO_NET_OFFLINE=true` or `1`
+stops before the lookup; publication requires registry HTTP access.

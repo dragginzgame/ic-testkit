@@ -45,10 +45,13 @@ validation_identity() {
     "$RELEASE_VERSION" "$RELEASE_KIND" "$RELEASE_DATE" "$1"
 }
 check_validation() {
+  local observed_validation expected_validation
   [[ -f "$validation" && ! -L "$validation" ]] || fail "validation evidence missing"
-  validated_input="$(tail -n 1 "$validation")"
+  observed_validation="$(cat "$validation")" || fail "cannot read validation evidence"
+  validated_input="${observed_validation##*$'\n'}"
   [[ "$validated_input" =~ ^[0-9a-f]{40,64}$ ]] || fail "invalid validation digest"
-  [[ "$(cat "$validation")" == "$(validation_identity "$validated_input")" ]] \
+  expected_validation="$(validation_identity "$validated_input")" || fail "cannot derive validation identity"
+  [[ "$observed_validation" == "$expected_validation" ]] \
     || fail "validation belongs to another release"
 }
 
@@ -62,11 +65,12 @@ prepared_identity() {
   done
 }
 check_saved_metadata() {
-  local expected_identity
+  local expected_identity observed_identity
   check_validation
   [[ -f "$prepared/ready" && ! -L "$prepared/ready" ]] || fail "prepared metadata missing"
   expected_identity="$(prepared_identity)" || fail "cannot inspect prepared metadata"
-  [[ "$(cat "$prepared/ready")" == "$expected_identity" ]] || fail "prepared metadata changed"
+  observed_identity="$(cat "$prepared/ready")" || fail "cannot read prepared metadata identity"
+  [[ "$observed_identity" == "$expected_identity" ]] || fail "prepared metadata changed"
 }
 check_recovery() {
   check_saved_metadata
@@ -83,14 +87,16 @@ check_recovery() {
 }
 check_prepared() {
   check_saved_metadata
-  local file digest expected_digest
+  local file digest expected_digest observed_version
   for file in "${files[@]}"; do
     digest="$(hash_file "$file")"
     expected_digest="$(hash_file "$prepared/new/$file")"
     [[ "$digest" == "$expected_digest" ]] \
       || fail "release payload changed: $file"
   done
-  [[ "$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] \
+  observed_version="$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" \
+    || fail "cannot read prepared version"
+  [[ "$observed_version" == "$RELEASE_VERSION" ]] \
     || fail "prepared version mismatch"
   bash "$script_dir/../ci/check-format-tools.sh"
   cargo sort --workspace --check
@@ -115,7 +121,9 @@ check_committed() {
 
 [[ "${RELEASE_SOURCE:-}" =~ ^[0-9a-f]{40,64}$ && "${RELEASE_DATE:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
   || fail "missing saved source/date"
-[[ "$(bash "$script_dir/../ci/next-release-version.sh" "$RELEASE_PREVIOUS" "$RELEASE_KIND")" == "$RELEASE_VERSION" ]] \
+calculated_version="$(bash "$script_dir/../ci/next-release-version.sh" "$RELEASE_PREVIOUS" "$RELEASE_KIND")" \
+  || fail "cannot derive saved release selection"
+[[ "$calculated_version" == "$RELEASE_VERSION" ]] \
   || fail "inconsistent saved release selection"
 state="$(git rev-parse --git-path release-state)"
 [[ ! -L "$state" ]] || fail "symlinked evidence directory"
@@ -134,7 +142,9 @@ check_paths
 
 case "$mode" in
   preflight)
-    [[ "$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_PREVIOUS" ]] \
+    observed_version="$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" \
+      || fail "cannot read source version"
+    [[ "$observed_version" == "$RELEASE_PREVIOUS" ]] \
       || fail "source version differs from saved selection"
     bash "$script_dir/../ci/check-format-tools.sh"
     cache_manifest=Cargo.toml

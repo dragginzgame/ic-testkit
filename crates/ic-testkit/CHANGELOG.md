@@ -8,6 +8,38 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.19.1]
+
+### Publication admission
+
+`make publish` queries the exact crates.io package/version endpoint before Cargo
+publication. A successful HTTP 404 permits publication; HTTP 200 skips an already
+published version. Transport failures, unexpected responses and explicit
+`CARGO_NET_OFFLINE=true` or `1` stop admission without uploading. Cargo publication
+errors retain their exit status.
+
+The existing release contract requires an annotated `v<version>` tag at `HEAD`.
+Admission now verifies the annotation and exact commit and rejects failed Git
+commands even if they print apparently valid output. Focused fixtures exercise
+registry and tag failures through the actual Make publication target using
+substituted commands, without credentials or remote writes.
+
+### Retained release evidence
+
+Release preparation, recovery and later admission checks reject failed reads of
+validation receipts and readiness records, even when the reader prints matching
+bytes before failing. Validation identity and input digest are derived from one
+successful receipt read. Rejection preserves live metadata, saved old/new files,
+receipts and readiness without dispatching another validation gate; a successful
+retry uses the same retained identity. The retained `v1` layout is unchanged.
+This extends the release-admission work in
+[#7](https://github.com/dragginzgame/ic-testkit/issues/7).
+
+Source/prepared version reads and next-version derivation must also complete
+successfully before their output is compared with the selected release. A helper
+that prints the expected version and then fails stops admission without changing
+metadata, invalidating the saved receipt or running another validation gate.
+
 ## [0.19.0] - 2026-10-06
 
 ### Shared host APIs and migration

@@ -100,7 +100,10 @@ documentation guard for that revision, including Intel macOS. It precedes the
   prepared Cargo caches, and `uname`. Its Linux RSS sampler reads native `/proc`;
   macOS uses the system `/bin/ps` process-leader RSS in KiB. The benchmark records
   its sampling source and does not download a server or dependency upgrades.
-- Publishing additionally requires Cargo registry credentials. Mocked release
+- Publishing additionally requires `curl`, registry HTTP access and Cargo
+  registry credentials. Admission requires a successful exact-version HTTP 404;
+  HTTP 200 skips publication, while unavailable observations stop the command.
+  Explicit `CARGO_NET_OFFLINE=true` or `1` stops before the lookup. Mocked release
   and publish guard checks do not use credentials or perform remote writes.
 
 All three maintainer release commands run the same complete `make release-check`
@@ -330,3 +333,35 @@ reused output; wrong digest and version authority rejected before changing its
 public output. The registry archive digest matches the lockfile, and its source
 matches reviewed upstream commit `e9417d0afb83c2a596fada3671fe941ac01ca2ae`.
 These are local consumer checks, not a complete gate or native macOS evidence.
+
+### Pending 0.19.1 publication admission
+
+Focused publication fixtures pass on Linux with current Bash and private GNU
+Bash 3.2.57. They exercise the actual Make target with substituted Git, curl and
+Cargo commands: confirmed absence, already published versions, transport and
+HTTP failures, explicit offline policy, Cargo failure, annotated tags, wrong or
+missing tags and failed Git inspections with apparently valid output. This is
+local fixture qualification; native workflow qualification remains pending.
+
+The reviewed Shared Tooling snapshot remains at `a37771f`. Its [exact-version
+registry observer](https://github.com/dragginzgame/shared-tooling/issues/10) is
+still uncommitted in the sibling checkout, so adoption awaits a reviewed canonical
+commit. Its [committed release-tag checker](https://github.com/dragginzgame/shared-tooling/blob/a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3/scripts/ci/check-release-tag.sh) also
+admits failed Git commands when their output matches expectations, reproduced
+with both Bash versions. Consumer admission stays outside the immutable
+snapshot until those prerequisites are fixed upstream.
+
+Pending 0.19.1 also checks read success before comparing retained validation and
+readiness records. Focused metadata checks pass on Linux with current Bash and
+private GNU Bash 3.2.57. Fault-injection fixtures exercise complete-output read failures
+through the actual Make callbacks for recovery preflight, preparation, prepared,
+commit, committed, tagged and push admission. They verify unchanged live metadata,
+retained records and a single original validation gate, followed by successful
+admission after restoring the reader. Git and complete-gate effects are substituted;
+Cargo metadata is real, locked and offline. Native qualification remains pending.
+
+The same metadata fixtures also inject complete-output failures into source and
+prepared version reads and next-version derivation. They verify rejection before
+metadata or receipt changes, preserve the original gate count, and admit the
+same prepared identity after restoring the helpers. These are substituted helper
+failures, with native qualification still separate.

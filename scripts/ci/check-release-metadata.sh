@@ -17,6 +17,8 @@ fail() { echo "metadata qualification failed: $*" >&2; exit 1; }
 # rejection explicit in both the command stubs and the fixture assertions.
 export REAL_GIT
 REAL_GIT="$(command -v git)"
+export REAL_CAT
+REAL_CAT="$(command -v cat)"
 real_make="$(command -v make)"
 mkdir -p "$work_dir/bin"
 cat > "$work_dir/bin/git" <<'STUB'
@@ -89,6 +91,15 @@ fi
 exit "${ADAPTER_GATE_STATUS:-0}"
 STUB
 chmod +x "$work_dir/bin/git" "$work_dir/bin/make"
+cat > "$work_dir/bin/cat" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+"$REAL_CAT" "$@" || exit $?
+if [[ "$#" == 1 && "$1" == "${ADAPTER_READ_PATH:-}" ]]; then
+  exit 9
+fi
+STUB
+chmod +x "$work_dir/bin/cat"
 export PATH="$work_dir/bin:$PATH"
 
 previous="$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
@@ -153,7 +164,7 @@ adapter() {
   esac
   # This private release owns its identity. Recursive Make command-line
   # overrides from an outer release otherwise beat the fixture's environment.
-  MAKEFLAGS= MAKEOVERRIDES= MFLAGS= \
+  MAKEFLAGS='' MAKEOVERRIDES='' MFLAGS='' \
     "$real_make" --no-print-directory -f "$repo_root/Makefile" "$target"
 }
 expect_failure() {
@@ -530,6 +541,69 @@ for failed_path in '' README.md "$retained/old/README.md" "$retained/new/README.
 done
 unset ADAPTER_HASH_STATUS ADAPTER_HASH_PATH
 adapter prepared
+
+new_fixture failed-retained-record-read
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+receipt=".release-state/$RELEASE_VERSION.validation"
+cp "$retained/ready" inspected-ready
+cp "$receipt" inspected-receipt
+for failed_path in "$receipt" "$retained/ready"; do
+  export ADAPTER_READ_PATH="$failed_path"
+  for phase in preflight prepare prepared commit committed tagged push; do
+    if [[ "$phase" == preflight ]]; then
+      cp "$retained/old/Cargo.toml" Cargo.toml
+    else
+      cp "$retained/new/Cargo.toml" Cargo.toml
+    fi
+    expect_failure "$phase"
+    cmp inspected-ready "$retained/ready"
+    cmp inspected-receipt "$receipt"
+    [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail 'record-read rejection dispatched another gate'
+    for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+      tree=new
+      if [[ "$phase" == preflight && "$file" == Cargo.toml ]]; then tree=old; fi
+      cmp "$retained/$tree/$file" "$file"
+    done
+  done
+done
+unset ADAPTER_READ_PATH
+adapter prepared
+
+new_fixture failed-version-inspection
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+receipt=".release-state/$RELEASE_VERSION.validation"
+cp "$retained/ready" inspected-ready
+cp "$receipt" inspected-receipt
+for helper in scripts/release/read-workspace-version.sh scripts/ci/next-release-version.sh; do
+  cp "$helper" inspected-helper
+  printf '\nexit 9\n' >> "$helper"
+  phases=(preflight prepared commit)
+  if [[ "$helper" == scripts/ci/next-release-version.sh ]]; then
+    phases=(preflight verify prepare prepared commit committed tagged push)
+  fi
+  for phase in "${phases[@]}"; do
+    if [[ "$phase" == preflight ]]; then
+      cp "$retained/old/Cargo.toml" Cargo.toml
+    else
+      cp "$retained/new/Cargo.toml" Cargo.toml
+    fi
+    expect_failure "$phase"
+    cmp inspected-ready "$retained/ready"
+    cmp inspected-receipt "$receipt"
+    [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail 'version-inspection rejection dispatched another gate'
+    for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+      tree=new
+      if [[ "$phase" == preflight && "$file" == Cargo.toml ]]; then tree=old; fi
+      cmp "$retained/$tree/$file" "$file"
+    done
+  done
+  cp inspected-helper "$helper"
+  adapter prepared
+done
 
 new_fixture changed-input
 adapter verify

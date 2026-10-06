@@ -6,6 +6,19 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.19.1]
+
+### Fixed
+
+- Publication proceeds only after crates.io confirms the exact version is absent;
+  unavailable registry observations stop the command. Release admission verifies
+  the existing annotated tag requirement and its exact commit, including failed
+  Git inspections.
+  See [detailed notes](crates/ic-testkit/CHANGELOG.md#0191).
+- Release admission rejects failed version queries and reads of saved validation
+  and readiness records before changing metadata, preserving records for retry
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
 ## [0.19.0] - 2026-10-06
 
 ### Breaking
