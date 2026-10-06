@@ -27,6 +27,14 @@ case "$1" in
     fi
     ;;
   rev-parse) [[ "$*" == 'rev-parse --git-path release-state' ]]; echo .release-state ;;
+  ls-tree)
+    [[ "$2" == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && "$3" == -- ]]
+    file="$4"
+    [[ "${ADAPTER_COMMIT_MISSING:-}" != "$file" ]] || exit 0
+    digest="$("$REAL_GIT" hash-object --no-filters -- "${ADAPTER_COMMIT_ROOT:-.release-state/$RELEASE_VERSION.metadata/new}/$file")"
+    printf '%s blob %s\t%s\n' "${ADAPTER_COMMIT_MODE:-100644}" "$digest" "$file"
+    exit "${ADAPTER_COMMIT_STATUS:-0}"
+    ;;
   ls-files)
     if [[ "$2" == --others ]]; then
       if [[ "${ADAPTER_REAL_UNTRACKED:-}" == true ]]; then exec "$REAL_GIT" "$@"; fi
@@ -94,6 +102,7 @@ new_fixture() {
   done
   echo 'consumer build artifact' > artifact
   export RELEASE_PREVIOUS="$previous" RELEASE_SOURCE=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  export RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
   export RELEASE_KIND="${2:-patch}" RELEASE_DATE=2026-10-05
   export RELEASE_VERSION
   RELEASE_VERSION="$(bash "$repo_root/scripts/ci/next-release-version.sh" "$previous" "$RELEASE_KIND")"
@@ -191,6 +200,46 @@ HISTORY
   expect_failure prepare
 done
 
+new_fixture historical-release-metadata
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+cp -R "$retained/new" committed-release
+export ADAPTER_COMMIT_ROOT="$PWD/committed-release"
+cp "$retained/ready" selected-ready
+cp ".release-state/$RELEASE_VERSION.validation" selected-receipt
+# Simulate newer committed documentation while the runner selects the original
+# exact release commit. Its own fixture covers ancestry and Git effects.
+printf '\nNewer committed documentation.\n' >> README.md
+for phase in committed tagged push; do adapter "$phase"; done
+expect_failure prepared
+expect_failure commit
+cp README.md newer-readme
+for conflict in payload missing mode inspection selection; do
+  case "$conflict" in
+    payload) printf '\nChanged selected payload.\n' >> committed-release/README.md ;;
+    missing) export ADAPTER_COMMIT_MISSING=README.md ;;
+    mode) export ADAPTER_COMMIT_MODE=120000 ;;
+    inspection) export ADAPTER_COMMIT_STATUS=9 ;;
+    selection) export RELEASE_COMMIT=cccccccccccccccccccccccccccccccccccccccc ;;
+  esac
+  for phase in committed tagged push; do
+    expect_failure "$phase"
+    cmp newer-readme README.md
+    cmp selected-ready "$retained/ready"
+    cmp selected-receipt ".release-state/$RELEASE_VERSION.validation"
+  done
+  cp "$retained/new/README.md" committed-release/README.md
+  unset ADAPTER_COMMIT_MISSING ADAPTER_COMMIT_MODE ADAPTER_COMMIT_STATUS
+  export RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+done
+unset RELEASE_COMMIT
+expect_failure committed
+export RELEASE_COMMIT=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+for phase in committed tagged push; do adapter "$phase"; done
+[[ "$(wc -l < gate-trace)" -eq 1 ]]
+unset ADAPTER_COMMIT_ROOT
+
 new_fixture publication-temporaries
 adapter verify
 adapter prepare
@@ -258,7 +307,9 @@ for mutated_tree in live old new; do
   perl -pi -e 's/\n/\r\n/g' "$mutated_file"
   cp "$mutated_file" raw-after
   cp -R "$retained" "$mutated_tree-retained"
-  for phase in prepared prepare commit committed tagged push; do
+  phases=(prepared prepare commit)
+  if [[ "$mutated_tree" != live ]]; then phases+=(committed tagged push); fi
+  for phase in "${phases[@]}"; do
     expect_failure "$phase"
     cmp raw-after "$mutated_file"
     cmp raw-ready "$retained/ready"
@@ -428,6 +479,10 @@ export ADAPTER_HASH_STATUS=9
 for failed_path in '' README.md "$retained/old/README.md" "$retained/new/README.md"; do
   export ADAPTER_HASH_PATH="$failed_path"
   for phase in preflight prepare prepared commit committed tagged push; do
+    # Late checks read the selected release commit rather than the live file.
+    if [[ "$failed_path" == README.md ]]; then
+      case "$phase" in committed|tagged|push) continue ;; esac
+    fi
     # Model an interrupted manifest publication for the recovery preflight.
     if [[ "$phase" == preflight ]]; then
       cp "$retained/old/Cargo.toml" Cargo.toml

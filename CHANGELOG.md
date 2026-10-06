@@ -6,6 +6,21 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.18.3]
+
+### Fixed
+
+- Normal release commands recover an older interrupted release after committed
+  fixes, then validate the requested next increment. Late checks bind saved
+  metadata to that exact release commit, preserving evidence and rejecting
+  changed payloads or failed Git inspection
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7),
+  [Shared Tooling #4](https://github.com/dragginzgame/shared-tooling/issues/4),
+  [#5](https://github.com/dragginzgame/shared-tooling/issues/5)). See the
+  [package tooling notes](crates/ic-testkit/CHANGELOG.md#0183).
+- Adopt Shared Tooling's formatter-failure correction for the system Bash on
+  macOS, preserving selected files and the index when formatting fails.
+
 ## [0.18.2] - 2026-10-06
 
 ### Fixed

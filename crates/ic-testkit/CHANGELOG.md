@@ -8,6 +8,40 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.18.3]
+
+The reviewed Shared Tooling snapshot advances to
+`9437bab201bb6071da0bdc4de0336daf553113f5`, including its release recovery,
+failed-inventory rejection, system-Bash formatter correction and user-triggered
+maintenance rules. No mutable sibling source is used by CI or release commands.
+
+Normal release targets first reconcile an older committed release, even when
+newer fixes have been committed or another increment is requested. They then
+perform fresh preflight and complete validation for the requested increment from
+the actual local version. An unchanged same-kind retry finishes only its saved
+release; explicit resume selects only that release. Exact original commit/tag
+identities and evidence are retained, and unknown or conflicting remote state
+stops recovery ([Shared Tooling #4](https://github.com/dragginzgame/shared-tooling/issues/4),
+[#5](https://github.com/dragginzgame/shared-tooling/issues/5)).
+
+The consumer's committed, tagged and push checks compare the six saved metadata
+files with regular-file blobs from the runner-selected `RELEASE_COMMIT`, which
+may precede HEAD. Newer documentation does not substitute for the original
+release payload. Missing, changed or symlinked committed files, a missing
+selection, failed tree inspection and changed retained evidence stop the check
+without changing live metadata or the saved receipt. Preparation and pre-commit
+checks still verify the live prepared workspace
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+The formatting hook also preserves the index and working files when its
+formatter fails under macOS system Bash. Focused Linux fixtures cover selected
+commit metadata and preserved rejection evidence, while shared runner fixtures
+exercise descendant recovery with substituted Git effects. Native qualification
+of this adoption remains separate from the released 0.18.2 results in the
+[host matrix](https://github.com/dragginzgame/ic-testkit/blob/main/docs/hosts.md).
+These are compatible tooling corrections; package versions, library APIs,
+dependency selections and retained v1 layouts are unchanged.
+
 ## [0.18.2] - 2026-10-06
 
 Release source and payload inspection requires each Git command to complete

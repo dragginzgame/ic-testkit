@@ -97,6 +97,21 @@ check_prepared() {
   cargo metadata --locked --offline --format-version 1 --no-deps >/dev/null
   bash "$script_dir/../ci/check-installation-version.sh"
 }
+check_committed() {
+  check_saved_metadata
+  [[ "${RELEASE_COMMIT:-}" =~ ^[0-9a-f]{40,64}$ ]] || fail "missing selected release commit"
+  local file entry entry_mode entry_type digest entry_path expected_digest
+  # The runner verifies the exact release tree and its ancestry. Read that
+  # selected tree here; newer committed fixes are inputs to a separate release.
+  for file in "${files[@]}"; do
+    entry="$(git ls-tree "$RELEASE_COMMIT" -- "$file")" || fail "cannot inspect committed metadata: $file"
+    read -r entry_mode entry_type digest entry_path <<< "$entry" || fail "missing committed metadata: $file"
+    [[ "$entry_mode" =~ ^100(644|755)$ && "$entry_type" == blob && "$entry_path" == "$file" ]] \
+      || fail "missing or non-regular committed metadata: $file"
+    expected_digest="$(hash_file "$prepared/new/$file")"
+    [[ "$digest" == "$expected_digest" ]] || fail "committed release payload changed: $file"
+  done
+}
 
 [[ "${RELEASE_SOURCE:-}" =~ ^[0-9a-f]{40,64}$ && "${RELEASE_DATE:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] \
   || fail "missing saved source/date"
@@ -216,11 +231,14 @@ case "$mode" in
     done
     check_prepared
     ;;
-  prepared | commit | committed | tagged | push)
+  prepared | commit)
     check_prepared
     if [[ "$mode" == commit ]]; then
       git diff --quiet -- || fail "unstaged changes after release staging"
     fi
+    ;;
+  committed | tagged | push)
+    check_committed
     ;;
   *) fail "unknown adapter phase: $mode" ;;
 esac

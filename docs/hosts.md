@@ -106,9 +106,17 @@ and failures are not automatically retried online.
 They retain each validation attempt's identity and full log in a unique Git
 directory location, including failed attempts, and retain prepared metadata.
 Preflight or validation-only failures rerun through the normal target with
-fresh checks. Once preparation may begin, rerunning the same release target
+fresh checks. Once preparation may begin, rerunning a normal release target
 automatically reconciles the exact saved plan before selecting another version.
 Explicit `make release-resume VERSION=X.Y.Z` uses the same checks.
+Uncommitted preparation remains bound to its source and kind. After the release
+commit exists, a normal target first reconciles that exact release, then runs
+fresh checks for the requested increment if its kind differs or HEAD has newer
+committed fixes. An unchanged same-kind retry and explicit resume finish only
+the saved release. Late adapter checks compare retained metadata with regular
+file blobs from the runner-selected `RELEASE_COMMIT`, rather than current HEAD
+files. Fixtures cover later documentation, changed/missing/non-regular selected
+files, complete-output inspection failure and retained evidence preservation.
 Preparation and recovery reject symlinks in retained metadata before copying
 backups or publishing files, preserving current metadata and linked targets.
 After partial metadata publication, preflight checks offline caches using the
@@ -137,10 +145,10 @@ private copies. Patch/minor/major fixtures preserve historical dependency lines,
 non-TOML examples, indentation, comments and a missing final newline. Duplicate
 or malformed maintained examples in either view reject preparation before live
 publication, preserving the source metadata.
-The same unchecked inventory in the reviewed shared runner is reported in
+The reviewed runner now also rejects its failed inventory through
 [Shared Tooling issue #4](https://github.com/dragginzgame/shared-tooling/issues/4).
-The consumer adapter rejects this failure at each release phase; the vendored
-runner remains unchanged pending a reviewed upstream correction.
+Its command-stub fixture covers failed-empty inventory during descendant
+recovery; the consumer checks preserve evidence at every adapter phase.
 Release validation preserves Cargo artifacts and does not remove temporary files underneath
 upstream background servers. Managed server handles own their process cleanup.
 
@@ -183,8 +191,9 @@ report replacement, standalone proxy invocation and subprocess completion on
 interruption. They use synthetic workers rather than running the live benchmark.
 Passing Linux checks does not qualify macOS. The 0.17.3 workflow above qualifies
 the teardown fixture and installation documentation guard on all three native
-hosts. The 0.18.1 results below qualify the release/hook adoption; subsequent
-digest-check changes remain pending matching native CI.
+hosts. The 0.18.1 results below qualify the release/hook adoption, and 0.18.2
+qualifies the later digest and README checks. The 0.18.3 snapshot and selected
+commit checks remain pending matching native CI.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:
@@ -197,15 +206,16 @@ The maintainer owns full pre-push, release and publication gates. Agents run
 only checks affected by their authorized changes.
 
 The adopted release runner and formatting hook come from reviewed Shared Tooling
-revision `f52c0e2476aee094359ed21de91c468540d3969f`. Release guard checks exercise its
+revision `9437bab201bb6071da0bdc4de0336daf553113f5`. Release guard checks exercise its
 patch/minor/major ordering, explicit staging, atomic branch/tag push and exact
 automatic recovery, including fresh validation-only retries, with command stubs.
 Consumer metadata checks use isolated workspaces, real offline Cargo metadata and manifest
 sorting, and substituted Git/validation commands, so they do not commit, tag,
 push or publish. Consumer hook checks use isolated indexes with this repository's
 actual Make targets and tracked lockfile, real Cargo/rustfmt, and a substituted
-failing target for rejection. The shared upstream fixture's no-lockfile assertion
-does not apply to this Rust consumer; the finding and evidence are recorded in
+failing target for rejection. The canonical upstream fixture now preserves
+existing lockfiles and checks that formatting does not create absent root or
+nested lockfiles through
 [Shared Tooling issue #2](https://github.com/dragginzgame/shared-tooling/issues/2).
 The consumer-owned check covers
 automatic refresh, unrelated-edit and lockfile preservation, partial staging,
@@ -248,5 +258,12 @@ passed it on Linux and ARM64 macOS at the same source. Both overall runs are
 marked failed and contain cancelled jobs. The cancelled-job logs were unavailable
 when inspected, so their cause is not established here and neither run is
 reported as a complete workflow pass. Successful portable jobs do not prove
-live release or registry effects. The subsequent 0.18.2 digest-check changes
-still require matching native Linux and macOS jobs.
+live release or registry effects. Subsequent qualification is recorded below.
+
+At `v0.18.2` (`fef7e127f36324146aff37844aae641bad90fb60`), both the
+[main workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37427644025)
+and [tag workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37427644455)
+completed successfully. This qualifies the digest-status, raw-byte and README
+preparation checks on all three native hosts. It precedes the 0.18.3 adoption
+of Shared Tooling `9437bab201bb6071da0bdc4de0336daf553113f5` and the consumer's
+selected-commit metadata checks; those changes need matching native CI.

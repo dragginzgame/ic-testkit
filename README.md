@@ -1598,7 +1598,7 @@ The release file set is Cargo.toml, Cargo.lock, both changelogs and both READMEs
 If preflight or validation fails, correct the inputs and rerun the normal release
 target; both gates run afresh against the current source. Once preparation may
 begin, an interruption retains its exact plan and prepared old/new metadata
-under the repository's Git directory. Rerun the same release target to
+under the repository's Git directory. Rerun a normal release target to
 automatically recover that release at its saved version. The runner selects
 unfinished intent before computing another increment, even if metadata has
 already been bumped. For explicit selection of the saved release:
@@ -1609,7 +1609,13 @@ make release-resume VERSION=X.Y.Z
 
 Both recovery paths verify the saved source, version, payload, commit, branch
 and destination and do not recreate a matching release commit or tag. Automatic
-recovery also rejects a different release kind or competing unfinished plans.
+recovery rejects competing unfinished plans. Uncommitted preparation remains
+bound to its saved source and kind. After the release commit exists, a normal
+target can reconcile it despite newer committed fixes, then perform fresh
+preflight and complete validation for the requested increment from the actual
+local version. An unchanged same-kind retry finishes only its saved release;
+explicit resume never starts a next increment. Late consumer checks verify
+metadata from the selected release commit rather than newer HEAD files.
 Matching remote branch and tag identities complete an interrupted push without
 another push; an unavailable remote query stops recovery.
 Preparation and recovery reject symlinks in the retained metadata tree before
