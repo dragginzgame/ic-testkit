@@ -218,33 +218,6 @@ check_make_sequence() {
 check_make_sequence ci "check-first check-second check-third"
 check_make_sequence release-check "check-first check-second check-third"
 
-entry_case="${work_dir}/entry-points"
-mkdir -p "${entry_case}/scripts/ci"
-cat >"${entry_case}/scripts/ci/run-release.sh" <<'EOF'
-#!/bin/bash
-printf '%s\n' "$*" >> entry-trace
-EOF
-for kind in patch minor major; do
-  (
-    cd "${entry_case}"
-    "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
-      RELEASE_REMOTE=fixture-remote RELEASE_BRANCH=fixture-branch "release-${kind}"
-  ) >/dev/null
-done
-(
-  cd "${entry_case}"
-  "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" \
-    RELEASE_REMOTE=fixture-remote RELEASE_BRANCH=fixture-branch VERSION=0.2.0 release-resume
-) >/dev/null
-expected=$'patch fixture-remote fixture-branch\nminor fixture-remote fixture-branch\nmajor fixture-remote fixture-branch\nresume 0.2.0 fixture-remote fixture-branch'
-[[ "$(<"${entry_case}/entry-trace")" == "$expected" ]] || fail "release entry points bypassed the shared owner"
-if (
-  cd "${entry_case}"
-  "${make_bin}" --no-print-directory -f "${repo_root}/Makefile" release-patch release-major
-) >/dev/null 2>&1; then
-  fail "multiple release selections were accepted"
-fi
-[[ "$(<"${entry_case}/entry-trace")" == "$expected" ]] || fail "conflicting selections dispatched a release"
+bash "${repo_root}/scripts/ci/check-release-commands.sh" "${repo_root}"
 
-/bin/bash "${repo_root}/scripts/ci/test-release-runner.sh"
 /bin/bash "${repo_root}/scripts/ci/check-release-metadata.sh"

@@ -8,6 +8,48 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.19.2]
+
+### Shared publication and setup checks
+
+The reviewed snapshot now selects Shared Tooling `47cd2cc` (0.1.7).
+Publication delegates exact-version registry observation to the canonical helper
+from [Shared Tooling #10](https://github.com/dragginzgame/shared-tooling/issues/10),
+removing the temporary inline HTTP implementation. Confirmed presence skips
+publication, confirmed absence permits Cargo, and unavailable results stop the
+command. Package selection, explicit offline policy and upload authority stay
+in the consumer adapter; the existing publication failure fixtures exercise the
+shared helper through the actual Make target.
+
+IC installation now uses the shared checksum generator for receipts, rejects
+filenames the receipt cannot represent and checks traversal before activation.
+Existing tool selections, receipt layouts and installed tools remain unchanged.
+
+### Release guard ownership
+
+`make release-guards-check` delegates standard release entry-point verification
+to the canonical checker from
+[Shared Tooling #8](https://github.com/dragginzgame/shared-tooling/issues/8).
+The checker covers patch/minor/major/resume arguments, runner success and failure,
+and every pair of conflicting release selections using a substituted runner.
+It clears inherited Make and validation identity controls and retains failed
+fixtures and logs. No release effects occur during the check.
+
+The local entry-point smoke block and vendored shared-runner fixture suite are
+removed. Shared runner recovery tests stay with their upstream implementation.
+Consumer version, installation, cleanliness, gate sequencing and metadata
+recovery checks remain in this repository and run through the existing target.
+
+### CI prerequisites
+
+Portable Linux and macOS jobs explicitly install ripgrep before running shared
+tool fixtures. Complete-gate jobs now fetch the selected locked dependencies
+before consumer metadata fixtures need them offline. This fixes the 0.19.1
+`rg: command not found` and missing cached `ic-host-tools` failures without
+changing dependency selection or allowing validation to retry online
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7),
+[#9](https://github.com/dragginzgame/ic-testkit/issues/9)).
+
 ## [0.19.1] - 2026-10-06
 
 ### Publication admission

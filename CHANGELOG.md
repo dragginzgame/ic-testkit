@@ -6,6 +6,27 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.19.2]
+
+### Changed
+
+- Publication uses the committed Shared Tooling registry observer while keeping
+  offline and upload policy local. IC tool setup shares checksum generation and
+  rejects receipt traversal and filename failures before activation
+  ([Shared Tooling #10](https://github.com/dragginzgame/shared-tooling/issues/10)).
+  See [detailed notes](crates/ic-testkit/CHANGELOG.md#0192).
+- Release guards use the shared command-adoption checker and retain the
+  consumer's metadata and sequencing checks. The shared runner's fixture suite
+  is maintained upstream instead of copied and rerun here
+  ([Shared Tooling #8](https://github.com/dragginzgame/shared-tooling/issues/8)).
+
+### Fixed
+
+- Linux and macOS CI explicitly prepare ripgrep and locked dependency caches
+  before portable and offline release checks
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7),
+  [#9](https://github.com/dragginzgame/ic-testkit/issues/9)).
+
 ## [0.19.1] - 2026-10-06
 
 ### Fixed

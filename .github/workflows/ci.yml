@@ -68,12 +68,21 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Prepare the pinned manifest formatter
         run: make install-format-tools
+      - name: Prepare portable check prerequisites
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update; sudo apt-get install -y ripgrep ;;
+            macOS) brew install ripgrep ;;
+            *) echo "Unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
+          esac
       - name: Prepare pinned local host and IC tools
         run: |
           make install-tools
           echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
           echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
           echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
+      - name: Prepare selected dependencies
+        run: cargo fetch --locked
       - name: Run complete CI gate
         run: make ci
 
@@ -100,6 +109,13 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Prepare the pinned manifest formatter
         run: make install-format-tools
+      - name: Prepare portable check prerequisites
+        run: |
+          case "$RUNNER_OS" in
+            Linux) sudo apt-get update; sudo apt-get install -y ripgrep ;;
+            macOS) brew install ripgrep ;;
+            *) echo "Unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
+          esac
       - name: Prepare pinned local host and IC tools with the system Bash
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         run: |

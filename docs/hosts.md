@@ -334,7 +334,7 @@ public output. The registry archive digest matches the lockfile, and its source
 matches reviewed upstream commit `e9417d0afb83c2a596fada3671fe941ac01ca2ae`.
 These are local consumer checks, not a complete gate or native macOS evidence.
 
-### Pending 0.19.1 publication admission
+### 0.19.1 publication admission
 
 Focused publication fixtures pass on Linux with current Bash and private GNU
 Bash 3.2.57. They exercise the actual Make target with substituted Git, curl and
@@ -343,15 +343,14 @@ HTTP failures, explicit offline policy, Cargo failure, annotated tags, wrong or
 missing tags and failed Git inspections with apparently valid output. This is
 local fixture qualification; native workflow qualification remains pending.
 
-The reviewed Shared Tooling snapshot remains at `a37771f`. Its [exact-version
-registry observer](https://github.com/dragginzgame/shared-tooling/issues/10) is
-still uncommitted in the sibling checkout, so adoption awaits a reviewed canonical
-commit. Its [committed release-tag checker](https://github.com/dragginzgame/shared-tooling/blob/a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3/scripts/ci/check-release-tag.sh) also
+Release 0.19.1 selected Shared Tooling `a37771f`; the exact-version registry
+observer was then uncommitted, so publication used a consumer adapter. Its
+[committed release-tag checker](https://github.com/dragginzgame/shared-tooling/blob/a37771f1b6b5fc9a88ed6ab3b705bdda35cd8fa3/scripts/ci/check-release-tag.sh)
 admits failed Git commands when their output matches expectations, reproduced
-with both Bash versions. Consumer admission stays outside the immutable
-snapshot until those prerequisites are fixed upstream.
+with both Bash versions. Tag admission remains in the consumer adapter until
+that prerequisite is fixed upstream.
 
-Pending 0.19.1 also checks read success before comparing retained validation and
+Release 0.19.1 also checks read success before comparing retained validation and
 readiness records. Focused metadata checks pass on Linux with current Bash and
 private GNU Bash 3.2.57. Fault-injection fixtures exercise complete-output read failures
 through the actual Make callbacks for recovery preflight, preparation, prepared,
@@ -365,3 +364,40 @@ prepared version reads and next-version derivation. They verify rejection before
 metadata or receipt changes, preserve the original gate count, and admit the
 same prepared identity after restoring the helpers. These are substituted helper
 failures, with native qualification still separate.
+
+### Pending 0.19.2 Shared Tooling adoption
+
+The snapshot selects clean committed Shared Tooling `47cd2ccaf0e8b428f06e6db0262df76cfc1581de`
+(0.1.7), exported from a separate pinned checkout. All 44 files verify against
+that revision. The canonical registry observer replaces the consumer's inline
+HTTP lookup; publication policy stays local. The tag checker is unchanged
+upstream and is still excluded from adoption.
+
+Focused publication fixtures pass on Linux with current Bash and private GNU
+Bash 3.2.57. Offline installed-tool checks, IC setup/retention/activation fixtures,
+consumer metadata fixtures, ShellCheck and upstream checksum/registry fixtures
+also pass locally. Consumer metadata fixtures pass with both Bash versions.
+Registry and installation requests are substituted in those
+fixtures; offline tool checks inspect the existing native installation. Native
+qualification for the changed consumer revision remains pending. Released
+0.19.1 source `af200d4` has failed [main](https://github.com/dragginzgame/ic-testkit/actions/runs/37460659223)
+and [tag](https://github.com/dragginzgame/ic-testkit/actions/runs/37460660218)
+workflows. All six portable jobs failed because the IC tool fixture lacked
+`rg`; all six complete-gate jobs failed because offline metadata fixtures could
+not resolve uncached `ic-host-tools`. Main MSRV and both workflows' concurrency
+jobs passed on all three hosts. Those successes do not qualify the failed gates.
+
+The pending 0.19.2 release guard also adopts the canonical command checker and
+retires the vendored shared-runner suite. The checker passes with current Bash
+and private GNU Bash 3.2.57; its upstream nested-Make and retained-failure fixtures
+pass locally. The focused `make release-guards-check` passes with real locked,
+offline consumer Cargo metadata and substituted release effects. Consumer-owned
+sequencing, metadata recovery and admission tests remain local. These results
+do not qualify native macOS execution or execute a release.
+
+The pending workflow correction installs ripgrep explicitly on Linux and macOS
+and performs `cargo fetch --locked` before the complete gate's offline fixtures.
+Portable jobs retain their existing locked fetch. Actionlint and the dependency
+declaration checker pass locally; the focused release guard passes against
+prepared caches. Native CI for this correction remains outstanding; no full
+gate, workflow rerun or package publication was executed locally.
