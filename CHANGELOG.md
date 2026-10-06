@@ -6,6 +6,23 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.18.2]
+
+### Fixed
+
+- Release validation, preparation and recovery stop when Git cannot complete
+  a source or metadata digest check, even if its output matches the saved
+  digest. Rejection preserves metadata and evidence; validation retries retain
+  the failed attempt's log
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). See the
+  [package tooling notes](crates/ic-testkit/CHANGELOG.md#0182).
+- Release metadata hashes use exact file bytes, so Git filters and line-ending
+  conversion cannot conceal changes to live files or retained backups
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+- Release preparation updates only the maintained README TOML dependency
+  examples, preserving historical lines, other code examples and formatting
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
 ## [0.18.1] - 2026-10-05
 
 ### Fixed

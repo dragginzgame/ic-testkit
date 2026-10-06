@@ -12,7 +12,8 @@ if [[ "$mode" == files ]]; then
   exit 0
 fi
 fail() { echo "release metadata refused: $*" >&2; exit 1; }
-hash_file() { git hash-object -- "$1"; }
+# Bind evidence to the bytes published, independent of Git's checkout filters.
+hash_file() { git hash-object --no-filters -- "$1"; }
 input_digest() { git diff --binary HEAD -- | git hash-object --stdin; }
 
 check_paths() {
@@ -55,32 +56,38 @@ prepared_identity() {
   local file old_digest new_digest
   printf '%s\n' release-metadata-v1 "$RELEASE_SOURCE" "$RELEASE_VERSION" "$RELEASE_DATE"
   for file in "${files[@]}"; do
-    old_digest="$(hash_file "$prepared/old/$file")"
-    new_digest="$(hash_file "$prepared/new/$file")"
+    old_digest="$(hash_file "$prepared/old/$file")" || return
+    new_digest="$(hash_file "$prepared/new/$file")" || return
     printf '%s\n' "$old_digest" "$new_digest"
   done
 }
 check_saved_metadata() {
+  local expected_identity
   check_validation
   [[ -f "$prepared/ready" && ! -L "$prepared/ready" ]] || fail "prepared metadata missing"
-  [[ "$(cat "$prepared/ready")" == "$(prepared_identity)" ]] || fail "prepared metadata changed"
+  expected_identity="$(prepared_identity)" || fail "cannot inspect prepared metadata"
+  [[ "$(cat "$prepared/ready")" == "$expected_identity" ]] || fail "prepared metadata changed"
 }
 check_recovery() {
   check_saved_metadata
-  local file digest
+  local file digest old_digest new_digest
   # Intent and exact old/new bytes precede publication. On interruption,
   # accept only those two identities; never incorporate new dirty input.
   for file in "${files[@]}"; do
     digest="$(hash_file "$file")"
-    [[ "$digest" == "$(hash_file "$prepared/old/$file")" || "$digest" == "$(hash_file "$prepared/new/$file")" ]] \
+    old_digest="$(hash_file "$prepared/old/$file")"
+    new_digest="$(hash_file "$prepared/new/$file")"
+    [[ "$digest" == "$old_digest" || "$digest" == "$new_digest" ]] \
       || fail "metadata changed during recovery: $file"
   done
 }
 check_prepared() {
   check_saved_metadata
-  local file
+  local file digest expected_digest
   for file in "${files[@]}"; do
-    [[ "$(hash_file "$file")" == "$(hash_file "$prepared/new/$file")" ]] \
+    digest="$(hash_file "$file")"
+    expected_digest="$(hash_file "$prepared/new/$file")"
+    [[ "$digest" == "$expected_digest" ]] \
       || fail "release payload changed: $file"
   done
   [[ "$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] \
@@ -141,7 +148,8 @@ case "$mode" in
     # Retain the full log on failure; never retry offline failures online.
     make --no-print-directory release-check 2>&1 \
       | tee "$attempt/validation.log"
-    [[ "$before" == "$(input_digest)" ]] || fail "inputs changed during validation"
+    after="$(input_digest)"
+    [[ "$before" == "$after" ]] || fail "inputs changed during validation"
     temporary="$(mktemp "$validation.tmp.XXXXXX")"
     cp "$attempt/identity" "$temporary"
     mv "$temporary" "$validation"
@@ -149,7 +157,8 @@ case "$mode" in
   prepare)
     check_validation
     if [[ ! -f "$prepared/ready" ]]; then
-      [[ "$(input_digest)" == "$validated_input" ]] || fail "inputs changed after validation"
+      current_input="$(input_digest)"
+      [[ "$current_input" == "$validated_input" ]] || fail "inputs changed after validation"
       mkdir -p "$prepared/old" "$prepared/new"
       for file in "${files[@]}"; do
         mkdir -p "$prepared/old/$(dirname "$file")" "$prepared/new/$(dirname "$file")"
@@ -191,11 +200,11 @@ case "$mode" in
           -f "$script_dir/../ci/finalize-release-changelog.awk" "$prepared/old/$file" \
           > "$prepared/new/$file"
       done
-      for file in README.md crates/ic-testkit/README.md; do
-        REQUIREMENT="${RELEASE_VERSION%.*}" perl -pi -e \
-          's/^(\s*ic-testkit\s*=\s*")[^"]+(".*)$/$1$ENV{REQUIREMENT}$2/' "$prepared/new/$file"
-      done
-      (cd "$prepared/new"; bash "$script_dir/../ci/check-installation-version.sh" "$RELEASE_VERSION")
+      (
+        cd "$prepared/new"
+        bash "$script_dir/../ci/check-installation-version.sh" --rewrite "$RELEASE_VERSION"
+        bash "$script_dir/../ci/check-installation-version.sh" "$RELEASE_VERSION"
+      )
       prepared_identity > "$prepared/ready.tmp"
       mv "$prepared/ready.tmp" "$prepared/ready"
     fi

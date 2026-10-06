@@ -8,6 +8,44 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.18.2]
+
+Release source and payload inspection requires each Git command to complete
+successfully before comparing its digest. Previously, a failed diff or hash
+command that had already emitted matching bytes could pass an inline comparison;
+failures inside the saved metadata identity constructor could also be lost.
+Validation now rejects a failed final source inspection without publishing a
+passing receipt, and preparation, recovery and later release checks reject
+failed digest reads before their next effects
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+Metadata file hashing bypasses Git attributes, clean filters and line-ending
+conversion. Previously, those transformations could make different live or
+retained file bytes produce the same identity, admitting an unvalidated change.
+Readiness and recovery checks now bind the actual file contents, including
+changes between LF and CRLF under normalizing attributes
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)). Identity mismatches
+stop recovery while preserving its record; they do not rewrite saved evidence.
+
+README requirement updates use the installation checker's TOML example locator.
+Its `--rewrite VERSION` mode operates on preparation's private copies, replacing
+only the one validated requirement before the adapter checks the result.
+Previously, a broader replacement also changed historical dependency lines
+outside TOML blocks. Patch, minor and major preparation now preserve those lines,
+other code examples, indentation, comments and a missing final newline. Missing,
+duplicate or malformed maintained examples still stop preparation before live
+metadata publication ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+Rejection preserves current metadata, retained old/new files and validation
+evidence. A validation retry runs fresh checks while retaining the failed
+attempt's log. Focused fixtures inject failures after complete output, including
+individual live, backup and prepared files. Real Git attribute fixtures also
+check raw-byte rejection and restoration of the exact saved payload. These are
+compatible tooling fixes:
+library APIs, dependency selections and the retained `v1` layout are unchanged.
+Native qualification of this correction is separate from the 0.18.1 results
+recorded in the [host matrix](https://github.com/dragginzgame/ic-testkit/blob/main/docs/hosts.md).
+
 ## [0.18.1] - 2026-10-05
 
 The reviewed Shared Tooling snapshot advances to

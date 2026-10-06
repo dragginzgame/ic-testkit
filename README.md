@@ -1627,9 +1627,10 @@ manual removal. Agents prepare and inspect changes but never invoke these
 one-shot commands, which create commits.
 
 `make installation-check` verifies the root and packaged README dependency
-examples against the current workspace version. Release preparation checks its
-exact prepared installation line before staging. Historical migration notes
-are outside this check.
+examples against the current workspace version. Release preparation uses the
+same TOML example locator to update only those requirements, then checks its
+exact prepared installation line before staging. Historical migration notes,
+other code examples and surrounding formatting are preserved.
 
 Publication requires a clean worktree and a matching `v<version>` tag at
 `HEAD`. Re-running `make publish` is safe when that version already exists on

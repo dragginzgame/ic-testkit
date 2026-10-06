@@ -17,8 +17,8 @@ native workflow run. Linux checks do not qualify macOS behavior.
 CI matrices disable fail-fast so a failure on one host does not cancel checks
 on the other supported hosts. Individual checks still stop on failure.
 The complete CI, MSRV, archive verification and publish dry-run gates run on all
-three native hosts. Native macOS qualification remains pending until matching
-workflow runs pass. Do not publish or push
+three native hosts. Qualification requires matching successful native jobs,
+with incomplete workflow runs identified separately below. Do not publish or push
 just to qualify tooling.
 
 At `v0.16.0` (`5f4a850b6dc3bb5652418f85dd18ed97f63046ce`), the native
@@ -122,6 +122,21 @@ Consumer metadata phases and the publication clean-worktree prerequisite stop
 when Git's untracked inventory fails. Command-stub checks exercise an empty
 failed inventory and verify that rejection preserves metadata and validation
 evidence before any gate or preparation effects.
+Source and metadata digest comparisons likewise require successful Git
+inspection, including inside the retained identity constructor. A failed final
+source check does not publish a passing validation receipt. Retrying validation
+retains its failed log; failed payload checks preserve live and retained files.
+Metadata file hashing bypasses Git attributes, clean filters and line-ending
+conversion. The fixture uses real Git attributes to normalize LF/CRLF and proves
+that changed raw bytes in live, backup and prepared files are rejected without
+rewriting current metadata or retained evidence. Restoring the exact saved
+bytes permits the same prepared release to pass again. Retained identity
+conflicts stop recovery; the helper does not rewrite their readiness record.
+README preparation uses the installation checker's TOML example locator on its
+private copies. Patch/minor/major fixtures preserve historical dependency lines,
+non-TOML examples, indentation, comments and a missing final newline. Duplicate
+or malformed maintained examples in either view reject preparation before live
+publication, preserving the source metadata.
 The same unchecked inventory in the reviewed shared runner is reported in
 [Shared Tooling issue #4](https://github.com/dragginzgame/shared-tooling/issues/4).
 The consumer adapter rejects this failure at each release phase; the vendored
@@ -168,7 +183,8 @@ report replacement, standalone proxy invocation and subprocess completion on
 interruption. They use synthetic workers rather than running the live benchmark.
 Passing Linux checks does not qualify macOS. The 0.17.3 workflow above qualifies
 the teardown fixture and installation documentation guard on all three native
-hosts; qualification of the subsequent release/hook tooling remains pending.
+hosts. The 0.18.1 results below qualify the release/hook adoption; subsequent
+digest-check changes remain pending matching native CI.
 
 The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:
@@ -203,8 +219,8 @@ refusal of a conflicting hook path. This adopts the upstream fix for
 [Shared Tooling issue #1](https://github.com/dragginzgame/shared-tooling/issues/1)
 without patching the snapshot; symlinked `TMPDIR` is a focused Linux reproduction
 of the path-identity problem, not native macOS qualification.
-Native Linux/ARM64/Intel qualification of this adoption remains pending matching
-portable-host CI; the earlier release passes do not qualify this new workflow.
+The 0.18.1 portable-host results below qualify this adoption on native
+Linux/ARM64/Intel; the earlier release passes do not qualify it.
 
 At `v0.18.0` (`6f77928204a1993f3d6923df8cf3f9015baa4cd6`), the
 [tag workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37349040375)
@@ -214,5 +230,23 @@ the toolchain's `rustfmt` component. The portable shell also continued past an
 earlier failed check. Current fixtures own their candidate notes and cover
 finalized-only history; portable setup explicitly prepares `rustfmt` and its
 system Bash step stops on command, pipeline and unset-variable failures.
-Qualification of these fixes remains pending matching native CI on all three
-hosts.
+Qualification of these fixes is recorded in the 0.18.1 results below.
+
+At `v0.18.1` (`a71fbe5ea23a87998ac4637ea53787d2d98e602c`), the
+[Linux](https://github.com/dragginzgame/ic-testkit/actions/runs/37370973393/job/111967721036),
+[ARM64 macOS](https://github.com/dragginzgame/ic-testkit/actions/runs/37370973393/job/111967720746)
+and [Intel macOS](https://github.com/dragginzgame/ic-testkit/actions/runs/37370973393/job/111967721157)
+portable-host jobs passed. These qualify the reviewed release/hook adoption,
+fixture independence, formatter prerequisites, strict system-Bash execution
+and inventory-failure rejection for that source. All three main MSRV jobs
+also passed.
+
+The [main workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37370973393)
+passed the complete gate on both macOS hosts; the
+[tag workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37370972911)
+passed it on Linux and ARM64 macOS at the same source. Both overall runs are
+marked failed and contain cancelled jobs. The cancelled-job logs were unavailable
+when inspected, so their cause is not established here and neither run is
+reported as a complete workflow pass. Successful portable jobs do not prove
+live release or registry effects. The subsequent 0.18.2 digest-check changes
+still require matching native Linux and macOS jobs.

@@ -19,7 +19,13 @@ cat > "$work_dir/bin/git" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$1" in
-  hash-object) shift; exec "$REAL_GIT" hash-object "$@" ;;
+  hash-object)
+    shift
+    "$REAL_GIT" hash-object "$@"
+    if [[ -z "${ADAPTER_HASH_PATH:-}" || "${*: -1}" == "$ADAPTER_HASH_PATH" ]]; then
+      exit "${ADAPTER_HASH_STATUS:-0}"
+    fi
+    ;;
   rev-parse) [[ "$*" == 'rev-parse --git-path release-state' ]]; echo .release-state ;;
   ls-files)
     if [[ "$2" == --others ]]; then
@@ -43,6 +49,10 @@ case "$1" in
           printf '%s\0' "$file"
           cat "$file"
         done
+        if [[ -f input-diff-status ]]; then
+          exit "$(cat input-diff-status)"
+        fi
+        exit "${ADAPTER_INPUT_DIFF_STATUS:-0}"
         ;;
       *) exit 97 ;;
     esac
@@ -57,6 +67,9 @@ set -euo pipefail
 printf '%s\n' "$*" >> gate-trace
 printf '%s\n' "${CARGO_NET_OFFLINE-unset}" >> gate-environment
 echo 'substituted complete validation gate'
+if [[ -n "${ADAPTER_AFTER_GATE_DIFF_STATUS:-}" ]]; then
+  printf '%s\n' "$ADAPTER_AFTER_GATE_DIFF_STATUS" > input-diff-status
+fi
 if [[ "${ADAPTER_REGISTRY_CHECK:-}" == true && "${CARGO_NET_OFFLINE:-}" == true ]]; then
   echo 'substituted registry check requires HTTP' >&2
   exit 101
@@ -114,6 +127,20 @@ expect_failure() {
 
 for kind in patch minor major; do
   new_fixture "$kind" "$kind"
+  cat > readme-history <<'HISTORY'
+
+Historical examples outside the maintained TOML block:
+ic-testkit = "0.1"
+```text
+ic-testkit = "0.2"
+```
+HISTORY
+  printf 'Historical final line without a newline.' >> readme-history
+  for readme in README.md crates/ic-testkit/README.md; do
+    # Valid formatting and comments survive the targeted requirement update.
+    perl -pi -e 's/^ic-testkit = ("[0-9]+\.[0-9]+")$/  ic-testkit  =  $1  # maintained example/' "$readme"
+    cat readme-history >> "$readme"
+  done
   adapter preflight
   adapter verify
   cp CHANGELOG.md history-root
@@ -127,6 +154,11 @@ for kind in patch minor major; do
   cmp history-package ".release-state/$RELEASE_VERSION.metadata/old/crates/ic-testkit/CHANGELOG.md"
   grep -Fx "## [$RELEASE_VERSION] - $RELEASE_DATE" CHANGELOG.md
   grep -Fx "## [$RELEASE_VERSION] - $RELEASE_DATE" crates/ic-testkit/CHANGELOG.md
+  for readme in README.md crates/ic-testkit/README.md; do
+    grep -Fx "  ic-testkit  =  \"${RELEASE_VERSION%.*}\"  # maintained example" "$readme"
+    tail -n "$(awk 'END { print NR }' readme-history)" "$readme" > prepared-readme-history
+    cmp readme-history prepared-readme-history
+  done
   for phase in commit committed tagged push; do adapter "$phase"; done
   [[ "$(cat artifact)" == 'consumer build artifact' ]]
   [[ "$(cat gate-trace)" == '--no-print-directory release-check' ]]
@@ -208,6 +240,41 @@ for view in root package; do
   cmp "history-$view" prepared-history
 done
 
+new_fixture raw-metadata-identities
+"$REAL_GIT" init --quiet
+printf '*.md text eol=lf\n' > .gitattributes
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+cp "$retained/ready" raw-ready
+cp ".release-state/$RELEASE_VERSION.validation" raw-receipt
+cp -R "$retained/new" raw-live
+for mutated_tree in live old new; do
+  mutated_file=README.md
+  [[ "$mutated_tree" == live ]] || mutated_file="$retained/$mutated_tree/README.md"
+  cp "$mutated_file" raw-before
+  # Real Git attributes normalize CRLF to LF. The release identity must still
+  # distinguish the actual live, backup and prepared bytes without normalization.
+  perl -pi -e 's/\n/\r\n/g' "$mutated_file"
+  cp "$mutated_file" raw-after
+  cp -R "$retained" "$mutated_tree-retained"
+  for phase in prepared prepare commit committed tagged push; do
+    expect_failure "$phase"
+    cmp raw-after "$mutated_file"
+    cmp raw-ready "$retained/ready"
+    cmp raw-receipt ".release-state/$RELEASE_VERSION.validation"
+    diff -r "$mutated_tree-retained" "$retained"
+    for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+      expected="raw-live/$file"
+      if [[ "$mutated_tree" == live && "$file" == README.md ]]; then expected=raw-after; fi
+      cmp "$expected" "$file"
+    done
+  done
+  cp raw-before "$mutated_file"
+  adapter prepared
+done
+[[ "$(wc -l < gate-trace)" -eq 1 ]]
+
 for linked_path in ready old/README.md new; do
   new_fixture "linked-${linked_path//\//-}"
   adapter verify
@@ -259,6 +326,28 @@ for view in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
   [[ -s "${logs[0]}" ]]
 done
 
+for view in README.md crates/ic-testkit/README.md; do
+  for invalid_example in duplicate malformed; do
+    new_fixture "invalid-$invalid_example-${view//\//-}"
+    if [[ "$invalid_example" == duplicate ]]; then
+      # shellcheck disable=SC2016 # Markdown fences are literal fixture data.
+      printf '\n```toml\nic-testkit = "0.1"\n```\n' >> "$view"
+    else
+      perl -pi -e 's/^ic-testkit = "[0-9]+\.[0-9]+"$/ic-testkit = "invalid"/' "$view"
+    fi
+    for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+      mkdir -p "before/$(dirname "$file")"
+      cp "$file" "before/$file"
+    done
+    adapter verify
+    expect_failure prepare
+    [[ ! -e ".release-state/$RELEASE_VERSION.metadata/ready" ]]
+    for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+      cmp "before/$file" "$file"
+    done
+  done
+done
+
 new_fixture failed-gate
 export ADAPTER_GATE_STATUS=23
 expect_failure verify
@@ -291,6 +380,73 @@ adapter verify
 adapter prepare
 [[ "$(wc -l < gate-trace)" -eq 3 ]]
 cmp passed-log "$first_log"
+
+new_fixture failed-input-inspection
+adapter verify
+cp ".release-state/$RELEASE_VERSION.validation" inspected-receipt
+for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+  mkdir -p "inspected/$(dirname "$file")"
+  cp "$file" "inspected/$file"
+done
+export ADAPTER_INPUT_DIFF_STATUS=9
+expect_failure prepare
+unset ADAPTER_INPUT_DIFF_STATUS
+cmp inspected-receipt ".release-state/$RELEASE_VERSION.validation"
+[[ ! -e ".release-state/$RELEASE_VERSION.metadata" ]]
+[[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]]
+[[ "$(wc -l < gate-trace)" -eq 1 ]]
+for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+  cmp "inspected/$file" "$file"
+done
+
+new_fixture failed-post-gate-inspection
+export ADAPTER_AFTER_GATE_DIFF_STATUS=9
+expect_failure verify
+unset ADAPTER_AFTER_GATE_DIFF_STATUS
+[[ ! -e ".release-state/$RELEASE_VERSION.validation" ]]
+logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
+[[ -s "${logs[0]}" ]]
+expect_failure prepare
+[[ ! -e ".release-state/$RELEASE_VERSION.metadata" ]]
+[[ "$(wc -l < gate-trace)" -eq 1 ]]
+first_log="${logs[0]}"
+cp "$first_log" failed-inspection-log
+rm input-diff-status
+adapter preflight
+adapter verify
+adapter prepare
+cmp failed-inspection-log "$first_log"
+[[ "$(wc -l < gate-trace)" -eq 2 ]]
+
+new_fixture failed-payload-inspection
+adapter verify
+adapter prepare
+retained=".release-state/$RELEASE_VERSION.metadata"
+cp "$retained/ready" inspected-ready
+cp ".release-state/$RELEASE_VERSION.validation" inspected-receipt
+export ADAPTER_HASH_STATUS=9
+for failed_path in '' README.md "$retained/old/README.md" "$retained/new/README.md"; do
+  export ADAPTER_HASH_PATH="$failed_path"
+  for phase in preflight prepare prepared commit committed tagged push; do
+    # Model an interrupted manifest publication for the recovery preflight.
+    if [[ "$phase" == preflight ]]; then
+      cp "$retained/old/Cargo.toml" Cargo.toml
+    else
+      cp "$retained/new/Cargo.toml" Cargo.toml
+    fi
+    expect_failure "$phase"
+    cmp inspected-ready "$retained/ready"
+    cmp inspected-receipt ".release-state/$RELEASE_VERSION.validation"
+    [[ "$(wc -l < gate-trace)" -eq 1 ]]
+    for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
+      tree=new
+      if [[ "$phase" == preflight && "$file" == Cargo.toml ]]; then tree=old; fi
+      cmp "$retained/$tree/$file" "$file"
+    done
+  done
+done
+unset ADAPTER_HASH_STATUS ADAPTER_HASH_PATH
+adapter prepared
 
 new_fixture changed-input
 adapter verify
