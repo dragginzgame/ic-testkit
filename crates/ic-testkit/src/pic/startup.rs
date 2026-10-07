@@ -1165,9 +1165,10 @@ mod tests {
         let result = std::panic::catch_unwind(|| {
             PocketIcStartupConfig::connect("http://127.0.0.1:12345/", Duration::from_secs(1))
                 .run_command(Command::new(script.path()).arg(&pid_file), || {
-                    if fs::read_to_string(&pid_file).is_ok_and(|value| !value.is_empty()) {
-                        panic!("caller cancellation failed");
-                    }
+                    assert!(
+                        !fs::read_to_string(&pid_file).is_ok_and(|value| !value.is_empty()),
+                        "caller cancellation failed"
+                    );
                     false
                 })
         });
@@ -1180,6 +1181,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn environment_selection_prefers_urls_and_fails_closed() {
+        use std::os::unix::ffi::OsStringExt as _;
+
         let timeout = Duration::from_secs(1);
         let config = PocketIcStartupConfig::from_environment(timeout, |name| {
             Some(
@@ -1208,7 +1211,6 @@ mod tests {
             PocketIcStartupConfig::from_environment(timeout, |_| Some("bad URL".into())),
             Err(PocketIcStartupError::InvalidServerUrl { .. })
         ));
-        use std::os::unix::ffi::OsStringExt as _;
         assert!(matches!(
             PocketIcStartupConfig::from_environment(timeout, |_| Some(
                 std::ffi::OsString::from_vec(vec![0xff])
@@ -1241,7 +1243,7 @@ mod tests {
                 });
             match (expected, result) {
                 (0, Ok(config)) => {
-                    assert_eq!(config.server_binary(), Some(script.path().as_path()))
+                    assert_eq!(config.server_binary(), Some(script.path().as_path()));
                 }
                 (1, Err(PocketIcStartupError::ServerVersionMismatch { .. }))
                 | (2, Err(PocketIcStartupError::ServerVersionProbe { .. })) => {}

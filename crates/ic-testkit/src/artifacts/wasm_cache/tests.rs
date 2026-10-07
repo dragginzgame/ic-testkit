@@ -81,7 +81,7 @@ fn shim_compiler_identity_invalidates_exact_cache_and_explicit_rustc_takes_prece
 fn default_builds_share_cargo_state_across_fingerprints() {
     let (root, fixture) = fake_wasm_build_spec("default-shared-cargo");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
-        .with_cargo_program(fixture.cargo_program.clone());
+        .with_cargo_program(fixture.cargo_program);
     let first = build_wasm_canisters_cached(&spec).unwrap();
     assert!(
         first
