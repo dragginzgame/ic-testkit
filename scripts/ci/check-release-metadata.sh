@@ -121,15 +121,15 @@ STUB
 chmod +x "$work_dir/bin/cargo"
 export PATH="$work_dir/bin:$PATH"
 
-previous="$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
+previous="$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
 new_fixture() {
   mkdir -p "$work_dir/$1"
   cd "$work_dir/$1"
   # Exercise the consumer's actual Make callbacks with local copies of their
   # inputs. Only the complete validation gate and Git effects are substituted.
   mkdir -p scripts/release scripts/ci ci
-  cp "$repo_root/scripts/release/metadata.sh" "$repo_root/scripts/release/read-workspace-version.sh" scripts/release/
-  for helper in next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk; do
+  cp "$repo_root/scripts/release/metadata.sh" scripts/release/
+  for helper in read-cargo-workspace-version.sh next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk; do
     cp "$repo_root/scripts/ci/$helper" scripts/ci/
   done
   cp "$repo_root/ci/tool-versions.env" ci/
@@ -137,7 +137,7 @@ new_fixture() {
     mkdir -p "$(dirname "$file")"
     cp "$repo_root/$file" "$file"
   done
-  for member in crates/ic-testkit canisters/test/perf_probe; do
+  for member in crates/ic-testkit crates/ic_testkit_perf_probe; do
     mkdir -p "$member/src"
     cp "$repo_root/$member/Cargo.toml" "$member/Cargo.toml"
     : > "$member/src/lib.rs"
@@ -191,6 +191,21 @@ expect_failure() {
     fail "adapter unexpectedly accepted $1 in $PWD (${conflict:-no selected-commit conflict})"
   fi
 }
+
+# Imported undated history is not another pending release. Exercise both note
+# views through the actual consumer callbacks, preserving the historical bytes.
+new_fixture undated-history
+for file in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
+  printf '\n## [0.0.1]\n\nHistorical imported notes.\n' >> "$file"
+done
+adapter preflight || fail 'undated history preflight rejected'
+adapter verify || fail 'undated history validation rejected'
+adapter prepare || fail 'undated history preparation rejected'
+for file in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
+  tail -n 4 "$file" > history-tail
+  tail -n 4 ".release-state/$RELEASE_VERSION.metadata/old/$file" > old-history-tail
+  cmp history-tail old-history-tail || fail "undated history changed: $file"
+done
 
 # One private policy selection drives both cache preparation and gate admission.
 # Local exported variables cannot leak into another fixture.
@@ -254,7 +269,7 @@ HISTORY
   MAKEFLAGS='-- RELEASE_PREVIOUS=98.0.0 RELEASE_KIND=major RELEASE_VERSION=99.0.0 RELEASE_DATE=2099-01-01' \
     adapter prepare
   adapter prepared
-  [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] || fail "fixture invariant in $PWD at line $LINENO"
+  [[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] || fail "fixture invariant in $PWD at line $LINENO"
   # The exact generated metadata, dependency selection and retained old bytes
   # are the contract; no test inspects the adapter's implementation layout.
   cmp history-root ".release-state/$RELEASE_VERSION.metadata/old/CHANGELOG.md"
@@ -352,7 +367,7 @@ printf '/.release-state/\n' > .git/info/exclude
 "$REAL_GIT" add -- .gitignore Cargo.toml Cargo.lock CHANGELOG.md \
   crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md \
   rust-toolchain.toml crates/ic-testkit/Cargo.toml crates/ic-testkit/src/lib.rs \
-  canisters/test/perf_probe/Cargo.toml canisters/test/perf_probe/src/lib.rs \
+  crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs \
   artifact gate-trace gate-environment rejected.log scripts ci
 printf 'interrupted root staging bytes\n' > .release-metadata.fixture
 printf 'interrupted package staging bytes\n' > crates/ic-testkit/.release-metadata.fixture
@@ -361,7 +376,7 @@ ADAPTER_REAL_UNTRACKED=true adapter prepare || fail "tracked fixture recovery re
 [[ "$(cat .release-metadata.fixture)" == 'interrupted root staging bytes' ]] || fail "fixture invariant in $PWD at line $LINENO"
 [[ "$(cat crates/ic-testkit/.release-metadata.fixture)" == 'interrupted package staging bytes' ]] || fail "fixture invariant in $PWD at line $LINENO"
 [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail "fixture invariant in $PWD at line $LINENO"
-printf 'unrelated same-prefix file\n' > canisters/test/perf_probe/.release-metadata.unrelated
+printf 'unrelated same-prefix file\n' > crates/ic_testkit_perf_probe/.release-metadata.unrelated
 ADAPTER_REAL_UNTRACKED=true expect_failure prepared
 
 new_fixture finalized-notes patch finalized
@@ -451,7 +466,7 @@ ln -s "$PWD/foreign-metadata" "$retained/new"
 expect_failure prepare
 diff -r foreign-before foreign-metadata
 [[ ! -e "$retained/ready" ]] || fail "fixture invariant in $PWD at line $LINENO"
-[[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
+[[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
 
 for view in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
   new_fixture "conflicting-${view//\//-}"
@@ -466,7 +481,7 @@ for view in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
   adapter verify
   expect_failure prepare
   cmp notes-before "$view"
-  [[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
+  [[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
   [[ ! -e ".release-state/$RELEASE_VERSION.metadata/ready" ]] || fail "fixture invariant in $PWD at line $LINENO"
   logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
   [[ -s "${logs[0]}" ]] || fail "fixture invariant in $PWD at line $LINENO"
@@ -498,7 +513,7 @@ new_fixture failed-gate
 export ADAPTER_GATE_STATUS=23
 expect_failure verify
 unset ADAPTER_GATE_STATUS
-[[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
+[[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
 logs=(.release-state/"$RELEASE_VERSION".validation.*/validation.log)
 [[ -s "${logs[0]}" ]] || fail "fixture invariant in $PWD at line $LINENO"
 expect_failure prepare
@@ -539,7 +554,7 @@ expect_failure prepare
 unset ADAPTER_INPUT_DIFF_STATUS
 cmp inspected-receipt ".release-state/$RELEASE_VERSION.validation"
 [[ ! -e ".release-state/$RELEASE_VERSION.metadata" ]] || fail "fixture invariant in $PWD at line $LINENO"
-[[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
+[[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
 [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail "fixture invariant in $PWD at line $LINENO"
 for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
   cmp "inspected/$file" "$file"
@@ -634,7 +649,7 @@ retained=".release-state/$RELEASE_VERSION.metadata"
 receipt=".release-state/$RELEASE_VERSION.validation"
 cp "$retained/ready" inspected-ready
 cp "$receipt" inspected-receipt
-for helper in scripts/release/read-workspace-version.sh scripts/ci/next-release-version.sh; do
+for helper in scripts/ci/read-cargo-workspace-version.sh scripts/ci/next-release-version.sh; do
   cp "$helper" inspected-helper
   printf '\nexit 9\n' >> "$helper"
   phases=(preflight prepared commit)
@@ -693,7 +708,7 @@ new_fixture changed-input
 adapter verify
 echo 'source changed after validation' >> CHANGELOG.md
 expect_failure prepare
-[[ "$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
+[[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
 
 new_fixture admission
 export ADAPTER_DIFF_STATUS=9

@@ -3,9 +3,9 @@ use ic_testkit::{
         ArtifactCacheOutcome, ArtifactCachePreparation, ArtifactCachePrunePolicy,
         ArtifactCacheSpec, prepare_artifact_cache,
     },
-    ic_host_tools::{
-        artifact::Sha256Digest,
-        tool::{AdmittedTool, ExecutionContext, OutputLimits, ToolSpec, resolve_executable},
+    ic_host_artifacts::artifact::Sha256Digest,
+    ic_host_process::tool::{
+        AdmittedTool, ExecutionContext, OutputLimits, ToolSpec, resolve_executable,
     },
 };
 use std::time::Duration;

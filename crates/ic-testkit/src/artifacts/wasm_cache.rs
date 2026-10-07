@@ -31,7 +31,7 @@ use super::{
     digest::{
         FileDigest, InputDigest, InputHasher, LabeledPathDigestCache, copy_file_atomic,
         destination_matches_bytes, destination_matches_digest, digest_bytes, digest_file,
-        digest_labeled_paths_composable, os_bytes, read_stamp_with_limit, write_atomic,
+        digest_labeled_paths_composable, os_bytes, read_stamp_with_limit,
     },
 };
 
@@ -5081,10 +5081,12 @@ fn write_artifact_stamp(
     if preserve_matching && destination_matches_bytes(&stamp_path, stamp.as_bytes()) {
         return Ok(());
     }
-    write_atomic(&stamp_path, stamp.as_bytes()).map_err(|source| WasmBuildError::Io {
-        operation: "publish Wasm build stamp",
-        path: stamp_path,
-        source,
+    ic_host_fs::durable::write_bytes(&stamp_path, stamp.as_bytes()).map_err(|source| {
+        WasmBuildError::Io {
+            operation: "publish Wasm build stamp",
+            path: stamp_path,
+            source,
+        }
     })
 }
 

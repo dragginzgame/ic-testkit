@@ -400,9 +400,9 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "either"
-version = "1.18.0"
+version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
+checksum = "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be"
 
 [[package]]
 name = "equivalent"
@@ -593,9 +593,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.19"
+version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
+checksum = "7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -678,9 +678,9 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hyper"
-version = "1.11.1"
+version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
+checksum = "2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -800,18 +800,49 @@ dependencies = [
 ]
 
 [[package]]
-name = "ic-host-tools"
-version = "0.1.14"
+name = "ic-host-artifacts"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1276e52058f6ef8e3ca3bdf118a18e8f2d79440bfa34a6a080b2f5fead3a0b6a"
+checksum = "d6d9330517c7596c8fa43c40c1a95fc584578f66afcb966a144b5b27e63c02c9"
 dependencies = [
  "flate2",
- "rustix",
- "serde",
- "serde_json",
  "sha2",
  "tar",
  "wasmparser",
+]
+
+[[package]]
+name = "ic-host-fs"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a69ee91e296dbf938000e0a72ab4a50ffcd2f58352048eff21ed1a6cc9a128d2"
+dependencies = [
+ "ic-host-artifacts",
+ "rustix",
+]
+
+[[package]]
+name = "ic-host-process"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b2eecf7bc6e99344bbdf32ff123c2e4653506f09f2edea8918aa0978955c557"
+dependencies = [
+ "ic-host-artifacts",
+ "ic-host-fs",
+ "rustix",
+]
+
+[[package]]
+name = "ic-host-tools"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e72b6f926e666bb00a04e8f5795bed21a8473541d9d03833e0edebb9e3837d4d"
+dependencies = [
+ "ic-host-artifacts",
+ "ic-host-fs",
+ "ic-host-process",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -832,6 +863,9 @@ dependencies = [
  "candid",
  "fs2",
  "ic-cdk",
+ "ic-host-artifacts",
+ "ic-host-fs",
+ "ic-host-process",
  "ic-host-tools",
  "libc",
  "pocket-ic",
@@ -2560,9 +2594,9 @@ dependencies = [
 
 [[package]]
 name = "wasmparser"
-version = "0.253.0"
+version = "0.261.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19db11f87d2486580e1e8b6f494c54df7e0566b87d0b599db843c24019667339"
+checksum = "4f20f20e44f7e8aeb6744823ea9d869ede51e51be4fdaedede2852282e54d2d8"
 dependencies = [
  "bitflags",
  "indexmap",
@@ -2780,9 +2814,9 @@ dependencies = [
 
 [[package]]
 name = "zeroize"
-version = "1.9.0"
+version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
 
 [[package]]
 name = "zerotrie"

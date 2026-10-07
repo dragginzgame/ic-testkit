@@ -2,52 +2,22 @@ use fs2::FileExt as _;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read as _},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::Arc,
-    thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use super::digest::{read_stamp_with_limit, write_atomic};
+use super::digest::read_stamp_with_limit;
 
 /// Resolve existing components through symlinks and normalize a missing suffix.
 /// Parent traversal can return from a missing suffix to existing components.
 pub(super) fn canonicalize_allow_missing(path: &Path) -> io::Result<PathBuf> {
-    let absolute = if path.is_absolute() {
-        path.to_owned()
+    let base = if path.is_absolute() {
+        PathBuf::new()
     } else {
-        std::env::current_dir()?.join(path)
+        std::env::current_dir()?
     };
-    let mut resolved = PathBuf::new();
-    let mut missing_depth = 0_usize;
-    for component in absolute.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                let candidate = resolved.join(component.as_os_str());
-                if missing_depth == 0 && matches!(component, Component::Normal(_)) {
-                    match candidate.canonicalize() {
-                        Ok(canonical) => resolved = canonical,
-                        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                            resolved = candidate;
-                            missing_depth = 1;
-                        }
-                        Err(error) => return Err(error),
-                    }
-                } else {
-                    resolved = candidate;
-                    if matches!(component, Component::Normal(_)) && missing_depth > 0 {
-                        missing_depth += 1;
-                    }
-                }
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                resolved.pop();
-                missing_depth = missing_depth.saturating_sub(1);
-            }
-        }
-    }
-    Ok(resolved)
+    ic_host_fs::path::canonicalize_allow_missing(path, &base)
 }
 
 const CACHE_DIRECTORY_TAG: &str = "Signature: 8a477f597d28d172789f06886806bc55\n\
@@ -66,7 +36,20 @@ pub(super) const RETENTION_LOCK_FILE: &str = ".ic-testkit-retention-v1";
 #[derive(Clone, Debug)]
 pub(super) struct RetainedCacheEntry {
     path: PathBuf,
-    _lock: Arc<File>,
+    _lock: Arc<RetentionLock>,
+}
+
+#[derive(Debug)]
+struct RetentionLock(File);
+
+impl Drop for RetentionLock {
+    fn drop(&mut self) {
+        // Closing alone can leave a flock held by a descriptor inherited during
+        // a concurrent spawn before exec. Release it when the final record owner
+        // drops, rather than waiting for unrelated child descriptors to close.
+        // If unlocking fails, closing the owned file remains the fallback.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
 }
 
 impl PartialEq for RetainedCacheEntry {
@@ -91,7 +74,7 @@ impl RetainedCacheEntry {
         })?;
         Ok(Self {
             path: path.to_owned(),
-            _lock: Arc::new(file),
+            _lock: Arc::new(RetentionLock(file)),
         })
     }
 }
@@ -309,10 +292,12 @@ pub(super) fn ensure_cache_directory_tag(cache_root: &Path) -> Result<(), CacheF
     {
         return Ok(());
     }
-    write_atomic(&path, CACHE_DIRECTORY_TAG.as_bytes()).map_err(|source| CacheFsError {
-        operation: "write cache directory tag",
-        path,
-        source,
+    ic_host_fs::durable::write_bytes(&path, CACHE_DIRECTORY_TAG.as_bytes()).map_err(|source| {
+        CacheFsError {
+            operation: "write cache directory tag",
+            path,
+            source,
+        }
     })
 }
 
@@ -333,24 +318,20 @@ pub(super) fn lock_cache_file_with_wait_observer(
     mut observer: impl FnMut(Duration),
 ) -> Result<(File, Duration), CacheFsError> {
     let file = open_cache_lock_file(path)?;
-    let started = Instant::now();
-    loop {
-        match file.try_lock_exclusive() {
-            Ok(()) => return Ok((file, started.elapsed())),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                observer(started.elapsed());
-                thread::sleep(poll_interval.min(Duration::from_millis(25)));
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(source) => {
-                return Err(CacheFsError {
-                    operation: "try lock cache",
-                    path: path.to_owned(),
-                    source,
-                });
-            }
-        }
-    }
+    let wait = ic_host_fs::durable::lock_exclusive_with_wait(
+        &file,
+        poll_interval.min(Duration::from_millis(25)),
+        |elapsed| {
+            observer(elapsed);
+            Ok(())
+        },
+    )
+    .map_err(|source| CacheFsError {
+        operation: "try lock cache",
+        path: path.to_owned(),
+        source,
+    })?;
+    Ok((file, wait))
 }
 
 pub(super) fn try_lock_cache_file(path: &Path) -> Result<Option<File>, CacheFsError> {
@@ -434,7 +415,7 @@ pub(super) fn record_cache_maintenance(
     let marker = path.join(LAST_MAINTENANCE_FILE);
     let elapsed = encode_system_time(&marker, SystemTime::now())?;
     let contents = format!("{}\n{maintenance_identity}\n", elapsed.as_nanos());
-    write_atomic(&marker, contents.as_bytes()).map_err(|source| CacheFsError {
+    ic_host_fs::durable::write_bytes(&marker, contents.as_bytes()).map_err(|source| CacheFsError {
         operation: "record cache maintenance time",
         path: marker,
         source,
@@ -489,11 +470,13 @@ fn write_system_time(
     operation: &'static str,
 ) -> Result<(), CacheFsError> {
     let elapsed = encode_system_time(path, timestamp)?;
-    write_atomic(path, elapsed.as_nanos().to_string().as_bytes()).map_err(|source| CacheFsError {
-        operation,
-        path: path.to_owned(),
-        source,
-    })
+    ic_host_fs::durable::write_bytes(path, elapsed.as_nanos().to_string().as_bytes()).map_err(
+        |source| CacheFsError {
+            operation,
+            path: path.to_owned(),
+            source,
+        },
+    )
 }
 
 fn encode_system_time(path: &Path, timestamp: SystemTime) -> Result<Duration, CacheFsError> {
@@ -723,6 +706,33 @@ mod tests {
         fs,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn final_retention_owner_releases_lock_with_a_duplicate_descriptor_open() {
+        let root = unique_temp_directory("retention-duplicate-descriptor");
+        let retained = super::RetainedCacheEntry::acquire(&root).unwrap();
+        // A process spawn can duplicate this descriptor before close-on-exec.
+        let inherited = retained._lock.0.try_clone().unwrap();
+        let clone = retained.clone();
+        let independently_retained = super::RetainedCacheEntry::acquire(&root).unwrap();
+        let lock_path = root.join(super::RETENTION_LOCK_FILE);
+        let available = || super::try_lock_cache_file(&lock_path).unwrap().is_some();
+        drop(retained);
+        assert!(!available(), "a record clone still retains the entry");
+        drop(clone);
+        assert!(
+            !available(),
+            "an independent acquisition still retains the entry"
+        );
+        drop(independently_retained);
+        assert!(
+            available(),
+            "descriptor duplication must not extend record ownership"
+        );
+        drop(inherited);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn last_use_markers_preserve_timestamps_and_bounded_fallbacks() {

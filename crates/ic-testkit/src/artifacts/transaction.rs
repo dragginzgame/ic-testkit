@@ -23,7 +23,6 @@ use super::{
     digest::{
         FileDigest, InputDigest, InputHasher, copy_file_atomic, destination_matches_digest,
         digest_bytes, digest_file, digest_labeled_paths, os_bytes, read_file_with_limit,
-        write_atomic,
     },
     wasm_cache::{
         ResolvedCargoBuildInputs, WasmBuildError, WasmBuildSpec, resolve_cargo_build_inputs,
@@ -763,7 +762,7 @@ impl ArtifactBuildTransaction {
         let publication_started = Instant::now();
         let manifest =
             manifest_contents(self.resolved.key, &self.spec, output_info.iter().copied());
-        write_atomic(
+        ic_host_fs::durable::write_bytes(
             &self.staging_directory.join(MANIFEST_FILE),
             manifest.as_bytes(),
         )

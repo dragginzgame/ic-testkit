@@ -16,7 +16,7 @@ fi
 # adapter uses the same locator to update its private copy before checking it.
 version="${1:-}"
 if [[ -z "${version}" ]]; then
-  version="$(/bin/bash "${script_dir}/../release/read-workspace-version.sh" --stable Cargo.toml)"
+  version="$(/bin/bash "${script_dir}/read-cargo-workspace-version.sh" --stable Cargo.toml)"
 fi
 if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   echo "error: unsupported installation version ${version}" >&2

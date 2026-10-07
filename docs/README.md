@@ -19,7 +19,7 @@ ships with the crate and records the pre-1.0 hard cuts. The
 | Snapshot and fixture reuse | [Baselines and pools](../README.md#snapshots-and-cached-baselines), [complete recipe](../crates/ic-testkit/examples/multi_canister_baseline_pool.rs) |
 | Diagnostics | [Diagnostics and time](../README.md#diagnostics-and-time) |
 | Wasm builds, retained artifacts, batches, and source leases | [Artifact helpers](../README.md#wasm-artifact-helpers), [external-tool example](../crates/ic-testkit/examples/transactional_artifact_cache.rs) |
-| Benchmark markers and reports | [Benchmark guide](../README.md#benchmark-markers-and-reports), [test canister](../canisters/README.md) |
+| Benchmark markers and reports | [Benchmark guide](../README.md#benchmark-markers-and-reports), [test canister](../crates/ic_testkit_perf_probe/README.md) |
 | Targeted checks and releases | [Checks](../README.md#toolchains-and-checks), [release flow](../README.md#releases) |
 | PocketIC limitations and local policy | [Upstream boundary](../POCKET-IC.md) |
 

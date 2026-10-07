@@ -34,11 +34,14 @@ new_fixture() {
     git update-ref HEAD "$source_commit"
     git read-tree HEAD
     git checkout-index --all
+    # Retire the historical fixture package before projecting its new location.
+    git rm -r --quiet -- canisters
     # Project the reviewed adoption, including files not yet committed locally.
     for path in Makefile Cargo.toml crates/ic-testkit/Cargo.toml \
-        canisters/test/perf_probe/Cargo.toml ci/tool-versions.env \
-        scripts/ci/check-format-tools.sh .githooks/pre-commit \
+        crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs ci/tool-versions.env \
+        scripts/ci/check-format-tools.sh scripts/ci/check-make-execution.sh .githooks/pre-commit \
         scripts/dev/install-git-hooks.sh; do
+        mkdir -p "$(dirname "$path")"
         cp "$root/$path" "$path"
         git add -- "$path"
     done
@@ -52,7 +55,7 @@ expect_failure() {
 }
 
 new_fixture formatting
-rust_file=canisters/test/perf_probe/src/lib.rs
+rust_file=crates/ic_testkit_perf_probe/src/lib.rs
 printf '\npub fn hook_fixture( ){}\n' >> "$rust_file"
 git add -- "$rust_file"
 printf '\nUnrelated working edit.\n' >> README.md

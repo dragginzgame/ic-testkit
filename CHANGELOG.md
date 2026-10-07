@@ -6,6 +6,67 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.20.0]
+
+### Breaking
+
+- Adopt the published IC Host Tooling 0.3.1 split. Import artifact streams,
+  digests, archives and Wasm inspection from `ic_testkit::ic_host_artifacts`,
+  pathname reads and durable publication from `ic_testkit::ic_host_fs`, and
+  executable operations and Git provenance from `ic_testkit::ic_host_process`.
+  `ic_testkit::ic_host_tools` now exposes Candid and response helpers only.
+  `read_wasm` returns `ic_host_artifacts::artifact::ArtifactError`.
+  See the [migration guide](crates/ic-testkit/CHANGELOG.md#0200)
+  ([#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+
+- Durable publication now synchronizes the final parent directory. An error
+  after rename can leave the complete new output visible; inspect and reconcile
+  the destination before retrying. Staging collisions retry within the shared
+  bound ([#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+
+### Changed
+
+- Share missing-suffix path resolution and observed lock acquisition with
+  `ic-host-fs`, removing the local engines and redundant publication wrapper
+  ([#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+
+- Share CI/release target dispatch and failure-log retention with Shared Tooling,
+  rejecting inherited Make modes that skip recipes or ignore failures
+  ([Shared Tooling #30](https://github.com/dragginzgame/shared-tooling/issues/30),
+  [#15](https://github.com/dragginzgame/ic-testkit/issues/15)).
+
+- Move the unchanged `ic_testkit_perf_probe` fixture package from
+  `canisters/test/perf_probe` to `crates/ic_testkit_perf_probe`, following the
+  shared workspace layout; update fixture builds and release metadata together.
+
+- Bind release push to the captured destination URL and verify snapshot digests
+  independently of the inspected checksum helper
+  ([#15](https://github.com/dragginzgame/ic-testkit/issues/15)).
+
+- Adopt Shared Tooling 0.1.14 for TOML-aware version reads, release-tag validation,
+  Cargo inheritance and offline formatter checks, removing duplicate local checks
+  ([#11](https://github.com/dragginzgame/ic-testkit/issues/11),
+  [#12](https://github.com/dragginzgame/ic-testkit/issues/12)).
+  See [detailed notes](crates/ic-testkit/CHANGELOG.md#0200).
+
+### Fixed
+
+- Cache retention releases its lock when the final record owner drops, even
+  during concurrent process spawning. The macOS request-reader fixture tolerates
+  a connection that is not yet ready to accept.
+  See [detailed notes](crates/ic-testkit/CHANGELOG.md#0200).
+- Host-tool recovery fixtures restore exact archive bytes and retain failure
+  diagnostics, avoiding differences from repacking on native hosts
+  ([Shared Tooling #17](https://github.com/dragginzgame/shared-tooling/issues/17)).
+- Release preparation preserves undated historical changelog entries instead of
+  rejecting them as competing pending releases
+  ([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+- Failed dependency-check fixtures retain their inputs and logs for diagnosis
+  ([Shared Tooling #21](https://github.com/dragginzgame/shared-tooling/issues/21)).
+- Changelog selection compares large version components exactly, preserving
+  pending notes above floating-point integer precision
+  ([Shared Tooling #23](https://github.com/dragginzgame/shared-tooling/issues/23)).
+
 ## [0.19.2] - 2026-10-06
 
 ### Changed

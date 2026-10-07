@@ -4,7 +4,7 @@ set -euo pipefail
 readonly registry="crates-io"
 release_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-version="$(/bin/bash "${release_dir}/read-workspace-version.sh" --stable Cargo.toml)"
+version="$(/bin/bash "${release_dir}/../ci/read-cargo-workspace-version.sh" --stable Cargo.toml)"
 
 # The shared observer owns registry facts; this adapter owns publication policy.
 if [[ "${CARGO_NET_OFFLINE:-false}" == true || "${CARGO_NET_OFFLINE:-false}" == 1 ]]; then

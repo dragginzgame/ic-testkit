@@ -66,7 +66,7 @@ fn request_reader_handles_an_initially_nonblocking_stream() {
     listener.set_nonblocking(true).expect("bound accept wait");
     let mut client = TcpStream::connect(listener.local_addr().expect("peer address"))
         .expect("connect before sending request");
-    let (stream, _) = listener.accept().expect("accept connected client");
+    let stream = accept_stream(&listener);
     // Force the inherited socket state on Linux as well as native macOS.
     stream.set_nonblocking(true).expect("start nonblocking");
     let observation = stream.try_clone().expect("observe shared socket flags");
@@ -229,8 +229,12 @@ fn create_instance(listener: &TcpListener) {
 }
 
 fn accept_request(listener: &TcpListener) -> (TcpStream, String) {
+    read_request(accept_stream(listener))
+}
+
+fn accept_stream(listener: &TcpListener) -> TcpStream {
     let deadline = Instant::now() + DEADLOCK_ESCAPE;
-    let stream = loop {
+    loop {
         match listener.accept() {
             Ok((stream, _)) => break stream,
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
@@ -239,8 +243,7 @@ fn accept_request(listener: &TcpListener) -> (TcpStream, String) {
             }
             Err(error) => panic!("accept synthetic request: {error}"),
         }
-    };
-    read_request(stream)
+    }
 }
 
 fn read_request(stream: TcpStream) -> (TcpStream, String) {

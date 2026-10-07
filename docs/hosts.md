@@ -366,7 +366,7 @@ metadata or receipt changes, preserve the original gate count, and admit the
 same prepared identity after restoring the helpers. These are substituted helper
 failures, with native qualification still separate.
 
-### Pending 0.19.2 Shared Tooling adoption
+### 0.19.2 Shared Tooling adoption
 
 The snapshot selects clean committed Shared Tooling `47cd2ccaf0e8b428f06e6db0262df76cfc1581de`
 (0.1.7), exported from a separate pinned checkout. All 44 files verify against
@@ -388,7 +388,7 @@ workflows. All six portable jobs failed because the IC tool fixture lacked
 not resolve uncached `ic-host-tools`. Main MSRV and both workflows' concurrency
 jobs passed on all three hosts. Those successes do not qualify the failed gates.
 
-The pending 0.19.2 release guard also adopts the canonical command checker and
+The 0.19.2 release guard also adopts the canonical command checker and
 retires the vendored shared-runner suite. The checker passes with current Bash
 and private GNU Bash 3.2.57; its upstream nested-Make and retained-failure fixtures
 pass locally. The focused `make release-guards-check` passes with real locked,
@@ -396,14 +396,14 @@ offline consumer Cargo metadata and substituted release effects. Consumer-owned
 sequencing, metadata recovery and admission tests remain local. These results
 do not qualify native macOS execution or execute a release.
 
-The pending workflow correction installs ripgrep explicitly on Linux and macOS
+The 0.19.2 workflow correction installs ripgrep explicitly on Linux and macOS
 and performs `cargo fetch --locked` before the complete gate's offline fixtures.
 Portable jobs retain their existing locked fetch. Actionlint and the dependency
 declaration checker pass locally; the focused release guard passes against
 prepared caches. Native CI for this correction remains outstanding; no full
 gate, workflow rerun or package publication was executed locally.
 
-The pending release adapter also removes forced offline mode from preflight
+The 0.19.2 release adapter also removes forced offline mode from preflight
 fetching. Normal releases prepare missing locked dependencies automatically;
 explicit offline requests still fail on cache misses. Recovery selects the
 verified saved manifest rather than mixed live metadata. Metadata fixtures pass
@@ -412,3 +412,260 @@ failed fetching with retained records and an explicit successful retry.
 One scoped policy fixture checks both cache admission and the complete gate.
 Network/cache-miss effects are
 substituted; other metadata operations use the prepared real offline cache.
+
+At `v0.19.2` (`827157434eb8b2d6c13c4b8e47493bd6a38678b9`), the
+[main workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37477026029)
+completed with successful portable-host, MSRV and PocketIC concurrency jobs on
+all three hosts, plus successful complete gates on both macOS architectures.
+The [Linux complete gate](https://github.com/dragginzgame/ic-testkit/actions/runs/37477026029/job/112314986282)
+failed because an artifact handoff test still observed cached paths after its
+final pruning pass. The same source's
+[tag workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37477026703)
+passed the Linux complete gate but failed the
+[ARM64 macOS complete gate](https://github.com/dragginzgame/ic-testkit/actions/runs/37477026703/job/112314988175)
+when the nonblocking request-reader fixture's single accept returned `WouldBlock`.
+At inspection, the tag's Intel complete gate and Intel concurrency job were still
+running. These observations qualify the completed jobs at that source, rather
+than a successful complete workflow or the subsequent local changes.
+
+Pending 0.19.3 explicitly releases retention locks after the final record owner
+drops and reuses bounded accept polling in the request-reader fixture. A Linux
+regression holding a duplicated retention descriptor open failed before the lock
+fix and passed afterward, including clone and independent-acquisition protection.
+The original artifact handoff failure did not recur in 30 local repetitions
+before the fix; concurrent descriptor inheritance remains the inferred trigger
+for that CI failure. Focused cache filesystem, pruning, retained-corruption,
+artifact handoff and teardown checks pass locally after the fixes, as does
+`make fmt-check`. Native macOS and complete workflow qualification of the changed
+source remain outstanding. No broad gate or workflow rerun was executed locally.
+
+The pending 0.19.3 snapshot refresh selects clean committed Shared Tooling
+`d957d1f8801885c5b69e4a9ef900155f5f2a8a9d` (0.1.8), with 47 verified files.
+Consumer version, installation, release and publication callers use the shared
+TOML-aware version reader, and annotated-tag admission uses the shared checker.
+The normal pin gate enables Cargo inheritance enforcement
+([#11](https://github.com/dragginzgame/ic-testkit/issues/11)). Consumer metadata
+writes, release source selection and recovery remain local. Existing manifest
+and lockfile edits were preserved rather than selected by this tooling refresh.
+
+Focused Linux snapshot, inheritance, installation, formatting, ShellCheck and
+documentation-link checks pass. Publication and release guards pass with real
+offline Cargo metadata and substituted Git, registry and release effects.
+The metadata fixture driver also passes under GNU Bash 3.2.57 on Linux; Make
+callbacks retain their configured shell. Shared Cargo metadata fixtures pass
+against the matching committed upstream helpers, and refreshed host/IC setup
+fixtures plus existing installed-tool offline verification pass. The shared
+ripgrep capability remains opt-in; this consumer's setup still selects jq/yq.
+The consumer hook fixtures also pass actual manifest sorting and Rust formatting,
+partial-stage refusal, formatter failure isolation, unrelated-edit and lockfile
+preservation, and private hook activation. Shared dependency declaration fixtures
+pass locally through the adopted structured checker. These checks do not activate
+the live checkout's hooks or provide native macOS qualification.
+
+The [upstream 0.1.8 workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37484175750)
+passed Linux portable regression and lint/security but failed both macOS portable
+jobs. Neither upstream Linux results nor local consumer fixtures qualify native
+macOS for this changed source. Consumer native qualification remains outstanding.
+
+The subsequent pending 0.19.3 refresh selects Shared Tooling
+`b32d3038c850a7c53470c326b0f7f11263b31669` (0.1.9), with 48 verified files
+exported through the canonical helper from a separate clean pinned checkout.
+Concurrent dirty upstream edits were excluded. Formatter admission now delegates
+to the shared checker with the consumer's existing pin
+([#12](https://github.com/dragginzgame/ic-testkit/issues/12)). Snapshot, formatting,
+inheritance, consumer hook, release guard and refreshed host-tool fixtures pass
+locally. The shared formatter failure fixtures also pass with GNU Bash 3.2.57
+selected for the driver and subprocesses on Linux; formatter commands are
+substituted in those fixtures. No tools are installed implicitly.
+
+A consumer regression reproduced rejection of imported undated historical notes
+in both changelog views. Passing the saved previous release to the shared
+finalizer now preserves those sections; the release fixtures still reject
+competing future candidates and preserve retained metadata. These tests use
+real offline Cargo metadata with substituted Git and release effects.
+
+At inspection, the [upstream 0.1.9 workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37489483879)
+passed Linux and ARM64 macOS portable regression plus lint/security; Intel macOS
+portable regression was still running. This is upstream evidence only. Native
+consumer qualification remains outstanding, and no complete CI/release gate,
+workflow rerun, release or publication was executed locally.
+
+The next pending 0.19.3 refresh selects Shared Tooling
+`21f3ec3dd97f2968c9f0b08924451bb2f71770d1` (0.1.10), retaining the same 48-file
+selection through a clean pinned export. Dependency declaration fixtures now
+preserve failed inputs and output. Snapshot, actual declarations, the normal
+fixture suite and ShellCheck pass locally. An injected parser failure confirms
+nonzero fixture status and retention of the private manifest and checker output;
+the retained qualification directory is `/tmp/ic-testkit-0193-retention.6QXcox`.
+No compiler-cache installer or tag-maintenance command was adopted.
+
+The [upstream 0.1.10 workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37491682760)
+passed Linux portable regression and lint/security. Both macOS portable jobs
+passed dependency, Cargo metadata, formatter and hook fixtures before failing
+in the new upstream fixture-retention test, which is outside this snapshot.
+The logs identify retained failure directories but not the precise assertion.
+These component results do not establish a passing complete upstream workflow
+or native qualification of the consumer's uncommitted changes.
+
+The latest pending 0.19.3 refresh selects Shared Tooling
+`46c02774a8335cb3949d6f04284c4f53375353c1` (0.1.11), with 48 verified files
+from a clean pinned export. Snapshot, dependency declarations, formatting and
+isolated release guards pass locally. The finalizer also preserves notes for
+adjacent SemVer components above the exact integer range of floating-point
+numbers. Offline dependencies were explicitly prepared with
+`cargo fetch --locked --offline`; manifest and lockfile selections were preserved.
+
+The [upstream 0.1.11 workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37500153922)
+passed Linux, macOS 15 Intel and macOS 15 ARM portable regression, plus
+lint/security. This supersedes the earlier upstream failure for the selected
+source, but native qualification of the consumer's uncommitted changes remains
+outstanding. No complete consumer CI/release gate, workflow rerun, release or
+publication was executed locally.
+
+The maintainer subsequently selected pending 0.20.0 for the breaking public
+IC Host Tooling split ([#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+The locked graph now selects the four published 0.3.0 registry crates, re-exported
+under their actual owner names. Focused Linux Wasm-read, digest, admitted-tool,
+oversized cache-sidecar and malformed-manifest tests pass, as do example
+compilation, host library checks with Rust 1.88 and the canister library check
+for `wasm32-unknown-unknown`. Strict Rustdoc and the benchmark driver's bounded
+report-read and standalone tool-resolution fixtures also pass. The isolated
+release-adapter guards pass again against this selected lockfile, using real
+offline Cargo metadata and substituted release effects. Package versions remain
+maintainer-owned.
+
+The [upstream host-library workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37497150858)
+passed Linux, macOS 15 Intel, macOS 15 ARM and MSRV for the published split's
+library sources. Matching native consumer qualification remains outstanding.
+The additional streamed durable writer is still uncommitted pending upstream
+0.3.1; the consumer's atomic publication engine is retained until that reviewed
+API is available. No dirty sibling source or compatibility reader was adopted.
+
+The subsequent shared extraction prepares explicit-base path resolution and
+descriptor lock waiting, plus a fix for maximum-length atomic destinations in
+the pending upstream 0.3.1 source. A private consumer replacement fixture at
+`/tmp/ic-testkit-host-extraction.b9rs0cq9` passes focused digest/publication,
+path, heartbeat, transaction and Wasm materialization checks using explicit
+local-source selections with unchanged package versions and verified source
+hashes. This is preparation evidence, not registry adoption or native macOS
+qualification. The actual checkout retains its published dependencies and local
+engines until reviewed shared publication. Follow-up remains on
+[Testkit #13](https://github.com/dragginzgame/ic-testkit/issues/13).
+
+
+The current pending 0.20.0 adoption selects the four published IC Host Tooling
+0.3.1 registry crates. Every packaged Rust source file matches owner commit
+`38a2a5127be064014e6d39d72d0300ffb2cf20be`. Its
+[owner workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37580017649)
+passed native Linux, macOS 15 Intel, macOS 15 ARM and MSRV. The consumer now
+uses shared streamed durable publication, explicit-base missing-suffix path
+resolution and descriptor lock waiting; the earlier private-fixture and
+unpublished-source paragraphs record historical preparation only.
+
+Actual registry-backed focused Linux checks pass: digest/publication (10), cache
+filesystem (8), phase-aware lock heartbeat (1), transactions (28), Wasm
+materialization (3), and admitted shared-tool output (1). Example compilation,
+Rust 1.88 host library, wasm32 library, strict Rustdoc and library Clippy pass.
+The selected graph was explicitly fetched before locked offline validation.
+Cache framing, v1 identifiers and lock namespaces remain local and unchanged.
+
+The latest reviewed Shared Tooling snapshot is 0.1.13,
+`e378671d90afa237ff63a4b0e3b9551eb2c222b6`, exported from a clean committed
+source with 51 explicitly selected files. The dirty sibling's pending changes
+were preserved and excluded. Its
+[owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37581058940)
+passed Linux, macOS 15 Intel and macOS 15 ARM portable regression and
+lint/security. The canonical distribution fixture passes locally, and the
+isolated selected export passes documentation checks (92 references across
+26 documents). Release-runner and exact-commit CI-helper fixtures passed for
+0.1.12; those helpers are unchanged in 0.1.13.
+
+The maintained fixture package moved from `canisters/test/perf_probe` to
+`crates/ic_testkit_perf_probe`, retaining its name, source, package version,
+features, unpublished status and selected lockfile. Consumer build, integration
+and benchmark references, release metadata and hook fixtures use the new path.
+Locked metadata, examples/integration-test compilation, fixture Wasm checking,
+formatting, isolated release-adapter guards and consumer hook qualification pass.
+The declaration checker inventories indexed paths, so the unstaged retirement
+was qualified with a private index and private object store containing the
+current working tree; the maintainer's index was not changed.
+
+These local checks do not establish native consumer CI or full release
+qualification. The committed shared snapshot still has the inherited Make
+execution-mode gap tracked by
+[Shared Tooling #30](https://github.com/dragginzgame/shared-tooling/issues/30).
+Release all-clear remains blocked until its canonical fix is committed,
+reviewed and adopted. No complete consumer CI/release gate, workflow rerun,
+commit, tag, push or publication was performed.
+
+
+A subsequent authorized local ownership cleanup removes the redundant
+`digest::write_atomic` adapter; cache, ICP freshness, transaction-manifest and
+Wasm stamp callers invoke `ic_host_fs::durable::write_bytes` directly. The test
+`atomic_publication_failures_remove_only_the_owned_temporary_file`, which called
+the shared writer rather than a consumer boundary, is retired; published owner
+producer/rename cleanup coverage remains upstream. Consumer copy-context and
+long-destination checks remain. This batch removes 33 net lines across its five
+Rust files. Compared with Testkit HEAD
+`827157434eb8b2d6c13c4b8e47493bd6a38678b9`, the combined digest/cache-filesystem
+production sections now have 72 fewer lines, including the earlier shared
+extractions and retained final-owner lock correction. These are scoped source
+counts, not a whole-repository or performance claim.
+
+After cleanup, focused registry-backed digest (9), cache filesystem (8), ICP
+freshness (3), transaction (28) and warm Wasm publication (1) tests pass, as do
+example compilation and strict library Clippy. The previous 10-test digest count
+records the earlier source state. Digest framing/stream buffer reuse, retention,
+namespace, destination admission and typed copy context intentionally remain
+consumer policy; source inspection does not justify replacing them with the
+shared libraries' different raw-identity or filesystem-admission contracts.
+The native-consumer qualification and Shared Tooling #30 limits above remain.
+
+
+The subsequent authorized duplication review uses
+`audits/flow-convergence-and-duplication.md` and `audits/module-cleanup.md`
+against the pending Testkit tree based on
+`827157434eb8b2d6c13c4b8e47493bd6a38678b9`. It adopts committed Shared Tooling
+0.1.14, `25e7ce83149e081e4dcc52c55c33724e44153f2a`, with 53 verified files
+from a clean explicit export. The sibling's dirty LOC-helper work was preserved
+and excluded. No package metadata or selected Cargo dependency was changed.
+
+The two local Make validation loops now project their ordered target lists into
+`run-validation-targets.sh --fail-fast`. The canonical runner owns dispatch,
+failure propagation and retained diagnostic output; the Make targets still own
+their validation selections. The shared `check-make-execution.sh` is included
+in the snapshot dependency closure for validation, release and formatting hooks.
+Repeated inline version-reader fixtures in the consumer release guard are
+removed; the unchanged reader's generic contract is qualified by the owner's
+Cargo metadata suite. Actual consumer ordering, failure at each stage, release
+metadata recovery, installation requirements, publication/tag admission and
+hook/index preservation retain their consumer checks. No named function, method
+or type was removed in this tooling batch.
+
+Focused Linux qualification passes: canonical validation-target runner, release
+runner, owner release-metadata recovery, Cargo metadata, snapshot distribution,
+shared hook fixtures, actual consumer release guards and consumer hook fixtures.
+Snapshot and formatting checks also pass. Failed preparation evidence remains
+in `/tmp/ic-testkit-0200-shared0114-guards.log` (the private fixture initially
+lacked the newly selected runner) and
+`/tmp/ic-testkit-git-hooks.kqSqgm` (missing Make-check helper projection); the
+consumer fixture closures were corrected and reruns passed. These were fixture
+projection failures, not failures of production validation or formatting.
+
+The [0.1.14 owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37586649650)
+passed Linux, macOS 15 Intel, macOS 15 ARM and lint/security. This reviewed
+adoption supersedes the earlier outstanding canonical-fix status for
+[Shared Tooling #30](https://github.com/dragginzgame/shared-tooling/issues/30).
+Native consumer CI and maintainer-owned full pre-push validation remain pending.
+No complete consumer CI/release gate, commit, tag, push or publication was run.
+
+Intentional local separation: the Cargo metadata adapter owns manifest/lockfile
+preparation, both maintained changelog views and interruption evidence; the
+upstream repository's adapter handles its different VERSION-file contract.
+Publication policy owns registry absence/uncertainty and the ic-testkit package
+selection, while canonical helpers own registry observations and tag facts.
+These trust and recovery boundaries were retained rather than consolidated
+with semantically different upstream implementations. Existing selected
+installers, pinning fixtures and release-command checks already match their
+canonical owner and were not reimplemented. The scoped review supports this
+convergence; it is not a whole-product or performance audit.

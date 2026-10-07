@@ -1206,22 +1206,25 @@ indexed error, and later entries still run.
 `ResolvedCargoBuildInputs::is_current` resolves the semantic fingerprint again,
 while `is_content_current` cheaply rehashes the conservative validation paths.
 The generic builders preserve dynamic and non-UTF-8 argument and environment
-bytes. Shared host operations come from the complete upstream
-`ic_testkit::ic_host_tools` re-export. For Unix tool selection, use
-`ic_host_tools::tool::resolve_executable(requested, current_dir, search_directories)`
+bytes. Shared host operations use the complete `ic_testkit::ic_host_artifacts`,
+`ic_testkit::ic_host_fs`, `ic_testkit::ic_host_process` and
+`ic_testkit::ic_host_tools` re-exports. For Unix tool selection, use
+`ic_host_process::tool::resolve_executable(requested, current_dir, search_directories)`
 with an absolute working directory and explicit search order before declaring
 the selected path through `ArtifactCacheSpec::with_tool`. Resolution reads no
 ambient `PATH`; filesystem errors stop search. It selects a path without admitting
-it for execution. `ic_host_tools::tool::AdmittedTool` adds caller-supplied digest
+it for execution. `ic_host_process::tool::AdmittedTool` adds caller-supplied digest
 and exact version admission, bounded output, an explicit environment and a deadline
 for external transforms. Keep the executable and its parent directories protected
 from concurrent writers during admission and execution.
 
 `read_wasm(target_dir, crate_name, profile_target_dir, max_bytes)` now returns
-`Result<Vec<u8>, ic_host_tools::artifact::ArtifactError>`. The caller chooses the
-byte limit; failures are typed rather than panics. Shared `artifact`, `wasm`,
-`archive`, `response`, `tool`, `candid` and `provenance` APIs stay with their
-upstream owner (execution, resolution, Candid and provenance are Unix-only).
+`Result<Vec<u8>, ic_host_artifacts::artifact::ArtifactError>`. The caller chooses the
+byte limit; failures are typed rather than panics. Stream identities, archives and Wasm inspection belong to `ic_host_artifacts`;
+pathname reads and durable publication belong to `ic_host_fs`; executable
+resolution, execution and Git provenance belong to `ic_host_process`; Candid
+extraction and response decoding belong to `ic_host_tools`. Execution, resolution,
+Candid and provenance are Unix-only.
 Structural Wasm inspection does not replace PocketIC's runtime validation.
 
 The `transactional_artifact_cache` example uses shared digest/version admission

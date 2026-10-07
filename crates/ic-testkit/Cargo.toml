@@ -23,6 +23,9 @@ libc = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 fs2 = { workspace = true }
+ic-host-artifacts = { workspace = true }
+ic-host-fs = { workspace = true }
+ic-host-process = { workspace = true }
 ic-host-tools = { workspace = true }
 pocket-ic = { workspace = true }
 sha2 = { workspace = true }

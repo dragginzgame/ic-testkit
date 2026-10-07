@@ -26,7 +26,7 @@ const WORKER_ID_ENV: &str = "IC_TESTKIT_WASM_PROCESS_WORKER";
 fn different_cache_roots_coordinate_one_shared_incremental_target_across_processes() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping shared-target process test: fixture canister is not packaged");
@@ -63,7 +63,7 @@ fn different_cache_roots_coordinate_one_shared_incremental_target_across_process
 fn scheduled_shared_target_maintenance_runs_once_across_processes() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping scheduled-maintenance process test: fixture is not packaged");

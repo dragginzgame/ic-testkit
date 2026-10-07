@@ -4,18 +4,15 @@ use std::{
     collections::BTreeSet,
     ffi::OsStr,
     fmt::Write as _,
-    fs::{self, File, OpenOptions},
-    io::{self, Read as _, Write as _},
+    fs::{self, File},
+    io::{self, Read as _},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 #[cfg(unix)]
 use std::os::unix::{ffi::OsStrExt as _, fs::MetadataExt as _};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt as _;
-
-static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 struct AtomicCopyErrorContext {
@@ -185,7 +182,8 @@ pub(super) fn read_stamp_with_limit(path: &Path, maximum_len: usize) -> io::Resu
 
 /// Read at most the format's maximum length plus one byte to detect oversized files.
 pub(super) fn read_file_with_limit(path: &Path, maximum_len: usize) -> io::Result<Option<Vec<u8>>> {
-    use ic_host_tools::artifact::{ArtifactError, read_file};
+    use ic_host_artifacts::artifact::ArtifactError;
+    use ic_host_fs::read::read_file;
 
     // The shared library owns bounded reading and allocation. Cache policy owns
     // the meaning of overflow: an oversized stamp or manifest is a cache miss.
@@ -471,14 +469,10 @@ fn hash_path(
     Ok(())
 }
 
-pub(super) fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
-    write_file_atomic(path, |file| file.write_all(contents))
-}
-
 pub(super) fn copy_file_atomic(source: &Path, destination: &Path) -> io::Result<u64> {
     let result = (|| {
         let mut source_file = File::open(source)?;
-        write_file_atomic(destination, |destination_file| {
+        ic_host_fs::durable::write_with(destination, |destination_file| {
             io::copy(&mut source_file, destination_file)
         })
     })();
@@ -492,55 +486,6 @@ pub(super) fn copy_file_atomic(source: &Path, destination: &Path) -> io::Result<
             },
         )
     })
-}
-
-fn write_file_atomic<T>(
-    path: &Path,
-    write: impl FnOnce(&mut File) -> io::Result<T>,
-) -> io::Result<T> {
-    let parent = path.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("atomic output path has no parent: {}", path.display()),
-        )
-    })?;
-    fs::create_dir_all(parent)?;
-
-    let file_name = path.file_name().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("atomic output path has no file name: {}", path.display()),
-        )
-    })?;
-    let temp_path = loop {
-        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let temp_name = format!(".ic-testkit-tmp-{}-{sequence}", std::process::id());
-        // Keep names short and distinct from the destination, including on
-        // case-insensitive filesystems. The sibling preserves atomic rename.
-        if !file_name
-            .as_encoded_bytes()
-            .eq_ignore_ascii_case(temp_name.as_bytes())
-        {
-            break parent.join(temp_name);
-        }
-    };
-
-    // Cleanup owns this path only after exclusive creation succeeds.
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temp_path)?;
-    let result = (|| {
-        let value = write(&mut file)?;
-        file.sync_all()?;
-        fs::rename(&temp_path, path)?;
-        Ok(value)
-    })();
-    drop(file);
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result
 }
 
 #[cfg(unix)]
@@ -562,14 +507,10 @@ pub(super) fn os_bytes(value: &OsStr) -> Cow<'_, [u8]> {
 mod tests {
     use super::{
         LabeledPathDigestCache, copy_file_atomic, digest_bytes, digest_file,
-        digest_labeled_paths_composable, write_atomic,
+        digest_labeled_paths_composable,
     };
     use crate::artifacts::test_support::unique_temp_directory;
-    use std::{
-        fs,
-        io::{self, Write as _},
-        path::PathBuf,
-    };
+    use std::{fs, path::PathBuf};
 
     #[cfg(unix)]
     use super::{InputHasher, digest_labeled_paths};
@@ -730,7 +671,7 @@ mod tests {
             assert_eq!(streamed.digest, digest_bytes("streaming-test-v1", data));
         }
 
-        write_atomic(&destination, b"old").expect("write original destination");
+        ic_host_fs::durable::write_bytes(&destination, b"old").expect("write original destination");
         assert_eq!(
             copy_file_atomic(&source, &destination).expect("copy source atomically"),
             u64::try_from(contents.len()).expect("fixture length must fit in u64")
@@ -749,95 +690,12 @@ mod tests {
     }
 
     #[test]
-    fn atomic_creation_failure_preserves_existing_files() {
-        const CHILD_ENV: &str = "IC_TESTKIT_ATOMIC_CREATION_COLLISION_CHILD";
-        if std::env::var_os(CHILD_ENV).is_none() {
-            // Isolate the temporary-name sequence from other parallel tests.
-            let child = std::process::Command::new(std::env::current_exe().unwrap())
-                .args([
-                    "--exact",
-                    "artifacts::digest::tests::atomic_creation_failure_preserves_existing_files",
-                    "--test-threads=1",
-                ])
-                .env(CHILD_ENV, "1")
-                .output()
-                .unwrap();
-            assert!(
-                child.status.success(),
-                "collision regression failed: {}{}",
-                String::from_utf8_lossy(&child.stdout),
-                String::from_utf8_lossy(&child.stderr)
-            );
-            return;
-        }
-
-        let root = unique_temp_directory("atomic-creation-collision");
-        let destination = root.join("output");
-        fs::write(&destination, b"original output").unwrap();
-        let sequence = super::TEMP_FILE_SEQUENCE.load(super::Ordering::Relaxed);
-        let existing = root.join(format!(".ic-testkit-tmp-{}-{sequence}", std::process::id()));
-        fs::write(&existing, b"existing temporary file").unwrap();
-
-        let error = write_atomic(&destination, b"replacement").unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
-        assert_eq!(fs::read(&destination).unwrap(), b"original output");
-        assert_eq!(fs::read(&existing).unwrap(), b"existing temporary file");
-
-        // A subsequent acquisition gets a new name and can publish normally.
-        write_atomic(&destination, b"replacement").unwrap();
-        assert_eq!(fs::read(&destination).unwrap(), b"replacement");
-        assert_eq!(fs::read(&existing).unwrap(), b"existing temporary file");
-
-        // A caller may choose a destination in the temporary-name namespace.
-        // It must still stay absent until publication rather than be opened directly.
-        let sequence = super::TEMP_FILE_SEQUENCE.load(super::Ordering::Relaxed);
-        let destination = root.join(format!(".ic-testkit-tmp-{}-{sequence}", std::process::id()));
-        super::write_file_atomic(&destination, |file| {
-            assert!(!destination.exists());
-            std::io::Write::write_all(file, b"separate temporary file")
-        })
-        .unwrap();
-        assert_eq!(fs::read(&destination).unwrap(), b"separate temporary file");
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn atomic_publication_failures_remove_only_the_owned_temporary_file() {
-        let root = unique_temp_directory("atomic-publication-failure");
-        let destination = root.join("output");
-        fs::write(&destination, b"original output").unwrap();
-        let error = super::write_file_atomic(&destination, |file| {
-            file.write_all(b"partial output")?;
-            Err::<(), _>(io::Error::other("synthetic write failure"))
-        })
-        .unwrap_err();
-        assert_eq!(error.to_string(), "synthetic write failure");
-        assert_eq!(fs::read(&destination).unwrap(), b"original output");
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-
-        // Rename must also leave the old destination and clean up the new file.
-        fs::remove_file(&destination).unwrap();
-        fs::create_dir(&destination).unwrap();
-        fs::write(destination.join("child"), b"original child").unwrap();
-        assert!(write_atomic(&destination, b"replacement").is_err());
-        assert_eq!(
-            fs::read(destination.join("child")).unwrap(),
-            b"original child"
-        );
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
     #[cfg(unix)]
     fn atomic_publication_supports_long_destination_names() {
         let root = unique_temp_directory("atomic-long-destination");
         let destination = root.join("a".repeat(255));
         // Establish that the destination itself is valid on this filesystem.
         fs::write(&destination, b"original output").unwrap();
-        write_atomic(&destination, b"replacement").unwrap();
-        assert_eq!(fs::read(&destination).unwrap(), b"replacement");
-
         let source = root.join("source");
         fs::write(&source, b"copied output").unwrap();
         assert_eq!(copy_file_atomic(&source, &destination).unwrap(), 13);

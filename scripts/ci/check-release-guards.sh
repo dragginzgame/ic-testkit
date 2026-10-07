@@ -42,48 +42,13 @@ for ci_target in ${ci_targets_block//\\/}; do
     || fail "the standalone clean target is reachable from make ci"
 done
 
-version_case="${work_dir}/version"
-mkdir -p "${version_case}"
-printf '[workspace.package]\nversion = "0.8.3"\n' >"${version_case}/Cargo.toml"
-version="$(
-  /bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
-    --stable "${version_case}/Cargo.toml"
-)"
-[[ "${version}" == "0.8.3" ]] \
-  || fail "the version reader did not return a stable workspace version"
-
-printf '[workspace.package]\nversion = "0.8.3-rc.1"\n' >"${version_case}/Cargo.toml"
-version="$(
-  /bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
-    "${version_case}/Cargo.toml"
-)"
-[[ "${version}" == "0.8.3-rc.1" ]] \
-  || fail "the version reader rejected a bump-compatible prerelease version"
-set +e
-/bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
-  --stable "${version_case}/Cargo.toml" >/dev/null 2>&1
-prerelease_status="$?"
-set -e
-[[ "${prerelease_status}" -eq 2 ]] \
-  || fail "the stable version reader accepted a prerelease version"
-
-printf '[workspace]\n\n[unrelated]\nversion = "9.9.9"\n' \
-  >"${version_case}/Cargo.toml"
-set +e
-/bin/bash "${repo_root}/scripts/release/read-workspace-version.sh" \
-  "${version_case}/Cargo.toml" >/dev/null 2>&1
-missing_version_status="$?"
-set -e
-[[ "${missing_version_status}" -eq 1 ]] \
-  || fail "the version reader accepted a manifest without a package version"
-
 installation_case="${work_dir}/installation"
 mkdir -p "${installation_case}/crates/ic-testkit" \
   "${installation_case}/scripts/ci" "${installation_case}/scripts/release"
 cp "${repo_root}/scripts/ci/check-installation-version.sh" \
   "${installation_case}/scripts/ci/"
-cp "${repo_root}/scripts/release/read-workspace-version.sh" \
-  "${installation_case}/scripts/release/"
+cp "${repo_root}/scripts/ci/read-cargo-workspace-version.sh" \
+  "${installation_case}/scripts/ci/"
 printf '[workspace.package]\nversion = "0.8.3"\n' >"${installation_case}/Cargo.toml"
 # shellcheck disable=SC2016 # Markdown fences are literal fixture data.
 for scenario in current patch target-minor whitespace stale-root stale-package \
@@ -171,9 +136,14 @@ for scenario in clean untracked failed-empty failed-partial; do
 done
 
 sequence_case="${work_dir}/sequence"
-mkdir -p "${sequence_case}/bin"
+mkdir -p "${sequence_case}/bin" "${sequence_case}/scripts/ci"
+cp "${repo_root}/scripts/ci/run-validation-targets.sh" \
+  "${repo_root}/scripts/ci/check-make-execution.sh" "${sequence_case}/scripts/ci/"
 cat >"${sequence_case}/bin/make" <<'EOF'
 #!/usr/bin/env bash
+if [[ "$*" == *"-f - "* ]]; then
+  exec "$REAL_MAKE" "$@"
+fi
 stage="${*: -1}"
 printf '%s\n' "${stage}" >>"${TRACE_FILE}"
 [[ "${stage}" != "${FAIL_STAGE:-}" ]] || exit 23
@@ -196,6 +166,7 @@ check_make_sequence() {
     (
       cd "${sequence_case}"
       PATH="${sequence_case}/bin:${PATH}" TRACE_FILE="${sequence_case}/trace" \
+        REAL_MAKE="${make_bin}" VALIDATION_FAILURE_LOG_DIR="${sequence_case}/failures" \
         FAIL_STAGE="${failed_stage}" \
         "${make_bin}" --no-print-directory --jobs=4 -f "${repo_root}/Makefile" \
         MAKE="${sequence_case}/bin/make" CI_TARGETS="${stages}" RELEASE_CHECK_TARGETS="${stages}" "${target}"

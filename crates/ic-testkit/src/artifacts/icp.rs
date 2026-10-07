@@ -1,6 +1,6 @@
 use std::{ffi::OsString, fs, io, path::Path};
 
-use super::digest::{InputDigest, digest_labeled_paths, read_stamp_with_limit, write_atomic};
+use super::digest::{InputDigest, digest_labeled_paths, read_stamp_with_limit};
 
 const WATCHED_INPUT_STAMP_VERSION: &str = "ic-testkit-watched-input-v1";
 
@@ -75,7 +75,7 @@ impl WatchedInputSnapshot {
             ));
         }
 
-        write_atomic(
+        ic_host_fs::durable::write_bytes(
             &watched_input_stamp_path(artifact_path),
             self.stamp_contents().as_bytes(),
         )

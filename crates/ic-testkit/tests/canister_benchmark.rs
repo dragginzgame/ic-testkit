@@ -569,7 +569,7 @@ fn assert_reused_batch_with_failure(
 fn perf_probe_canister_emits_parseable_benchmark_markers() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping perf probe canister test: fixture canister is not packaged");
@@ -682,7 +682,7 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
 fn exact_wasm_cache_coordinates_overlapping_builds() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping exact Wasm cache test: fixture canister is not packaged");
@@ -733,7 +733,7 @@ fn exact_wasm_cache_coordinates_overlapping_builds() {
 fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping shared-incremental Wasm cache test: fixture is not packaged");
@@ -827,7 +827,7 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
 fn scheduled_shared_target_maintenance_participates_in_wasm_acquisition() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping integrated shared maintenance test: fixture is not packaged");
@@ -1048,7 +1048,7 @@ fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
 fn failed_shared_incremental_build_preserves_cargo_state_without_publishing_an_entry() {
     let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
     if !workspace
-        .join("canisters/test/perf_probe/Cargo.toml")
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
     {
         eprintln!("skipping failed shared-incremental test: fixture is not packaged");

@@ -11,6 +11,8 @@ if [[ "$mode" == files ]]; then
   printf '%s\0' "${files[@]}"
   exit 0
 fi
+# shellcheck source=/dev/null
+source "$script_dir/../../ci/tool-versions.env"
 fail() { echo "release metadata refused: $*" >&2; exit 1; }
 # Bind evidence to the bytes published, independent of Git's checkout filters.
 hash_file() { git hash-object --no-filters -- "$1"; }
@@ -94,11 +96,11 @@ check_prepared() {
     [[ "$digest" == "$expected_digest" ]] \
       || fail "release payload changed: $file"
   done
-  observed_version="$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" \
+  observed_version="$(bash "$script_dir/../ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" \
     || fail "cannot read prepared version"
   [[ "$observed_version" == "$RELEASE_VERSION" ]] \
     || fail "prepared version mismatch"
-  bash "$script_dir/../ci/check-format-tools.sh"
+  bash "$script_dir/../ci/check-format-tools.sh" "$SHARED_TOOLING_CARGO_SORT_VERSION"
   cargo sort --workspace --check
   cargo metadata --locked --offline --format-version 1 --no-deps >/dev/null
   bash "$script_dir/../ci/check-installation-version.sh"
@@ -142,15 +144,15 @@ check_paths
 
 case "$mode" in
   preflight)
-    observed_version="$(bash "$script_dir/read-workspace-version.sh" --stable Cargo.toml)" \
+    observed_version="$(bash "$script_dir/../ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" \
       || fail "cannot read source version"
     [[ "$observed_version" == "$RELEASE_PREVIOUS" ]] \
       || fail "source version differs from saved selection"
-    bash "$script_dir/../ci/check-format-tools.sh"
+    bash "$script_dir/../ci/check-format-tools.sh" "$SHARED_TOOLING_CARGO_SORT_VERSION"
     cache_manifest=Cargo.toml
     if [[ -e "$prepared/ready" ]]; then
       check_recovery
-      for member in crates/ic-testkit canisters/test/perf_probe; do
+      for member in crates/ic-testkit crates/ic_testkit_perf_probe; do
         cmp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml" \
           || fail "saved member manifest changed: $member"
       done
@@ -194,7 +196,7 @@ case "$mode" in
       done
       # Cargo owns lockfile generation. Resolve metadata in a private copy of
       # this workspace's manifests; no builds or real version changes occur.
-      for member in crates/ic-testkit canisters/test/perf_probe; do
+      for member in crates/ic-testkit crates/ic_testkit_perf_probe; do
         mkdir -p "$prepared/new/$member/src"
         cp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml"
         : > "$prepared/new/$member/src/lib.rs"
@@ -205,11 +207,11 @@ case "$mode" in
           $n = s/(\[workspace\.package\]\n(?:(?!\n\[).)*?\nversion = ")\Q$ENV{RELEASE_PREVIOUS}\E("\n)/$1$ENV{RELEASE_VERSION}$2/s;
           die "workspace version not found\n" unless $n == 1;
         ' "$prepared/new/Cargo.toml"
-      bash "$script_dir/../ci/check-format-tools.sh"
+      bash "$script_dir/../ci/check-format-tools.sh" "$SHARED_TOOLING_CARGO_SORT_VERSION"
       cargo sort --workspace "$prepared/new"
       # Member manifests are already sorted inputs, outside the release file
       # set. Formatting must not introduce an unstaged change to those inputs.
-      for member in crates/ic-testkit canisters/test/perf_probe; do
+      for member in crates/ic-testkit crates/ic_testkit_perf_probe; do
         cmp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml" \
           || fail "member manifest requires formatting before release: $member"
       done
@@ -223,7 +225,8 @@ case "$mode" in
       cmp "$prepared/old/selected-dependencies" "$prepared/new/selected-dependencies" \
         || fail "dependency selections changed"
       for file in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
-        awk -v version="$RELEASE_VERSION" -v date="$RELEASE_DATE" \
+        awk -v version="$RELEASE_VERSION" -v previous="$RELEASE_PREVIOUS" \
+          -v date="$RELEASE_DATE" \
           -f "$script_dir/../ci/finalize-release-changelog.awk" "$prepared/old/$file" \
           > "$prepared/new/$file"
       done

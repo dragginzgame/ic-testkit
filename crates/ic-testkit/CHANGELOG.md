@@ -8,6 +8,127 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.20.0]
+
+### Breaking: explicit shared host owners
+
+The complete published IC Host Tooling 0.3.1 crates are re-exported under their
+own names. Replace imports from the former all-purpose `ic_host_tools` modules:
+
+| Former path under `ic_testkit` | New owner under `ic_testkit` |
+| --- | --- |
+| `ic_host_tools::artifact` stream, identity and digest APIs | `ic_host_artifacts::artifact` |
+| `ic_host_tools::artifact` pathname read/hash APIs | `ic_host_fs::read` |
+| `ic_host_tools::archive`, `ic_host_tools::wasm` | `ic_host_artifacts::archive`, `ic_host_artifacts::wasm` |
+| `ic_host_tools::tool`, `ic_host_tools::provenance` | `ic_host_process::tool`, `ic_host_process::provenance` |
+| `ic_host_tools::candid`, `ic_host_tools::response` | Unchanged |
+
+Archive and Wasm features are enabled on the artifact owner. `read_wasm` returns
+`Result<Vec<u8>, ic_host_artifacts::artifact::ArtifactError>`; its caller-selected
+size limit and fallible bounded reads are preserved. Cache sidecar overflow still
+means a cache miss. No compatibility aliases or older host dependency remain.
+Update downstream imports and explicit error type annotations. Retained cache
+bytes, digest domains and lock namespaces are unchanged; no reset is required.
+
+### Breaking: durable publication errors
+
+The split and generic filesystem adoption are part of
+[#13](https://github.com/dragginzgame/ic-testkit/issues/13). Byte writes and streamed
+copies use the shared durable commit engine, including final-parent directory
+synchronization. The local publication engine and its temporary-name sequence are
+removed. Short staging names support maximum-length destinations and retry
+collisions within the shared bound without touching unowned files. A failure
+before rename preserves the destination; a final-parent synchronization failure
+can return an error after the complete new bytes become visible. Inspect and
+reconcile the destination before retrying after such a failure.
+
+Shared path resolution handles missing suffixes against an explicit base;
+Testkit retains selection of its current directory and cache identity policy.
+Shared descriptor acquisition handles contention and interrupted locks; Testkit
+retains opening, the 25ms polling cap, phase heartbeat mapping and retention
+lifetime. Digest framing, cache limits, ownership checks and lock namespaces
+remain local.
+
+Publication callers invoke the shared byte writer directly; the redundant
+local adapter and shared-engine-only failure test are removed. The consumer
+retains atomic-copy context and long-name copy coverage, while the shared owner
+qualifies producer/rename cleanup and collision ownership.
+
+### Shared validation dispatch
+
+CI and release checks delegate their ordered local target selections to the
+canonical shared validation runner with `--fail-fast`. Failed target output is
+retained under `target/validation-failures`, and later targets do not execute.
+The shared Make-execution admission check rejects ignore-errors, dry-run, query
+and touch modes before validation, release preparation or hook formatting;
+ordinary release variables and jobserver settings remain inherited. The local
+dispatch loops and repeated generic version-reader fixtures are retired
+([Shared Tooling #30](https://github.com/dragginzgame/shared-tooling/issues/30),
+[#15](https://github.com/dragginzgame/ic-testkit/issues/15)).
+
+### Shared metadata and admission checks
+
+The reviewed snapshot selects Shared Tooling `25e7ce8` (0.1.14). Version,
+installation, release and publication callers use its TOML-aware workspace
+version reader, accepting valid inline comments and rejecting malformed or
+failed observations. Stable release admission remains explicit. The former
+local reader is removed; fixtures copy the shared reader to its canonical path
+and retain workspace targets needed for Cargo's offline manifest validation
+([#11](https://github.com/dragginzgame/ic-testkit/issues/11)).
+
+The normal dependency declaration gate also checks Cargo workspace inheritance.
+Tag admission selects the current commit locally and delegates annotated-tag
+and exact-commit validation to the fixed shared checker. Release preparation,
+metadata mutation, interruption recovery and publication policy remain local.
+Existing host setup keeps its jq/yq selection; shared ripgrep support is optional.
+
+Release dispatch observes one remote URL, verifies it after validation and again
+before push, and pushes the exact saved branch/tag refs through that captured
+URL. Snapshot verification hashes inspected files directly instead of executing
+the inspected checksum helper. The selected governance export includes its
+maintained file list and the read-only exact-commit GitHub CI helper
+([#15](https://github.com/dragginzgame/ic-testkit/issues/15)).
+
+Formatting, hook installation and release admission use the shared offline
+formatter prerequisite checker with the existing explicit cargo-sort pin. The
+duplicate local admission comparisons are removed; tool installation remains
+an explicit setup step. Failed formatter observations are rejected even when
+they print an apparently matching version
+([#12](https://github.com/dragginzgame/ic-testkit/issues/12)).
+
+Refreshed host-tool recovery fixtures restore exact authenticated archive bytes
+and retain failure diagnostics, avoiding host-dependent repacking differences
+([Shared Tooling #17](https://github.com/dragginzgame/shared-tooling/issues/17)).
+
+Failed dependency declaration fixtures retain their scratch inputs and checker
+output for diagnosis; successful fixtures still remove their own temporary data
+([Shared Tooling #21](https://github.com/dragginzgame/shared-tooling/issues/21)).
+
+Changelog finalization passes the saved previous release identity to the shared
+selector, preserving imported undated historical sections at or below that
+version. Future competing candidates still reject preparation. Both maintained
+changelog views are covered through the actual release callbacks
+([#7](https://github.com/dragginzgame/ic-testkit/issues/7)).
+
+The shared finalizer compares both equality and ordering of version components
+as exact strings, keeping adjacent components above 2^53 distinct. Pending notes
+remain in the single dated candidate while undated historical sections retain
+their original identity
+([Shared Tooling #23](https://github.com/dragginzgame/shared-tooling/issues/23)).
+
+### Cache retention and portable test synchronization
+
+Cache retention explicitly unlocks after the final record clone drops. A file
+descriptor inherited briefly during concurrent process spawning no longer keeps
+an otherwise unowned entry protected from pruning. Independent acquisitions
+continue to protect the entry until their own records drop; process exit still
+releases locks automatically. Regression coverage holds a duplicated descriptor
+open while checking both shared record ownership and independent acquisitions.
+
+The initially nonblocking request-reader fixture uses the same bounded accept
+loop as the synthetic PocketIC peer, tolerating `WouldBlock` before the connection
+is available on macOS. Its socket-mode barrier and I/O timeout checks remain.
+
 ## [0.19.2] - 2026-10-06
 
 ### Shared publication and setup checks

@@ -11,7 +11,9 @@ cleanup() {
 trap cleanup EXIT
 fail() { echo "publication qualification failed: $*" >&2; exit 1; }
 mkdir -p "$work_dir/bin" "$work_dir/state"
-version="$(bash "$repo_root/scripts/release/read-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
+export QUALIFICATION_CARGO
+QUALIFICATION_CARGO="$(command -v cargo)"
+version="$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
 registry_event="registry https://crates.io/api/v1/crates/ic-testkit/$version"
 cat > "$work_dir/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -27,6 +29,7 @@ STUB
 cat > "$work_dir/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == locate-project ]]; then exec "$QUALIFICATION_CARGO" "$@"; fi
 [[ "$*" == 'publish --locked --registry crates-io -p ic-testkit' ]] || exit 98
 printf 'cargo %s\n' "$*" >> "$TRACE_FILE"
 [[ "${PUBLISH_STATUS:-0}" == 0 ]] || exit "$PUBLISH_STATUS"
@@ -89,6 +92,9 @@ printf 'git %s\n' "$*" >> "$GIT_TRACE_FILE"
 case "$*" in
   'ls-files --others --exclude-standard'|'diff-index --quiet HEAD --') exit 0 ;;
   'rev-parse --verify HEAD^{commit}')
+    printf '%s\n' "${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
+    exit "${HEAD_STATUS:-0}" ;;
+  "rev-parse --verify ${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}^{commit}")
     printf '%s\n' "${FAKE_HEAD:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}"
     exit "${HEAD_STATUS:-0}" ;;
   "cat-file -t refs/tags/v$EXPECTED_VERSION")

@@ -71,7 +71,7 @@ ensure-clean:
 	fi
 
 version:
-	@bash "$(REPO_ROOT)scripts/release/read-workspace-version.sh" Cargo.toml
+	@bash "$(REPO_ROOT)scripts/ci/read-cargo-workspace-version.sh" Cargo.toml
 
 tags:
 	@git tag --sort=-version:refname | head -10
@@ -86,7 +86,8 @@ test-canisters:
 	cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
 
 format-tools-check:
-	bash scripts/ci/check-format-tools.sh
+	@. "$(REPO_ROOT)ci/tool-versions.env" && \
+		bash scripts/ci/check-format-tools.sh "$$SHARED_TOOLING_CARGO_SORT_VERSION"
 
 install-format-tools:
 	@. "$(REPO_ROOT)ci/tool-versions.env"; \
@@ -113,7 +114,7 @@ ic-tools-check:
 	bash scripts/dev/install-ic-tools.sh --pins "$(IC_TOOL_PINS)" --check
 
 dependency-pins-check:
-	bash scripts/ci/check-dependency-pins.sh
+	bash scripts/ci/check-dependency-pins.sh --cargo-inheritance
 
 install-hooks: format-tools-check
 	bash scripts/dev/install-git-hooks.sh
@@ -163,14 +164,10 @@ publish-dry-run:
 	cargo publish -p ic-testkit --locked --dry-run --allow-dirty
 
 ci:
-	+@set -e; for target in $(CI_TARGETS); do \
-		$(MAKE) --no-print-directory "$$target"; \
-	done
+	+@bash scripts/ci/run-validation-targets.sh --fail-fast $(CI_TARGETS)
 
 release-check:
-	+@set -e; for target in $(RELEASE_CHECK_TARGETS); do \
-		$(MAKE) --no-print-directory "$$target"; \
-	done
+	+@bash scripts/ci/run-validation-targets.sh --fail-fast $(RELEASE_CHECK_TARGETS)
 
 publish: ensure-clean release-tag-check
 	bash scripts/release/publish-workspace.sh
@@ -182,7 +179,7 @@ release-resume:
 	+@bash scripts/ci/run-release.sh resume "$(VERSION)" "$(RELEASE_REMOTE)" "$(RELEASE_BRANCH)"
 
 release-version:
-	@bash scripts/release/read-workspace-version.sh --stable Cargo.toml
+	@bash scripts/ci/read-cargo-workspace-version.sh --stable Cargo.toml
 
 release-preflight:
 	@bash scripts/release/metadata.sh preflight

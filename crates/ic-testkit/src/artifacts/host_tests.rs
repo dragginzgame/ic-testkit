@@ -1,8 +1,10 @@
 use super::test_support::{unique_temp_directory, write_executable_script};
 use super::{ArtifactCachePreparation, ArtifactCacheSpec, prepare_artifact_cache};
-use crate::ic_host_tools::{
-    artifact::{ArtifactError, Sha256Digest},
-    tool::{AdmittedTool, ExecutionContext, OutputLimits, ToolError, ToolSpec, resolve_executable},
+use crate::{
+    ic_host_artifacts::artifact::{ArtifactError, Sha256Digest},
+    ic_host_process::tool::{
+        AdmittedTool, ExecutionContext, OutputLimits, ToolError, ToolSpec, resolve_executable,
+    },
 };
 use std::{ffi::OsString, fs, path::Path, time::Duration};
 

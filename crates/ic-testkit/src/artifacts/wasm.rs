@@ -26,7 +26,7 @@ pub fn wasm_artifacts_ready(
 /// The caller supplies the maximum accepted artifact size. Reads and allocation
 /// are bounded by the shared host library; symbolic links remain allowed in
 /// caller-controlled target directories. This reads bytes without validating
-/// the Wasm module; use [`ic_host_tools::wasm::inspect`] for structural facts.
+/// the Wasm module; use [`ic_host_artifacts::wasm::inspect`] for structural facts.
 ///
 /// # Errors
 /// Returns the shared filesystem, non-regular-file, allocation or size-limit error.
@@ -35,16 +35,16 @@ pub fn read_wasm(
     crate_name: &str,
     profile_target_dir: &str,
     max_bytes: usize,
-) -> Result<Vec<u8>, ic_host_tools::artifact::ArtifactError> {
+) -> Result<Vec<u8>, ic_host_artifacts::artifact::ArtifactError> {
     let path = wasm_path(target_dir, crate_name, profile_target_dir);
-    ic_host_tools::artifact::read_file(&path, max_bytes)
+    ic_host_fs::read::read_file(&path, max_bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{read_wasm, wasm_path};
     use crate::artifacts::test_support::unique_temp_directory;
-    use ic_host_tools::artifact::ArtifactError;
+    use ic_host_artifacts::artifact::ArtifactError;
     use std::fs;
 
     #[test]

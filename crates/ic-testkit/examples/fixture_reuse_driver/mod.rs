@@ -27,10 +27,9 @@ use std::os::unix::{
 
 use ic_testkit::{
     artifacts::workspace_root_for,
-    ic_host_tools::{
-        artifact::{ArtifactError, hash_file, read_opened_file},
-        tool::{ResolutionError, resolve_executable},
-    },
+    ic_host_artifacts::artifact::ArtifactError,
+    ic_host_fs::read::{hash_file, read_opened_file},
+    ic_host_process::tool::{ResolutionError, resolve_executable},
 };
 use serde_json::{Map, Value, json};
 
@@ -385,7 +384,10 @@ fn cargo_command(cargo: &Path, root: &Path, rustc: Option<&Path>) -> Command {
 
 fn prepare(options: &Options) -> Result<Inputs, Error> {
     let root = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
-    if !root.join("canisters/test/perf_probe/Cargo.toml").is_file() {
+    if !root
+        .join("crates/ic_testkit_perf_probe/Cargo.toml")
+        .is_file()
+    {
         return Err(Error::InvalidArgument(
             "benchmark requires the repository's perf_probe checkout".into(),
         ));
@@ -868,7 +870,7 @@ esac
         assert!(matches!(
             result,
             Err(Error::Artifact(
-                ic_testkit::ic_host_tools::artifact::ArtifactError::LimitExceeded { .. }
+                ic_testkit::ic_host_artifacts::artifact::ArtifactError::LimitExceeded { .. }
             ))
         ));
         assert_eq!(fs::metadata(input).unwrap().len(), REPORT_LIMIT + 1);

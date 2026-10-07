@@ -11,14 +11,15 @@
 //!
 //! - host-only transactional artifacts, Wasm builds, and freshness helpers in
 //!   [`artifacts`];
-//! - shared bounded artifact inspection and verified executable APIs through
-//!   the complete upstream [`ic_host_tools`] crate;
+//! - bounded artifact inspection through [`ic_host_artifacts`], filesystem
+//!   operations through [`ic_host_fs`], verified execution through
+//!   [`ic_host_process`], and IC-specific helpers through [`ic_host_tools`];
 //! - marker parsing, aggregation, comparison, and reports in [`benchmark`];
 //! - canister-side marker emission in [`performance`];
 //! - deterministic test principals through [`Fake`].
 //!
-//! The [`pocket_ic`], [`pic`], [`artifacts`] and [`ic_host_tools`] exports are unavailable when
-//! compiling for `wasm32`; benchmark data types and marker emission remain
+//! The [`pocket_ic`], [`pic`], [`artifacts`] and host-library exports are unavailable
+//! when compiling for `wasm32`; benchmark data types and marker emission remain
 //! available to canister code.
 
 pub mod benchmark;
@@ -36,7 +37,7 @@ pub mod artifacts;
 pub use pocket_ic;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use ic_host_tools;
+pub use {ic_host_artifacts, ic_host_fs, ic_host_process, ic_host_tools};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pic;

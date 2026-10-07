@@ -6,12 +6,12 @@
 
 Small canisters used by `ic-testkit` to test its own PocketIC harness behavior.
 
-The layout mirrors the `canisters/test/...` convention used by related repos.
-These canisters are fixtures, not application examples.
+The fixture package lives under `crates/ic_testkit_perf_probe` in the root
+workspace. It is a test canister, not an application example.
 
 ## Current Fixtures
 
-- `test/perf_probe`: emits compact `ICTK|...` benchmark markers via
+- `ic_testkit_perf_probe`: emits compact `ICTK|...` benchmark markers via
   `ic_testkit::performance::Performance::measure`. It exposes `ping`,
   `benchmark_once`, and `benchmark_start_then_trap` to exercise successful
   spans and unmatched start markers after a trap.
