@@ -853,9 +853,12 @@ compiler. The latter selects identity only; it does not configure the shim's
 build. When Cargo should use a selected compiler, use
 `with_extra_env([("RUSTC", actual_compiler)])`, which also takes precedence for
 the identity probe. Keep the selected compiler consistent with the build command.
-Use the [cached external transform recipe](crates/ic-testkit/examples/transactional_artifact_cache.rs) for
-post-link work, retain the source acquisition through commit, and include the
-input bytes and admitted transform identity in its `ArtifactCacheSpec`.
+The [compiled post-link recipe](crates/ic-testkit/src/artifacts/mod.rs) combines
+this spec with `ArtifactCacheSpec::with_cargo_build_inputs`, declared input/tool
+bytes and bounded optimizer execution. It retains the source acquisition through
+commit and reads the retained transformed output. The
+[external transform example](crates/ic-testkit/examples/transactional_artifact_cache.rs)
+also works for inputs supplied independently of a Wasm build.
 
 The complete workspace manifest and lockfile remain part of a separate,
 conservative validation digest. They are rehashed around builds and attached
@@ -1776,8 +1779,10 @@ Leftover `.release-metadata.*` staging files in the root and `crates/ic-testkit`
 are helper-owned scratch, excluded from untracked-source checks and preserved
 during recovery. Other untracked files still block the release.
 An occupied release lock requires inspection of its recorded owner before
-manual removal. Agents prepare and inspect changes but never invoke these
-one-shot commands, which create commits.
+manual removal. Ordinary repair and continuation requests authorize local work.
+Commit, PR and release effects require the corresponding explicit request under
+the [contribution rules](rules/contributions.md), subject to this repository's
+manifest-version ownership and validation overlay in [AGENTS.md](AGENTS.md).
 
 `make installation-check` verifies the root and packaged README dependency
 examples against the current workspace version. Release preparation uses the

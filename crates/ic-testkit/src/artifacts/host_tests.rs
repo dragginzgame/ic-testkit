@@ -1,4 +1,4 @@
-use super::test_support::{unique_temp_directory, write_executable_script};
+use super::test_support::{fake_wasm_build_spec, unique_temp_directory, write_executable_script};
 use super::{ArtifactCachePreparation, ArtifactCacheSpec, prepare_artifact_cache};
 use crate::{
     ic_host_artifacts::artifact::{ArtifactError, Sha256Digest},
@@ -70,5 +70,104 @@ fn admitted_shared_tool_output_is_published_and_invalidated_by_tool_bytes() {
     ));
     drop(reused);
     drop(record);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn shim_wasm_and_post_link_caches_reuse_and_invalidate_independently() {
+    use super::{
+        ArtifactCacheOutcome, WasmBuildOutcome, build_wasm_canisters_cached,
+        resolve_cargo_build_inputs,
+    };
+    use crate::ic_host_artifacts::artifact::hash_reader;
+
+    let (root, spec) = fake_wasm_build_spec("post-link-composition");
+    let root = root.canonicalize().unwrap();
+    let compiler = root.join("selected-rustc");
+    write_executable_script(&compiler, "#!/bin/sh\nprintf 'compiler-A\\n'\n");
+    let spec = spec.with_rustc_program(compiler.as_os_str());
+    let executable = root.join("optimizer");
+    let script = b"#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'optimizer 1\\n'; else /bin/cp \"$1\" \"$3\"; printf 'run\\n' >> \"$0.calls\"; fi\n";
+    write_executable_script(&executable, script);
+    let context = ExecutionContext {
+        current_dir: &root,
+        environment: &[],
+    };
+    let limits = OutputLimits {
+        stdout_bytes: 128,
+        stderr_bytes: 128,
+        timeout: Duration::from_secs(5),
+    };
+    let admit = |bytes: &[u8]| {
+        AdmittedTool::admit(
+            &ToolSpec {
+                executable: &executable,
+                sha256: Sha256Digest::compute(bytes),
+                executable_bytes: bytes.len() as u64,
+                version_arguments: &[OsString::from("--version")],
+                version_identity: "optimizer 1",
+            },
+            &context,
+            limits,
+        )
+        .unwrap()
+    };
+    let acquire = |optimizer: &AdmittedTool| {
+        let resolved = resolve_cargo_build_inputs(&spec).unwrap();
+        let wasm = build_wasm_canisters_cached(&spec).unwrap();
+        let input = &wasm.record().artifacts()[0];
+        let post_spec = ArtifactCacheSpec::new(&root.join("post-cache"), "deploy", "optimizer/v1")
+            .with_cargo_build_inputs("cargo", &spec, &resolved)
+            .with_input("wasm", input)
+            .with_tool("optimizer", optimizer.path())
+            .with_arguments(["<input>", "-o", "<output>"])
+            .with_environment(context.environment.iter().cloned())
+            .with_identity_bytes(
+                "optimizer-cwd",
+                context.current_dir.as_os_str().as_encoded_bytes(),
+            )
+            .with_output("deploy", &root.join("deploy.wasm"));
+        let deploy = match prepare_artifact_cache(&post_spec).unwrap() {
+            ArtifactCachePreparation::Reused(record) => ArtifactCacheOutcome::Reused(record),
+            ArtifactCachePreparation::Build(transaction) => {
+                let output = transaction.output_path("deploy").unwrap();
+                optimizer
+                    .run(
+                        &[input.into(), "-o".into(), output.clone().into()],
+                        &context,
+                        limits,
+                    )
+                    .unwrap();
+                hash_reader(fs::File::open(&output).unwrap(), 1024).unwrap();
+                transaction.commit().unwrap()
+            }
+        };
+        assert_eq!(
+            fs::read(deploy.record().artifacts()[0].path()).unwrap(),
+            b"\0asm\x01\0\0\0"
+        );
+        (
+            matches!(wasm, WasmBuildOutcome::Reused { .. }),
+            matches!(deploy, ArtifactCacheOutcome::Reused(_)),
+        )
+    };
+    let optimizer = admit(script);
+    assert_eq!(acquire(&optimizer), (false, false));
+    assert_eq!(acquire(&optimizer), (true, true));
+    assert_eq!(
+        fs::read_to_string(root.join("optimizer.calls")).unwrap(),
+        "run\n"
+    );
+    write_executable_script(&compiler, "#!/bin/sh\nprintf 'compiler-B\\n'\n");
+    assert_eq!(acquire(&optimizer), (false, false));
+    let changed_script = [script.as_slice(), b"# changed optimizer bytes\n"].concat();
+    write_executable_script(&executable, &changed_script);
+    let optimizer = admit(&changed_script);
+    assert_eq!(acquire(&optimizer), (true, false));
+    assert_eq!(acquire(&optimizer), (true, true));
+    assert_eq!(
+        fs::read_to_string(root.join("optimizer.calls")).unwrap(),
+        "run\nrun\nrun\n"
+    );
     fs::remove_dir_all(root).unwrap();
 }

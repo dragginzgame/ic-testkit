@@ -6,6 +6,31 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.21.2]
+
+### Changed
+
+- Select IC Host Tooling 0.4.6, including the macOS durable-writer compilation
+  repair and bounded gzip hash/compare helpers through existing re-exports
+  ([host #18](https://github.com/dragginzgame/ic-host-tooling/issues/18),
+  [host #12](https://github.com/dragginzgame/ic-host-tooling/issues/12)).
+  Native filename qualification now follows actual filesystem admission
+  ([host #19](https://github.com/dragginzgame/ic-host-tooling/issues/19)).
+  Refresh the canonical Shared Tooling snapshot to 0.1.20.
+- Expand the compiled shim-Cargo/post-link recipe using the existing Wasm and
+  transactional caches. Declare compiler inputs, optimizer bytes, arguments,
+  environment and working directory; retain input ownership through publication
+  and bound transformed output before reading it
+  ([#21](https://github.com/dragginzgame/ic-testkit/issues/21)).
+
+### Testing
+
+- Run the canonical Rust-tool setup and path-refusal fixture in portable CI on
+  Linux and both macOS architectures, covering checkout ownership, failed
+  installation retention and retries without installing real tools
+  ([#24](https://github.com/dragginzgame/ic-testkit/issues/24),
+  [shared #54](https://github.com/dragginzgame/shared-tooling/issues/54)).
+
 ## [0.21.1] - 2026-10-07
 
 ### Fixed

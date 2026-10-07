@@ -16,28 +16,43 @@
 //! use ic_testkit::artifacts::{
 //!     ArtifactCacheOutcome, ArtifactCachePreparation, ArtifactCacheSpec,
 //!     WasmBuildSpec, build_wasm_canisters_cached, prepare_artifact_cache,
+//!     resolve_cargo_build_inputs,
 //! };
+//! use ic_testkit::ic_host_artifacts::artifact::hash_reader;
+//! use ic_testkit::ic_host_process::tool::{AdmittedTool, ExecutionContext, OutputLimits};
 //! use std::path::Path;
 //!
-//! fn build_deployable(spec: &WasmBuildSpec, post_cache: &Path, destination: &Path)
-//!     -> Result<Vec<u8>, Box<dyn std::error::Error>>
+//! // The caller holds its source lease and configures the Cargo shim and actual
+//! // compiler identity on spec. The admitted optimizer accepts INPUT -o OUTPUT.
+//! fn build_deployable(
+//!     spec: &WasmBuildSpec, post_cache: &Path, destination: &Path,
+//!     optimizer: &AdmittedTool, context: &ExecutionContext<'_>, limits: OutputLimits,
+//!     max_output_bytes: usize,
+//! ) -> Result<Vec<u8>, Box<dyn std::error::Error>>
 //! {
+//!     let resolved = resolve_cargo_build_inputs(spec)?;
 //!     let wasm = build_wasm_canisters_cached(spec)?;
 //!     let input = &wasm.record().artifacts()[0];
-//!     let post_spec = ArtifactCacheSpec::new(post_cache, "deploy", "copy/v1")
+//!     let post_spec = ArtifactCacheSpec::new(post_cache, "deploy", "optimizer/v1")
+//!         .with_cargo_build_inputs("cargo", spec, &resolved)
 //!         .with_input("wasm", input)
+//!         .with_tool("optimizer", optimizer.path())
+//!         .with_arguments(["<input>", "-o", "<output>"])
+//!         .with_environment(context.environment.iter().cloned())
+//!         .with_identity_bytes("optimizer-cwd", context.current_dir.as_os_str().as_encoded_bytes())
 //!         .with_output("deploy", destination);
 //!     let deploy = match prepare_artifact_cache(&post_spec)? {
 //!         ArtifactCachePreparation::Reused(record) => ArtifactCacheOutcome::Reused(record),
 //!         ArtifactCachePreparation::Build(transaction) => {
-//!             // A real post-link recipe can write transformed bytes to
-//!             // transaction.output_path("deploy") instead of copying.
-//!             transaction.import_output("deploy", input)?;
+//!             let output = transaction.output_path("deploy")?;
+//!             optimizer.run(&[input.into(), "-o".into(), output.clone().into()], context, limits)?;
+//!             hash_reader(std::fs::File::open(&output)?, max_output_bytes as u64)?;
 //!             transaction.commit()?
 //!         }
 //!     };
 //!     drop(wasm); // The post-link transaction has finished consuming the input.
-//!     let bytes = std::fs::read(deploy.record().artifacts()[0].path())?;
+//!     let bytes = ic_testkit::ic_host_fs::read::read_file(
+//!         deploy.record().artifacts()[0].path(), max_output_bytes)?;
 //!     drop(deploy); // Reading is complete; maintenance may now reclaim it.
 //!     Ok(bytes)
 //! }

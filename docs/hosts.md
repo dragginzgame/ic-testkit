@@ -985,3 +985,125 @@ and had no matching owner run at inspection; local adoption does not establish
 remote delivery or macOS qualification. New optional alignment/disk checks are
 not selected automatically. Package versions, retained layouts and published
 changelog history remain unchanged; full gates remain maintainer-owned.
+
+### 2026-10-07: released 0.21.1 and pending Rust-fixture qualification
+
+Released source `a98d751fb6991c12a5d0cd8faaddabe1e879199d` passed
+[branch CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37635582990):
+checks, portable tooling and live concurrency succeeded on Linux and macOS 15
+ARM64/Intel. MSRV was skipped in that run; prior focused MSRV evidence remains
+separate. This supersedes the outstanding consumer-native status of the 0.21.1
+fixes, while retaining their earlier failed runs.
+
+Pending 0.21.2 exports the canonical Rust-tool fixture at the same reviewed
+Shared Tooling revision, bringing snapshot coverage to 59 files, and selects it
+in each portable-host job. Linux system-Bash runs pass with ordinary and aliased,
+trailing-slash temporary roots. Snapshot, declaration pins, shell syntax and
+workflow parsing pass; logs use `/tmp/ic-testkit-0212-*.log`. Substitute Cargo
+qualifies path refusal/setup/retry without installing tools. These new working
+bytes still require matching native CI under
+[#24](https://github.com/dragginzgame/ic-testkit/issues/24). No Rust compilation
+or full local gate is needed for this fixture/wiring change.
+
+### 2026-10-07: pending 0.21.2 upstream adoption and cache composition
+
+Shared Tooling 0.1.20 is exported from clean revision
+`3ecc48e579f6cf6e6ab01a6645d8a250fc8c6934`, preserving the canonical Rust-tool
+fixture selection and adding the required contribution rules. The 60-file
+snapshot, prepared tools, dependency pins and formatting checks pass. The
+repository description matches its current PocketIC testing scope. The owner
+[0.1.20 run](https://github.com/dragginzgame/shared-tooling/actions/runs/37641211708)
+passed Linux and lint/security but failed both macOS jobs. Those jobs expose no
+steps through the jobs API, and log downloads return Azure `BlobNotFound`;
+the cause and native acceptance remain unresolved.
+
+The maintainer-selected lockfile contains all four IC Host crates at 0.4.3.
+Explicit `cargo fetch --locked` prepared the cache; package provenance and every
+cached source file match committed owner
+`644d49c096ae05c2e17e1b6aacf14770988c5cf6`. Unpublished owner gzip edits were
+preserved. Linux host integration (2), cache-filesystem (9), atomic-copy (1)
+and the compiled artifact recipe (1) pass, as do strict library/test Clippy,
+Rust 1.88 library/binary and wasm32 library compilation. The new composition
+fixture uses real Cargo metadata, controlled compiler identities, synthetic
+minimal Wasm and an admitted copy producer. It proves warm reuse, compiler
+identity invalidation and independent optimizer-byte invalidation; it does not
+qualify real nightly build-std or a production optimizer.
+
+The host [0.4.3 run](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37639415895)
+passed Linux/MSRV but failed both Darwin architectures with E0308 at
+`durable/mod.rs:371`: `Mode::from_raw_mode` expects Darwin's `u16`, whereas
+`WriteOptions.permissions` is `u32`. This is a consumer macOS compilation
+blocker. The selected lockfile is preserved pending upstream correction, without
+a vendored dependency fork. A proposed checked conversion is retained in
+`/tmp/ic-host-043-darwin-permissions.patch`; it is not applied or natively
+qualified. GitHub issue writes failed with connector internal errors at that
+inspection; no remote delivery was claimed.
+
+Released 0.21.1 now also has successful
+[tag CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37635583503).
+The pending working tree has no matching native consumer run. Logs for these
+focused checks use `/tmp/ic-testkit-0212-host043-*.log` and
+`/tmp/ic-testkit-0212-shared020-*.log`; the initial compile failure and corrected
+retry are retained. Full gates and manifest version changes remain
+maintainer-owned.
+
+IC Host 0.4.4 was committed during this review at
+`d7785db667db0c2fd5135f4aaa0bf02a847c3126`. Its gzip hash/compare additions are
+compatible, but this repository owns no gzip implementation to replace, and the
+Darwin permission conversion remains unchanged. It is reviewed without changing
+the maintainer-selected 0.4.3 lockfile or claiming the compilation blocker fixed.
+
+### 2026-10-07: selected IC Host 0.4.5 qualification
+
+The maintainer-selected lockfile now contains all four IC Host packages at 0.4.5.
+Explicit `cargo fetch --locked` prepares that exact selection, and package
+provenance plus every cached source file matches clean owner
+`93a905b048bcaa2a0aed4214ac2f13f065dc2905`. Existing compatible `0.4` requirements,
+workspace version and retained cache layouts remain unchanged. The additive
+0.4.4 gzip helpers need no local replacement: this repository owns no gzip
+implementation. No host source fork or cross-repository edit is used.
+
+The [exact owner run](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37645681743)
+passes Linux and MSRV. Both macOS architectures now compile and run filesystem
+tests, resolving the permission-width defect tracked in
+[host #18](https://github.com/dragginzgame/ic-host-tooling/issues/18). Both then
+pass 57 filesystem tests and fail the invalid UTF-8 filename publication unwrap
+with typed `BeforePublication`/EILSEQ at `durable/stream/tests.rs:205`. That native
+filesystem assumption is tracked separately in
+[host #19](https://github.com/dragginzgame/ic-host-tooling/issues/19); full native
+owner acceptance remains outstanding. IC Testkit's consumer evidence was posted
+to that issue, without claiming a matching native consumer run.
+
+Linux host integration/cache composition (2), cache-filesystem (9), atomic copy
+(1), strict library/test Clippy, Rust 1.88 library/binary compilation and the
+compiled artifact recipe (1) pass against the selected published 0.4.5 graph.
+Evidence is retained in `/tmp/ic-testkit-0212-host045-*.log`. Earlier 0.4.3
+failures remain bound to their original inputs. Full gates remain maintainer-owned.
+
+### 2026-10-07: IC Host 0.4.6 native acceptance and consumer selection
+
+Pending 0.21.2 selects the four IC Host packages at published 0.4.6, owner
+`0fb05f9e18f032425188d68e1d69317a0f0127d5`. Scoped exact-version updates and
+explicit `cargo fetch --locked` prepare the graph without changing other package
+versions or retained Windows dependency selections. Every cached source byte
+and package provenance matches that committed owner. No package manifest version,
+sibling source or reviewed Shared Tooling snapshot is changed by this adoption.
+
+The [matching owner run](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37648086908)
+passes Linux, MSRV and both macOS 15 architectures. This establishes native owner
+acceptance of the permission-width repair and filesystem-specific filename
+qualification, superseding the outstanding 0.4.5 owner status while preserving
+its original failure evidence. Final filename refusal can occur after producing
+ASCII staging bytes; `BeforePublication` denotes absence of final publication,
+not absence of producer effects. Production admission is unchanged.
+
+Focused Testkit host/cache composition (2), strict library/test Clippy and Rust
+1.88 library/binary compilation pass locked/offline against the published 0.4.6
+graph. Logs use `/tmp/ic-testkit-0212-host046-*.log`, including the retained
+registry-index timeout/retry during selection. The consumer result was posted to
+[host #19](https://github.com/dragginzgame/ic-host-tooling/issues/19).
+Remote Testkit main still identifies released 0.21.1 `a98d751` at inspection;
+working 0.21.2 bytes have no matching committed native consumer run. Full gates
+and manifest version ownership remain with the maintainer. Shared Tooling's new
+PR-release changes are dirty work after its adopted 0.1.20 revision and are not
+consumed as a moving baseline.

@@ -140,6 +140,7 @@ jobs:
           make tools-check dependency-pins-check
           /bin/bash scripts/ci/test-host-tools.sh
           /bin/bash scripts/ci/test-ic-tools.sh
+          /bin/bash scripts/ci/test-rust-tools.sh
           /bin/bash scripts/ci/test-dependency-pins.sh
           /bin/bash scripts/ci/check-release-guards.sh
           /bin/bash scripts/ci/check-installation-version.sh
