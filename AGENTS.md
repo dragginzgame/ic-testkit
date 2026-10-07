@@ -3,7 +3,7 @@
 Read [DRAGGINZGAME.md](DRAGGINZGAME.md) first. The reviewed Shared Tooling
 revision and file digests are recorded in [.shared-tooling.snapshot](.shared-tooling.snapshot).
 This file is the local overlay for `ic-testkit`; the shared baseline governs
-engineering practice. No exceptions to that baseline are currently adopted.
+engineering practice. The approved physical-layout exception is recorded below.
 
 1. Never update the workspace `Cargo.toml` `workspace.package.version` for `ic-testkit` itself. Version bumps are handled manually by the maintainer.
 2. Prefer keeping this crate generic over adding application-specific test harness behavior.
@@ -21,6 +21,12 @@ engineering practice. No exceptions to that baseline are currently adopted.
    its inputs or launch competing Cargo jobs. Use this workspace's `target/` and
    `--locked` focused checks. Prepare offline caches explicitly when validating
    offline; never resolve dependency upgrades as a side effect.
+
+Maintainer-approved physical layout (2026-10-07): Rust packages may use both
+`crates/` and `canisters/` in this repository. Keep one virtual root workspace
+and selected lockfile, inherited package versions/dependencies, and complete
+member coverage. Shared Tooling adoption does not require relocating packages
+between these approved trees.
 
 Host support and qualification are documented in [docs/hosts.md](docs/hosts.md).
 Use `make shared-tooling-check` after snapshot changes and the focused commands

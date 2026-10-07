@@ -116,6 +116,14 @@ remain in the single dated candidate while undated historical sections retain
 their original identity
 ([Shared Tooling #23](https://github.com/dragginzgame/shared-tooling/issues/23)).
 
+### Hook qualification after committing the package move
+
+Consumer hook fixtures project the current selected checkout and prepared hook
+inputs without deleting the historical `canisters` directory. The removed
+unconditional deletion failed after the package move entered HEAD, preventing
+formatting qualification from starting. Package locations remain unchanged; the
+fixture does not enforce a layout by removing a directory.
+
 ### Cache retention and portable test synchronization
 
 Cache retention explicitly unlocks after the final record clone drops. A file

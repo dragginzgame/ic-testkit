@@ -51,6 +51,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Hook qualification works after the fixture-package move is committed, without
+  attempting to delete a directory absent from the selected checkout.
+
 - Cache retention releases its lock when the final record owner drops, even
   during concurrent process spawning. The macOS request-reader fixture tolerates
   a connection that is not yet ready to accept.

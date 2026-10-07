@@ -34,8 +34,6 @@ new_fixture() {
     git update-ref HEAD "$source_commit"
     git read-tree HEAD
     git checkout-index --all
-    # Retire the historical fixture package before projecting its new location.
-    git rm -r --quiet -- canisters
     # Project the reviewed adoption, including files not yet committed locally.
     for path in Makefile Cargo.toml crates/ic-testkit/Cargo.toml \
         crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs ci/tool-versions.env \
