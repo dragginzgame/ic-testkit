@@ -927,3 +927,26 @@ workspace LOC report. Export and fixture evidence is retained under
 [exact-source owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37604299590)
 was still running at inspection; this local qualification does not establish
 native macOS acceptance. Full consumer gates and release effects were not run.
+
+### 2026-10-07: pending 0.21.0 server-exit follow-up
+
+Against consumer base `665434f4b348f44dc3d3977245fae464524e3841` plus the
+uncommitted server-monitoring follow-up, Linux startup tests pass (16), runner
+tests pass (7), and the exact prepared real-server cross-process probe passes
+(1). The controlled server-exit case verifies typed status/output and cleanup
+of the pending command and descendant; it does not simulate a live TTL expiry.
+Strict focused Clippy, Rust 1.88 library/binary checks and `make fmt-check` pass.
+Locked offline cache preparation and all results, including the initial Clippy
+failure before correction, are retained in
+`/tmp/ic-testkit-0210-server-exit*.log`. No symbols, retained layouts or package
+versions change. Full consumer gates remain maintainer-owned; the
+[committed-base CI run](https://github.com/dragginzgame/ic-testkit/actions/runs/37607010214)
+is queued and cannot qualify these uncommitted edits or native macOS behavior.
+
+The Shared Tooling 0.1.18 owner workflow cited above subsequently completed
+successfully. Source review confirms that our optional Rust setup commands
+expose the installer route reported in
+[shared #54](https://github.com/dragginzgame/shared-tooling/issues/54); this
+checkout has a physical `.tools` directory and no `.tools/rust` installation.
+No redirected installation or Rust-tool probe was performed, and the reviewed
+snapshot remains intact pending an upstream repair.

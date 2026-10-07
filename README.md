@@ -373,7 +373,9 @@ ic-testkit-server run --ttl 900 -- cargo test --locked -p my-integration-tests
 
 The runner exports `IC_TESTKIT_POCKET_IC_URL` to the command, retains the managed
 server until completion, inherits terminal IO and preserves the command's exit
-status. SIGINT, SIGTERM and SIGHUP clean up the owned command/server groups and
+status. If the owned server exits while the command is pending, the runner
+terminates the command group and reports the server failure, including TTL expiry.
+SIGINT, SIGTERM and SIGHUP clean up the owned command/server groups and
 return `128 + signal`. Interruption during startup is observed after the bounded
 startup phase. Descendants that deliberately leave an owned group remain
 caller-owned; there is no command deadline or protection against SIGKILL.

@@ -217,6 +217,47 @@ fn command_completion_stops_remaining_owned_descendants() {
 }
 
 #[test]
+fn server_exit_returns_diagnostics_and_stops_the_pending_command_group() {
+    use ic_testkit::pic::{PocketIcStartupConfig, PocketIcStartupError};
+
+    let fixture = Fixture::new();
+    let binary = fixture.0.join("server");
+    support::executable::write_executable_script(
+        &binary,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$0.pid\"\nprintf '34567\\n' > \"$2\"\nwhile [ ! -s \"$0.descendant.pid\" ]; do sleep 0.02; done\nprintf 'server stopped\\n'\nprintf 'failure detail\\n' >&2\nexit 42\n",
+    );
+    let started = Instant::now();
+    let error = PocketIcStartupConfig::spawn(&binary, Duration::from_secs(2))
+        .run_command(
+            Command::new("/bin/sh")
+                .env("SERVER_SCRIPT", &binary)
+                .args([
+                    "-c",
+                    "printf '%s' \"$$\" > \"$SERVER_SCRIPT.command.pid\"; sleep 30 & printf '%s' \"$!\" > \"$SERVER_SCRIPT.descendant.pid\"; wait",
+                ]),
+            || started.elapsed() > Duration::from_secs(5),
+        )
+        .unwrap_err();
+    let PocketIcStartupError::ServerExited {
+        server_binary,
+        status,
+        stdout,
+        stderr,
+        ..
+    } = error
+    else {
+        panic!("expected the owned server exit, got {error:?}");
+    };
+    assert_eq!(server_binary, binary);
+    assert_eq!(status.code(), Some(42));
+    assert_eq!(stdout, "server stopped\n");
+    assert_eq!(stderr, "failure detail\n");
+    for file in ["server.pid", "server.command.pid", "server.descendant.pid"] {
+        wait_until(|| stopped(fixture.pid(file)));
+    }
+}
+
+#[test]
 #[ignore = "requires a prepared POCKET_IC_BIN; launches a real server and instance"]
 fn real_server_runs_a_separate_process_using_environment_startup() {
     let fixture = Fixture::new();

@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
+- Stop a pending command when its managed PocketIC server exits, including TTL
+  expiry, and return the server's status and bounded diagnostics instead of
+  leaving the suite waiting ([#19](https://github.com/dragginzgame/ic-testkit/issues/19)).
 - Resolve dangling input symlink chains to their missing targets through the
   selected IC Host Tooling 0.4.0 libraries, keeping equivalent cache-input paths
   on one identity ([host #1](https://github.com/dragginzgame/ic-host-tooling/issues/1),

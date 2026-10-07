@@ -105,7 +105,7 @@ pub enum PocketIcStartupError {
         server_binary: PathBuf,
         source: io::Error,
     },
-    /// The managed PocketIC server exited before instance construction completed.
+    /// The managed PocketIC server exited during construction or command execution.
     ServerExited {
         server_binary: PathBuf,
         status: ExitStatus,
@@ -338,6 +338,9 @@ impl PocketIcStartupConfig {
     /// IO and other environment selections remain caller-owned. Cancellation
     /// is polled after bounded startup and every 20 ms while the command runs.
     /// It returns an [`io::ErrorKind::Interrupted`] error after cleanup.
+    /// If the owned server exits while the command is pending, the command is
+    /// terminated and the server's status and bounded diagnostics are returned
+    /// as [`PocketIcStartupError::ServerExited`]. External servers are not monitored.
     ///
     /// On Unix the command starts in a new owned process group. Completion,
     /// cancellation and observation failures terminate remaining group members
@@ -357,7 +360,7 @@ impl PocketIcStartupConfig {
                 source: io::Error::from(io::ErrorKind::Interrupted),
             });
         }
-        let (server, url) = if let Some(url) = self.server_url() {
+        let (mut server, url) = if let Some(url) = self.server_url() {
             (None, url.to_owned())
         } else {
             let server = self.start_managed_server()?;
@@ -387,7 +390,18 @@ impl PocketIcStartupConfig {
             }
             match poll_child(owned_child.0.as_mut().expect("command child remains owned")) {
                 Ok(Some(status)) => break Ok(status),
-                Ok(None) => thread::sleep(STARTUP_POLL_INTERVAL),
+                Ok(None) => {
+                    if let Some(managed) = server.as_mut()
+                        && let Some(status) = managed.server.try_wait()?
+                    {
+                        return Err(server
+                            .take()
+                            .expect("managed server remains owned")
+                            .server
+                            .exited_error(status));
+                    }
+                    thread::sleep(STARTUP_POLL_INTERVAL);
+                }
                 Err(source) => break Err(source),
             }
         };

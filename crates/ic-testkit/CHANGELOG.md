@@ -74,6 +74,11 @@ reader or automatic retained-installation reset
 
 ### Fixed
 
+- `PocketIcStartupConfig::run_command` monitors its owned server while the
+  command is pending. Server exit, including hard TTL expiry, stops the owned
+  command group and returns `ServerExited` with the server's exit status and
+  bounded output. External URL mode does not monitor or terminate the borrowed
+  server ([#19](https://github.com/dragginzgame/ic-testkit/issues/19)).
 - Resolve dangling input symlink chains to their missing targets through the
   selected IC Host Tooling 0.4.0 libraries, keeping equivalent cache-input paths
   on one identity ([host #1](https://github.com/dragginzgame/ic-host-tooling/issues/1),
