@@ -8,6 +8,36 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.21.1]
+
+### Fixed
+
+- Compare selected server paths after canonicalization, accounting for macOS
+  temporary-directory aliases without weakening the production path contract.
+  The standalone benchmark's Cargo substitute handles offline workspace
+  discovery separately from locked metadata/build calls. Concurrency CI prepares
+  pinned tools and exports `POCKET_IC_BIN` before its live tests
+  ([#19](https://github.com/dragginzgame/ic-testkit/issues/19),
+  [#18](https://github.com/dragginzgame/ic-testkit/issues/18),
+  [#23](https://github.com/dragginzgame/ic-testkit/issues/23)).
+- Refresh the reviewed snapshot to Shared Tooling 0.1.19, including the required
+  common IC pin parser. Rust installation rejects redirected directories,
+  executables and receipts before probing or installation. Failed validation
+  batches retain `latest-combined.log` alongside individual logs; release-note
+  preparation preserves historical bytes even without a terminal newline
+  ([shared #54](https://github.com/dragginzgame/shared-tooling/issues/54),
+  [shared #37](https://github.com/dragginzgame/shared-tooling/issues/37),
+  [shared #55](https://github.com/dragginzgame/shared-tooling/issues/55)).
+
+### Changed
+
+- Select compatible IC Host Tooling 0.4.2 in the lockfile. Existing public
+  re-exports expose named durable output, bounded chunk digests and exact-version
+  admission for trusted installed tools. Testkit retains its existing stream
+  publication and long-lived server owners; these additions do not replace
+  multi-file directory transactions or add a compiler post-link mode. See the
+  [host release notes](https://github.com/dragginzgame/ic-host-tooling/blob/6501d0e9fa7ba0439ec7a4010ca7bf0205e1d712/docs/changelog/0.4.md).
+
 ## [0.21.0] - 2026-10-07
 
 ### Breaking: IC Host Tooling 0.4 re-exports

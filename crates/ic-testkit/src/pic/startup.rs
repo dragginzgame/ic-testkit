@@ -1243,7 +1243,8 @@ mod tests {
                 });
             match (expected, result) {
                 (0, Ok(config)) => {
-                    assert_eq!(config.server_binary(), Some(script.path().as_path()));
+                    let binary = script.path().canonicalize().unwrap();
+                    assert_eq!(config.server_binary(), Some(binary.as_path()));
                 }
                 (1, Err(PocketIcStartupError::ServerVersionMismatch { .. }))
                 | (2, Err(PocketIcStartupError::ServerVersionProbe { .. })) => {}

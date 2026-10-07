@@ -950,3 +950,38 @@ expose the installer route reported in
 checkout has a physical `.tools` directory and no `.tools/rust` installation.
 No redirected installation or Rust-tool probe was performed, and the reviewed
 snapshot remains intact pending an upstream repair.
+
+### 2026-10-07: pending 0.21.1 tooling and CI follow-up
+
+Released consumer base `13df6bcf7ca913fc045e10f2060de3968f1b870b` failed
+[native CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37619749873):
+macOS compared a canonical `/private/var` server path with a `/var` fixture
+alias; the portable benchmark's Cargo substitute rejected workspace discovery;
+the concurrency job omitted explicit server setup. The pending fixes retain
+canonical production selection, qualify discovery separately from build calls,
+and prepare pinned tools and `POCKET_IC_BIN` in that job.
+
+The accepted lockfile selects all four IC Host crates at 0.4.2. Their cached
+Rust sources match clean owner `6501d0e9fa7ba0439ec7a4010ca7bf0205e1d712`,
+and each package records that commit and its correct path. Explicit
+`cargo fetch --locked` prepares this selection before offline checks. Linux
+startup (16), benchmark-driver (18), cache-filesystem (9), host integration (1)
+and real prepared-server concurrency (9) tests pass. Strict focused Clippy,
+Rust 1.88 library/binary compilation, wasm32 library compilation and formatting
+pass; the initial formatting failure and corrected result are retained
+under `/tmp/ic-testkit-0211-*.log`. The
+[exact 0.4.2 owner run](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37624014360)
+was queued at inspection, so native owner acceptance remains separate.
+
+Shared Tooling 0.1.19 is adopted from clean local commit
+`a06e4719e3839b8eefcfb88ec8923aa88eb63ccc` through the canonical exporter.
+The 58-file selection explicitly adds the common IC pin parser required by the
+installer. Snapshot, prepared tools, pins, consumer release adapters and hooks
+pass. Upstream Rust-route, combined-log and common Make-command fixtures pass in
+an isolated copy, using substitutes rather than installing Rust tools or releasing.
+Evidence is retained under the directory named by
+`/tmp/ic-testkit-shared0119-evidence`. That commit was not retrievable from GitHub
+and had no matching owner run at inspection; local adoption does not establish
+remote delivery or macOS qualification. New optional alignment/disk checks are
+not selected automatically. Package versions, retained layouts and published
+changelog history remain unchanged; full gates remain maintainer-owned.

@@ -191,5 +191,13 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+      - name: Prepare pinned local host and IC tools
+        shell: bash
+        run: |
+          make install-tools
+          make tools-check
+          echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
+      - name: Prepare selected dependencies
+        run: cargo fetch --locked
       - name: Run PocketIC ownership concurrency tests
-        run: cargo test -p ic-testkit --locked --test pocket_ic_concurrency -- --nocapture
+        run: cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency -- --nocapture

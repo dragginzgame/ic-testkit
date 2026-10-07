@@ -604,6 +604,12 @@ mod tests {
             assert!(!calls.is_empty());
             assert_eq!(calls.len() % 3, 0);
             for call in calls.chunks_exact(3) {
+                if call[2].contains("locate-project") {
+                    assert_eq!(call[1], root.to_str().unwrap());
+                    assert!(call[2].contains("--offline"));
+                    assert!(call[2].contains("--workspace"));
+                    continue;
+                }
                 assert_eq!(call[1], inputs.root.to_str().unwrap());
                 if call[0].ends_with("/cargo") || call[0] == "cargo" {
                     assert!(call[2].contains("--locked"));
@@ -642,6 +648,15 @@ mod tests {
             serde_json::to_vec(&json!({"target_directory": target})).unwrap(),
         )
         .unwrap();
+        fs::write(
+            root.join("workspace.json"),
+            serde_json::to_vec(&json!({"root":
+                ic_testkit::artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"))
+                    .unwrap().join("Cargo.toml")
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let proxy = root.join("multicall-proxy");
         fs::write(
             &proxy,
@@ -650,6 +665,11 @@ set -eu
 printf '%s\n%s\n%s\n' "$0" "$PWD" "$*" >> "$IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT/trace"
 case "${0##*/}" in
   cargo)
+    if [ "$1" = --offline ]; then shift; fi
+    if [ "$1" = locate-project ]; then
+      cat "$IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT/workspace.json"
+      exit 0
+    fi
     if [ -n "${RUSTC-}" ]; then
       [ "$RUSTC" = "$IC_TESTKIT_BENCHMARK_TOOL_TEST_ROOT/bin/rustc" ] || exit 98
       "$RUSTC" --version >/dev/null

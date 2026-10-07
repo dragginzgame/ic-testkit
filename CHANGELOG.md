@@ -6,6 +6,29 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.21.1]
+
+### Fixed
+
+- Qualify configured PocketIC paths through canonical filesystem identity on
+  macOS, teach the benchmark Cargo substitute workspace discovery, and prepare
+  explicit server configuration in concurrency CI
+  ([#19](https://github.com/dragginzgame/ic-testkit/issues/19),
+  [#18](https://github.com/dragginzgame/ic-testkit/issues/18),
+  [#23](https://github.com/dragginzgame/ic-testkit/issues/23)).
+- Adopt Shared Tooling 0.1.19: reject redirected Rust-tool installation paths,
+  preserve complete failed-batch logs and historical changelog bytes
+  ([shared #54](https://github.com/dragginzgame/shared-tooling/issues/54),
+  [shared #37](https://github.com/dragginzgame/shared-tooling/issues/37),
+  [shared #55](https://github.com/dragginzgame/shared-tooling/issues/55)).
+
+### Changed
+
+- Select compatible IC Host Tooling 0.4.2 dependencies, exposing its
+  named-output, chunk-digest and installed-tool admission additions through the
+  existing public host-crate re-exports. See
+  [package notes](crates/ic-testkit/CHANGELOG.md#0211).
+
 ## [0.21.0] - 2026-10-07
 
 ### Breaking
