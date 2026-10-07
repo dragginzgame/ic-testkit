@@ -8,6 +8,22 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.21.3]
+
+### Changed
+
+- Refresh the canonical release engine and engineering baseline to Shared Tooling
+  0.1.21, including its PR-delivery helper. This repository retains direct atomic
+  branch/tag delivery; adopting the shared PR flow requires separate consumer
+  adapters and qualification
+  ([shared #42](https://github.com/dragginzgame/shared-tooling/issues/42)).
+
+### Testing
+
+- Remove duplicated generic path-resolution cases now owned by IC Host and
+  delegate release-tag hash admission entirely to Shared Tooling. Retain local
+  cache-confinement, relative-target and publication-refusal qualification.
+
 ## [0.21.2] - 2026-10-07
 
 ### Changed

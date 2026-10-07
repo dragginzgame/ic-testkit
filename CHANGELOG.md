@@ -6,6 +6,22 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.21.3]
+
+### Changed
+
+- Refresh the canonical release engine and engineering baseline to Shared Tooling
+  0.1.21, including its PR-delivery helper. This repository retains direct atomic
+  branch/tag delivery; adopting the shared PR flow requires separate consumer
+  adapters and qualification. See [package notes](crates/ic-testkit/CHANGELOG.md#0213)
+  ([shared #42](https://github.com/dragginzgame/shared-tooling/issues/42)).
+
+### Testing
+
+- Remove duplicated generic path-resolution cases now owned by IC Host and
+  delegate release-tag hash admission entirely to Shared Tooling. Retain local
+  cache-confinement, relative-target and publication-refusal qualification.
+
 ## [0.21.2] - 2026-10-07
 
 ### Changed

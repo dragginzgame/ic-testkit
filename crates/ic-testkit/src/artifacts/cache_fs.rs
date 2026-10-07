@@ -698,8 +698,6 @@ fn remove_cache_entry(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(unix)]
-    use super::canonicalize_allow_missing;
     use super::directory_logical_size;
     use crate::artifacts::test_support::unique_temp_directory;
     use std::{
@@ -917,44 +915,6 @@ mod tests {
         assert_eq!(
             directory_logical_size(&walked.join("0")).unwrap(),
             targets[0].len() as u64,
-        );
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn dangling_input_aliases_resolve_to_the_same_missing_target() {
-        let root = unique_temp_directory("canonical-dangling-input");
-        let real = root.canonicalize().unwrap();
-        std::os::unix::fs::symlink("generated/input", root.join("alias")).unwrap();
-        std::os::unix::fs::symlink("alias", root.join("chain")).unwrap();
-        let expected = real.join("generated/input/output");
-        for path in ["alias/output", "chain/output", "generated/input/output"] {
-            assert_eq!(
-                canonicalize_allow_missing(&root.join(path)).unwrap(),
-                expected
-            );
-        }
-        // Resolution chooses an identity without creating the missing input tree.
-        assert!(!root.join("generated").exists());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn missing_parent_traversal_resumes_existing_symlink_resolution() {
-        let root = unique_temp_directory("canonical-missing-parent");
-        let target = root.join("real");
-        fs::create_dir_all(&target).unwrap();
-        std::os::unix::fs::symlink(&target, root.join("alias")).unwrap();
-        let path = root.join("missing/../alias/generated/nested/../output");
-        assert_eq!(
-            canonicalize_allow_missing(&path).unwrap(),
-            target.canonicalize().unwrap().join("generated/output")
-        );
-        assert_eq!(
-            canonicalize_allow_missing(&root.join("alias/../other/output")).unwrap(),
-            root.canonicalize().unwrap().join("other/output")
         );
         fs::remove_dir_all(root).unwrap();
     }

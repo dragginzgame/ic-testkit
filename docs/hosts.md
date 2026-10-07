@@ -1107,3 +1107,57 @@ working 0.21.2 bytes have no matching committed native consumer run. Full gates
 and manifest version ownership remain with the maintainer. Shared Tooling's new
 PR-release changes are dirty work after its adopted 0.1.20 revision and are not
 consumed as a moving baseline.
+
+### 2026-10-07: Shared Tooling 0.1.21 adoption
+
+Shared Tooling is refreshed through its canonical exporter from clean revision
+`45e34e92b43edb9543d5b7212774f87f8334079f`. The 61-file snapshot selects the new
+PR helper alongside the common release runner. The current consumer retains
+its direct delivery policy and existing metadata/evidence adapters. Selecting
+PR delivery still requires the consumer merged-preflight/receipt work described
+in the shared release contract; the common fixture does not qualify those absent
+adapters or real GitHub permissions.
+
+Snapshot, prepared tools, dependency pins, formatting, consumer release-metadata
+qualification and hook qualification pass. A private exact-source clone also
+passes the canonical direct-runner and PR-runner fixtures: isolated Git histories
+and bare destinations exercise recovery, merge/squash/rebase, fresh validation
+and conflicts using substituted GitHub responses. No real release, PR creation,
+merge or remote push is performed. Rust source and the selected dependency graph
+are unchanged, so no Rust compilation is required for this adoption.
+
+Evidence uses `/tmp/ic-testkit-0213-*.log`; the private source is identified by
+`/tmp/ic-testkit-shared0121-evidence`. The matching
+[Shared Tooling run](https://github.com/dragginzgame/shared-tooling/actions/runs/37652236506)
+is queued at inspection. Released Testkit 0.21.2 is now
+`2db7b4f6b616b484408695656e26207628d74c5f`; its
+[branch](https://github.com/dragginzgame/ic-testkit/actions/runs/37651807716) and
+[tag](https://github.com/dragginzgame/ic-testkit/actions/runs/37651807993) runs are
+in progress/queued at inspection. Pending compatible notes select 0.21.3 in both
+views without changing package metadata or published history. Native acceptance
+for these new working bytes remains separate from the focused local checks.
+
+### 2026-10-07: focused validation ownership cleanup
+
+Pending 0.21.3 removes the local generic dangling-symlink and missing-parent
+path tests because their owner is `ic-host-fs::path`, including
+`dangling_symlink_targets_chains_and_parent_traversal_share_one_identity` and
+`missing_parent_traversal_resumes_symlink_resolution`. Published Host 0.4.6 has
+exact-source native acceptance recorded above. The caller-base wrapper and all
+product cache/retention behavior remain local. The release tag adapter now
+leaves hash admission to the selected shared tag checker, while still resolving
+the consumer's version and exact HEAD.
+
+Remaining cache-filesystem tests (7), cache input/output confinement (1),
+caller-relative exact target integration (1), actual Make publication refusal
+fixtures, snapshot and formatting pass. Logs use
+`/tmp/ic-testkit-0213-cleanup-*.log`; the initial trailing-blank formatting
+failure and corrected result are retained. No dependency or package version
+changes accompany this compatible cleanup.
+
+Released Testkit 0.21.2 source `2db7b4f6b616b484408695656e26207628d74c5f` now passes
+[branch CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37651807716),
+including checks, portable fixtures, MSRV and live concurrency on Linux and both
+macOS architectures. Its tag run remains queued at inspection. This establishes
+released-source qualification for the Rust-tool fixture and cache composition;
+it does not qualify pending 0.21.3 bytes.

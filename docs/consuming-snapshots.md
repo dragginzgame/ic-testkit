@@ -76,6 +76,15 @@ The release runner, validation logger and formatting hook require
 `scripts/ci/check-make-execution.sh`. Include it when adding or refreshing any of
 those entrypoints; existing manifests need that explicit file-set addition.
 
+PR release delivery additionally requires `scripts/ci/release-pr.sh` beside
+`run-release.sh`, the updated `docs/releases.md` and explicit
+`RELEASE_DELIVERY=pr` selection. Add `release-merged-preflight` and qualify the
+complete gate and receipt bindings in the retained merged checkout before
+selecting it. Vendor `scripts/ci/test-release-pr.sh` when adopting the PR fixture
+or the complete portable suite. Direct delivery remains the default; refreshing
+the runner alone does not adopt PR delivery. See the
+[PR release contract](releases.md#pr-delivery).
+
 The IC installer now shares matrix admission through `scripts/ci/ic-tool-pins.awk`.
 Add that file explicitly before refreshing `scripts/dev/install-ic-tools.sh`;
 refresh never widens the selected file set automatically. The optional PocketIC
@@ -206,7 +215,8 @@ their paths for replacement; preserve and reconcile their obligations.
 Release adoption also requires aligning the consumer's entry points, adapters,
 instructions and checks with the [release contract](releases.md), including
 artifact retention and the exact atomic branch/tag push. A passing snapshot
-check alone does not verify those behaviors.
+check alone does not verify those behaviors. Explicit PR adopters instead qualify
+the exact branch push, review boundary, merged-source validation and tag-only push.
 Pinning adoption also requires the checker and its jq module, prepared Git/jq/yq
 tools (and Cargo for Rust workspaces), a CI/release invocation, and consumer-owned
 qualification for locked builds and external inputs. Consumers may also vendor

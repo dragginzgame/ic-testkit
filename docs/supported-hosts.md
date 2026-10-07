@@ -88,6 +88,7 @@ required to run setup. Make targets and CI select this same local tool set.
 | Dependency pin checker | Git, jq, Mike Farah yq v4.47.2+; Cargo when Cargo manifests exist |
 | Workspace-version reader | Prepared Cargo, jq and Mike Farah yq v4.47.2+; explicit Cargo.toml input; no dependency resolution |
 | Release runner | GNU Make, Git, `date`, explicit consumer metadata/check targets, and Bash 3.2 |
+| PR release delivery | The release runner prerequisites, authenticated GitHub CLI with `gh api --paginate --slurp`, jq, and Git supporting `switch`, `worktree` and `fetch --no-write-fetch-head`; see the [PR contract](releases.md#pr-delivery) |
 | Changelog finalizer | System awk with regular-expression `RS` (the declared Linux/macOS hosts); preserves historical EOF bytes without GNU `RT` |
 | Rust pre-commit hook and installer | Git, GNU Make, consumer-owned `fmt` prerequisites (Cargo/rustfmt and an exact `cargo-sort` version), Bash 3.2 and standard Unix file utilities |
 | Consumer formatting adoption checker | The hook prerequisites above, Perl-free shell utilities, and reviewed consumer Make inputs; no implicit downloads |

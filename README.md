@@ -1713,9 +1713,10 @@ make release-patch
 # or: make release-major
 ```
 
-All three commands use the reviewed [common release workflow](docs/releases.md)
-and the same complete `make release-check` gate, including MSRV, before changing
-metadata. They finalize both changelog views with the selected version and UTC
+This repository selects direct atomic branch/tag delivery; adopting the shared
+PR flow is a separate workflow change. All three commands use the reviewed
+[common release workflow](docs/releases.md) and the same complete
+`make release-check` gate, including MSRV, before changing metadata. They finalize both changelog views with the selected version and UTC
 date, update both installation examples, preserve dependency selections, stage
 the explicit release files, and create the maintainer-owned commit and annotated
 tag. They atomically push only the selected branch and exact tag. Defaults are
