@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -69,7 +71,8 @@ fn upstream_supports_two_overlapping_instances() {
     assert_two_instances_overlap(move || {
         pocket_ic::PocketIcBuilder::new()
             .with_application_subnet()
-            .build()
+            .try_build(support::startup_config())
+            .expect("build explicitly configured upstream instance")
     });
 }
 
@@ -99,7 +102,8 @@ fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
     let caller_built = PocketIcBuilder::new()
         .with_application_subnet()
         .with_ii_subnet()
-        .build();
+        .try_build(support::startup_config())
+        .expect("build explicitly configured custom topology");
     let fixture = StandaloneCanisterFixture::install(
         caller_built,
         InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
@@ -197,7 +201,13 @@ fn bounded_standalone_pool_allows_capacity_scoped_overlap() {
             .acquire()
             .expect("second overlapping fixture should capture");
         ready_tx
-            .send((second.pocket_ic().instance_id(), second_outcome))
+            .send((
+                (
+                    second.pocket_ic().get_server_url(),
+                    second.pocket_ic().instance_id(),
+                ),
+                second_outcome,
+            ))
             .expect("overlap result receiver should remain live");
     });
 
@@ -208,7 +218,13 @@ fn bounded_standalone_pool_allows_capacity_scoped_overlap() {
         !second_outcome.is_reused(),
         "second pool slot should be new"
     );
-    assert_ne!(first.pocket_ic().instance_id(), second_instance);
+    assert_ne!(
+        (
+            first.pocket_ic().get_server_url(),
+            first.pocket_ic().instance_id()
+        ),
+        second_instance
+    );
 
     drop(first);
     worker.join().expect("overlap worker should exit cleanly");
@@ -386,7 +402,7 @@ fn failed_standalone_restore_is_timed_and_rebuilt_on_the_next_acquisition() {
 
 fn build_empty_standalone_fixture() -> StandaloneCanisterFixture {
     StandaloneCanisterFixture::install(
-        PocketIc::new(),
+        support::pocket_ic(),
         InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
     )
 }

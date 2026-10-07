@@ -12,10 +12,12 @@
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 IC_TOOL_PINS ?= $(REPO_ROOT)ci/ic-tools.tsv
 HOST_TOOL_VERSIONS ?= $(REPO_ROOT)ci/tool-versions.env
-export PATH := $(REPO_ROOT).tools/host/bin:$(REPO_ROOT).tools/ic/bin:$(PATH)
 export POCKET_IC_BIN ?= $(REPO_ROOT).tools/ic/bin/pocket-ic
 
-.PHONY: install-tools tools-check install-host-tools host-tools-check install-ic-tools ic-tools-check dependency-pins-check
+SHARED_TOOLING_ROOT := $(REPO_ROOT)
+include $(REPO_ROOT)make/tools.mk
+
+.PHONY: dependency-pins-check
 
 MSRV ?= 1.88.0
 .DEFAULT_GOAL := help
@@ -35,8 +37,10 @@ RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 help:
 	@echo "Available commands:"
 	@echo ""
-	@echo "  install-tools   Explicitly install pinned local jq/yq and IC executables"
+	@echo "  install-tools   Explicitly install pinned jq/yq, ripgrep, cloc and IC executables"
 	@echo "  tools-check     Verify installed host and IC tools offline"
+	@echo "  cloc            Count this workspace's Rust code"
+	@echo "  cloc-tooling    Count tooling across sibling checkouts without running their commands"
 	@echo "  dependency-pins-check Check dependency declarations and tracked lockfiles offline"
 	@echo "  install-format-tools Install the pinned manifest formatter during setup"
 	@echo "  install-hooks   Enable the repository-local formatting hook"
@@ -78,6 +82,7 @@ tags:
 
 test:
 	cargo test -p ic-testkit --locked
+	cargo test -p ic-testkit --locked --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
 
 build-test-canisters:
 	CARGO_TARGET_DIR=target/pic-wasm cargo build --locked --target wasm32-unknown-unknown -p ic_testkit_perf_probe
@@ -92,26 +97,6 @@ format-tools-check:
 install-format-tools:
 	@. "$(REPO_ROOT)ci/tool-versions.env"; \
 		cargo install cargo-sort --version "$$SHARED_TOOLING_CARGO_SORT_VERSION" --locked
-
-install-tools:
-	+$(MAKE) --no-print-directory install-host-tools
-	+$(MAKE) --no-print-directory install-ic-tools
-
-tools-check:
-	+$(MAKE) --no-print-directory host-tools-check
-	+$(MAKE) --no-print-directory ic-tools-check
-
-install-host-tools:
-	bash scripts/dev/install-host-tools.sh --versions "$(HOST_TOOL_VERSIONS)"
-
-host-tools-check:
-	bash scripts/dev/install-host-tools.sh --versions "$(HOST_TOOL_VERSIONS)" --check
-
-install-ic-tools:
-	bash scripts/dev/install-ic-tools.sh --pins "$(IC_TOOL_PINS)"
-
-ic-tools-check:
-	bash scripts/dev/install-ic-tools.sh --pins "$(IC_TOOL_PINS)" --check
 
 dependency-pins-check:
 	bash scripts/ci/check-dependency-pins.sh --cargo-inheritance

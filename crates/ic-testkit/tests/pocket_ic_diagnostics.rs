@@ -1,13 +1,15 @@
+mod support;
+
 use candid::Principal;
 use ic_testkit::pic::{
     CanisterDiagnosticFailure, CanisterDiagnosticsRequest, LabeledCanisterDiagnosticsRequest,
-    PocketIc, PocketIcDiagnosticsExt, is_dead_pocket_ic_transport_error,
+    PocketIcDiagnosticsExt, is_dead_pocket_ic_transport_error,
 };
 use pocket_ic::CanisterSettings;
 
 #[test]
 fn diagnostics_use_independent_exact_senders_and_preserve_both_outcomes() {
-    let pocket_ic = PocketIc::new();
+    let pocket_ic = support::pocket_ic();
     let status_sender = Principal::from_slice(&[41]);
     let log_sender = Principal::from_slice(&[42]);
     let outsider = Principal::from_slice(&[43]);

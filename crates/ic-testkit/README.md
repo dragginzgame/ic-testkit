@@ -25,6 +25,8 @@ provides:
 - canister install and retry helpers
 - explicit bounded PocketIC startup, caller-owned managed-server handles, and
   structured child/readiness failures
+- a shared environment startup contract and `ic-testkit-server run -- COMMAND`
+  for suites spanning several test processes
 - cached single- and multi-canister PocketIC baseline pools
 - deterministic fake principals
 - transactional external artifact sets and content-addressed Wasm builds with

@@ -1,8 +1,10 @@
-use ic_testkit::pic::{CandidCallErrorKind, CandidCallExt, ErrorCode, PocketIc, RejectCode};
+mod support;
+
+use ic_testkit::pic::{CandidCallErrorKind, CandidCallExt, ErrorCode, RejectCode};
 
 #[test]
 fn candid_call_errors_preserve_live_pocket_ic_rejections() {
-    let pocket_ic = PocketIc::new();
+    let pocket_ic = support::pocket_ic();
     let removed_canister = pocket_ic.create_canister();
     pocket_ic
         .stop_canister(removed_canister, None)

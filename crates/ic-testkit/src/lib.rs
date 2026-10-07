@@ -4,7 +4,7 @@
 //! complete upstream crate, while [`pic`] retains convenient runtime type
 //! re-exports and adds extension traits for typed Candid calls, generic
 //! installation, diagnostics, snapshots, startup errors, caller-owned
-//! managed-server startup, and a small time conversion. It does not provide a
+//! managed-server startup, bounded readiness polling, and a small time conversion. It does not provide a
 //! simulator wrapper or a host-wide runtime lock.
 //!
 //! The crate also provides:

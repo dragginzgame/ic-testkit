@@ -48,16 +48,60 @@ fn wasm_artifacts_ready_requires_all_artifacts() {
 // Verify workspace and target helpers derive stable host-side paths.
 #[test]
 fn workspace_helpers_resolve_expected_paths() {
-    let manifest_dir = "/workspace/crates/ic-testkit";
-    let workspace_root = workspace_root_for(manifest_dir);
-
-    assert_eq!(workspace_root, PathBuf::from("/workspace"));
+    let workspace_root = workspace_root_for(env!("CARGO_MANIFEST_DIR")).unwrap();
     assert_eq!(
-        workspace_root_for("/workspace/ic-testkit"),
-        PathBuf::from("/workspace/ic-testkit")
+        workspace_root.join("Cargo.toml"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("Cargo.toml")
     );
     assert_eq!(
         test_target_dir(&workspace_root, "pic-wasm"),
-        PathBuf::from("/workspace/target/pic-wasm")
+        workspace_root.join("target/pic-wasm")
     );
+}
+
+#[test]
+fn workspace_discovery_obeys_cargo_membership_and_independent_roots() {
+    let root = unique_temp_dir("cargo-workspace-discovery");
+    fs::write(root.join("Cargo.toml"), "[workspace]\nmembers = [\"apps/demo/worker\", \"external\"]\nexclude = [\"excluded\", \"testing\"]\nresolver = \"2\"\n").unwrap();
+    for (name, relative, extra) in [
+        ("worker", "apps/demo/worker", ""),
+        ("external", "external", "workspace = \"..\"\n"),
+        ("excluded", "excluded", ""),
+        ("independent", "testing", "\n[workspace]\n"),
+        ("unlisted", "unlisted", ""),
+    ] {
+        let package = root.join(relative);
+        fs::create_dir_all(package.join("src")).unwrap();
+        fs::write(package.join("src/lib.rs"), "").unwrap();
+        fs::write(
+            package.join("Cargo.toml"),
+            format!("[package]\nname = \"{name}\"\nversion = \"0.0.0\"\n{extra}"),
+        )
+        .unwrap();
+    }
+    let canonical = root.canonicalize().unwrap();
+    assert_eq!(
+        workspace_root_for(root.join("apps/demo/worker")).unwrap(),
+        canonical
+    );
+    assert_eq!(
+        workspace_root_for(root.join("external")).unwrap(),
+        canonical
+    );
+    for independent in ["excluded", "testing"] {
+        assert_eq!(
+            workspace_root_for(root.join(independent)).unwrap(),
+            canonical.join(independent)
+        );
+    }
+    assert!(workspace_root_for(root.join("unlisted")).is_err());
+    assert!(workspace_root_for(root.join("missing")).is_err());
+    assert!(!root.join("Cargo.lock").exists());
+    assert!(!root.join("target").exists());
+    fs::remove_dir_all(root).unwrap();
 }

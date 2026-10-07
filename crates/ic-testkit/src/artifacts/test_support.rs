@@ -60,6 +60,7 @@ exec {quoted_cargo} "$@"
     );
     let spec =
         super::wasm_cache::WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+            .with_isolated_builds()
             .with_cargo_program(wrapper);
     (root, spec)
 }

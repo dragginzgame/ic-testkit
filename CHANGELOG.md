@@ -6,6 +6,74 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.21.0]
+
+### Breaking
+
+- Adopt IC Host Tooling 0.4.0 across the four public host-crate re-exports.
+  Move retired durable readers to `ic_host_fs::read`, supply bounded reads and
+  handle typed private-file and lock errors
+  ([host #14](https://github.com/dragginzgame/ic-host-tooling/issues/14),
+  [#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+- `workspace_root_for` now returns `io::Result<PathBuf>` and uses Cargo's actual
+  workspace membership instead of a directory-name heuristic. Handle discovery
+  errors and supply a real crate manifest directory
+  ([#18](https://github.com/dragginzgame/ic-testkit/issues/18)).
+- New Wasm build specs share `<workspace>/target/ic-testkit-incremental` across
+  fingerprints instead of creating a Cargo target for each key. Select
+  `with_isolated_builds()` when isolation is required, and keep retention limits
+  explicit. Existing retained isolated targets are not deleted automatically
+  ([#18](https://github.com/dragginzgame/ic-testkit/issues/18)).
+  See [migration details](crates/ic-testkit/CHANGELOG.md#0210).
+
+### Added
+
+- Select PocketIC startup with `PocketIcStartupConfig::from_env`: prefer
+  `IC_TESTKIT_POCKET_IC_URL`, otherwise verify the explicit `POCKET_IC_BIN`.
+  Run multi-process suites through `ic-testkit-server run -- COMMAND`, retaining
+  one server owner and cleaning up owned process groups on exit or interruption
+  ([#19](https://github.com/dragginzgame/ic-testkit/issues/19)).
+- Bound caller-owned readiness polling with `pic::tick_until`, advancing time
+  and ticking only while pending and retaining typed predicate failures
+  ([#20](https://github.com/dragginzgame/ic-testkit/issues/20)).
+
+### Fixed
+
+- Resolve dangling input symlink chains to their missing targets through the
+  selected IC Host Tooling 0.4.0 libraries, keeping equivalent cache-input paths
+  on one identity ([host #1](https://github.com/dragginzgame/ic-host-tooling/issues/1),
+  [#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+- Preserve failed CI validation logs, tool-installation candidates and portable
+  tooling fixtures as downloadable artifacts, including failures during setup
+  ([#17](https://github.com/dragginzgame/ic-testkit/issues/17)).
+
+### Changed
+
+- Live tests and the baseline example use explicit environment startup; prepare
+  `POCKET_IC_BIN` or supply `IC_TESTKIT_POCKET_IC_URL`. Benchmark guidance uses
+  fetched canister logs instead of the managed server's bounded diagnostic prefix
+  ([#23](https://github.com/dragginzgame/ic-testkit/issues/23)).
+- Document the existing compiler-selection and cached-transform contracts for
+  Cargo shims, and qualify cache invalidation when the selected compiler identity
+  changes ([#21](https://github.com/dragginzgame/ic-testkit/issues/21)).
+- Use Shared Tooling 0.1.18 for common setup, offline tool checks and LOC reports.
+  Setup and CI now share pinned ripgrep and cloc alongside jq/yq and IC tools;
+  rerun `make install-tools` in existing checkouts to prepare the complete set.
+- Exclude physical Cargo output reached through target aliases and reject
+  validation target options/assignments before dispatch. Corrected upstream LOC
+  fixtures also qualify enclosing Cargo workspaces and inherited target settings
+  ([shared #31](https://github.com/dragginzgame/shared-tooling/issues/31),
+  [shared #30](https://github.com/dragginzgame/shared-tooling/issues/30),
+  [shared #47](https://github.com/dragginzgame/shared-tooling/issues/47),
+  [shared #53](https://github.com/dragginzgame/shared-tooling/issues/53)).
+- Provide optional local Rust-tool setup through `make install-rust-tools` and
+  offline `make rust-tools-check`, using the shared exact tool catalog
+  ([shared #51](https://github.com/dragginzgame/shared-tooling/issues/51)).
+- Preserve trailing-whitespace draft headings during release preparation and
+  retain the underlying Make failure status through shared validation
+  ([shared #38](https://github.com/dragginzgame/shared-tooling/issues/38),
+  [shared #37](https://github.com/dragginzgame/shared-tooling/issues/37)).
+
 ## [0.20.0] - 2026-10-07
 
 ### Breaking

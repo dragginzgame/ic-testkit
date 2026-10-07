@@ -246,6 +246,16 @@ done
 
 for kind in patch minor major; do
   new_fixture "$kind" "$kind"
+  if [[ "$kind" == patch ]]; then
+    # Exercise the shared finalizer fix through both actual consumer note views.
+    for view in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
+      awk -v heading="## [$RELEASE_VERSION]" '
+        $0 == heading { print $0 " \t"; next }
+        { print }
+      ' "$view" > "$view.spaced"
+      mv "$view.spaced" "$view"
+    done
+  fi
   cat > readme-history <<'HISTORY'
 
 Historical examples outside the maintained TOML block:

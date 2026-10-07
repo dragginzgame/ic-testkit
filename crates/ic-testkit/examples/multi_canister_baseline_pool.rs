@@ -6,14 +6,15 @@
 //! cargo run -p ic-testkit --example multi_canister_baseline_pool
 //! ```
 
-use std::{error::Error, fmt, num::NonZeroUsize};
+use std::{error::Error, fmt, num::NonZeroUsize, time::Duration};
 
 use candid::Principal;
 use ic_testkit::pic::{
     BaselinePoolContractError, BaselinePoolOutcome, BaselinePreparationStage,
     CachedPocketIcBaseline, CachedPocketIcBaselinePool, CanisterRestoreReceipt,
-    ControllerSnapshotError, CycleResetPolicy, FailureDisposition, FixtureRecipeId, PocketIc,
-    PocketIcBaselineRecipe, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt,
+    ControllerSnapshotError, CycleResetPolicy, FailureDisposition, FixtureRecipeId,
+    PocketIcBaselineRecipe, PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig,
+    PocketIcStartupError, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt,
     ResetRequirements, ValidationReceipt, is_dead_pocket_ic_transport_error,
 };
 
@@ -30,6 +31,7 @@ struct TopologyMetadata {
 
 #[derive(Debug)]
 enum RecipeError {
+    Startup(PocketIcStartupError),
     Contract(BaselinePoolContractError),
     Snapshot(ControllerSnapshotError),
     Validation(&'static str),
@@ -57,7 +59,9 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
     }
 
     fn build(&self) -> Result<CachedPocketIcBaseline<Self::Metadata>, Self::Error> {
-        let pocket_ic = PocketIc::new();
+        let pocket_ic = PocketIcBuilder::new()
+            .with_application_subnet()
+            .try_build(PocketIcStartupConfig::from_env(Duration::from_secs(30))?)?;
         let canister_ids = [pocket_ic.create_canister(), pocket_ic.create_canister()];
         for canister_id in canister_ids {
             pocket_ic.install_canister(canister_id, EMPTY_WASM.to_vec(), vec![], None);
@@ -137,6 +141,12 @@ impl From<BaselinePoolContractError> for RecipeError {
     }
 }
 
+impl From<PocketIcStartupError> for RecipeError {
+    fn from(error: PocketIcStartupError) -> Self {
+        Self::Startup(error)
+    }
+}
+
 impl From<ControllerSnapshotError> for RecipeError {
     fn from(error: ControllerSnapshotError) -> Self {
         Self::Snapshot(error)
@@ -146,6 +156,7 @@ impl From<ControllerSnapshotError> for RecipeError {
 impl fmt::Display for RecipeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Startup(error) => error.fmt(formatter),
             Self::Contract(error) => error.fmt(formatter),
             Self::Snapshot(error) => error.fmt(formatter),
             Self::Validation(message) => formatter.write_str(message),
@@ -156,6 +167,7 @@ impl fmt::Display for RecipeError {
 impl Error for RecipeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::Startup(error) => Some(error),
             Self::Contract(error) => Some(error),
             Self::Snapshot(error) => Some(error),
             Self::Validation(_) => None,

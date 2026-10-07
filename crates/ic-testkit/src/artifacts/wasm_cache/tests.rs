@@ -49,6 +49,67 @@ fn canonical_fixture(path: &Path) -> PathBuf {
     path.canonicalize().expect("canonicalize test fixture path")
 }
 
+#[cfg(unix)]
+#[test]
+fn shim_compiler_identity_invalidates_exact_cache_and_explicit_rustc_takes_precedence() {
+    let (root, spec) = fake_wasm_build_spec("shim-compiler-identity");
+    let compiler = root.join("selected-rustc");
+    write_executable_script(&compiler, "#!/bin/sh\nprintf 'selected-compiler-A\\n'\n");
+    let spec = spec.with_rustc_program(compiler.as_os_str());
+    let first = build_wasm_canisters_cached(&spec).unwrap();
+    assert!(matches!(first, WasmBuildOutcome::Built { .. }));
+    assert!(matches!(
+        build_wasm_canisters_cached(&spec).unwrap(),
+        WasmBuildOutcome::Reused { .. }
+    ));
+    write_executable_script(&compiler, "#!/bin/sh\nprintf 'selected-compiler-B\\n'\n");
+    let second = build_wasm_canisters_cached(&spec).unwrap();
+    assert!(matches!(second, WasmBuildOutcome::Built { .. }));
+    assert_ne!(first.record().fingerprint(), second.record().fingerprint());
+    let selected_rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let override_spec = spec
+        .with_rustc_program("/missing/identity-probe")
+        .with_extra_env([(OsString::from("RUSTC"), selected_rustc)]);
+    build_wasm_canisters_cached(&override_spec)
+        .expect("explicit RUSTC selects metadata/build environment and identity probe");
+    drop((first, second));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn default_builds_share_cargo_state_across_fingerprints() {
+    let (root, fixture) = fake_wasm_build_spec("default-shared-cargo");
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program(fixture.cargo_program.clone());
+    let first = build_wasm_canisters_cached(&spec).unwrap();
+    assert!(
+        first
+            .record()
+            .timings()
+            .shared_incremental_lock_wait()
+            .is_some()
+    );
+    let target = root.join("target/ic-testkit-incremental");
+    fs::write(target.join("retained-cargo-state"), b"retained").unwrap();
+    let second =
+        build_wasm_canisters_cached(&spec.with_extra_env([("BUILD_VARIANT", "second")])).unwrap();
+    assert_ne!(first.record().fingerprint(), second.record().fingerprint());
+    assert!(
+        second
+            .record()
+            .timings()
+            .shared_incremental_lock_wait()
+            .is_some()
+    );
+    assert_eq!(
+        fs::read(target.join("retained-cargo-state")).unwrap(),
+        b"retained"
+    );
+    drop((first, second));
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn write_projection_package(root: &Path, package: &str, manifest_suffix: &str) {
     let directory = root.join(package);
     fs::create_dir_all(directory.join("src")).expect("create projection fixture package");
@@ -999,6 +1060,7 @@ fn build_spec_requires_at_least_one_package() {
 
     let isolated_maintenance =
         WasmBuildSpec::new(Path::new("."), Path::new("target"), &["fixture"], "debug")
+            .with_isolated_builds()
             .with_shared_incremental_target_maintenance_at_most_every(
                 SharedIncrementalTargetPrunePolicy::new(),
                 Duration::from_secs(60),
@@ -1013,7 +1075,8 @@ fn build_spec_requires_at_least_one_package() {
 fn shared_target_inspection_is_explicit_and_does_not_create_a_missing_target() {
     let root = unique_temp_directory("shared-target-inspection");
     let target = root.join("missing-shared-target");
-    let isolated = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug");
+    let isolated = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_isolated_builds();
     assert!(matches!(
         inspect_shared_incremental_target(&isolated),
         Err(WasmBuildError::InvalidSpec { .. })

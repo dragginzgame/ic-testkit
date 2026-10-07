@@ -383,7 +383,7 @@ fn cargo_command(cargo: &Path, root: &Path, rustc: Option<&Path>) -> Command {
 }
 
 fn prepare(options: &Options) -> Result<Inputs, Error> {
-    let root = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let root = workspace_root_for(env!("CARGO_MANIFEST_DIR"))?;
     if !root
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()

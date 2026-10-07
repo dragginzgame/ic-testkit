@@ -1,8 +1,10 @@
-use ic_testkit::pic::{CanisterInstallExt, InstallSpec, PocketIc, StandaloneCanisterFixture};
+mod support;
+
+use ic_testkit::pic::{CanisterInstallExt, InstallSpec, StandaloneCanisterFixture};
 
 #[test]
 fn fallible_install_preserves_the_original_failure_after_diagnostics() {
-    let pocket_ic = PocketIc::new();
+    let pocket_ic = support::pocket_ic();
     let error = pocket_ic
         .try_create_and_install(InstallSpec::new(vec![0xde, 0xad], vec![], 0).label("invalid-wasm"))
         .expect_err("invalid Wasm should fail installation");
@@ -21,7 +23,7 @@ fn fallible_install_preserves_the_original_failure_after_diagnostics() {
 #[test]
 fn failed_standalone_install_returns_the_caller_instance() {
     let Err(error) = StandaloneCanisterFixture::try_install(
-        PocketIc::new(),
+        support::pocket_ic(),
         InstallSpec::new(vec![0xde, 0xad], vec![], 0).label("invalid-standalone-wasm"),
     ) else {
         panic!("invalid Wasm should fail standalone installation");

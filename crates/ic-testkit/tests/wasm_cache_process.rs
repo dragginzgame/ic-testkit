@@ -24,7 +24,8 @@ const WORKER_ID_ENV: &str = "IC_TESTKIT_WASM_PROCESS_WORKER";
 
 #[test]
 fn different_cache_roots_coordinate_one_shared_incremental_target_across_processes() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -61,7 +62,8 @@ fn different_cache_roots_coordinate_one_shared_incremental_target_across_process
 
 #[test]
 fn scheduled_shared_target_maintenance_runs_once_across_processes() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -104,7 +106,8 @@ fn shared_incremental_process_worker() {
     fs::write(root.join(format!("ready-{worker}")), b"ready").expect("mark worker ready");
     wait_for_path(&root.join("go"));
 
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     let real_cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
     let spec = WasmBuildSpec::new(
         &workspace,
@@ -148,7 +151,8 @@ fn scheduled_shared_target_maintenance_process_worker() {
     fs::write(root.join(format!("ready-{worker}")), b"ready").expect("mark worker ready");
     wait_for_path(&root.join("go"));
 
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     let spec = WasmBuildSpec::new(
         &workspace,
         &root.join(format!("cache-{worker}")),

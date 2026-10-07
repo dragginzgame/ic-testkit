@@ -189,6 +189,6 @@ check_make_sequence() {
 check_make_sequence ci "check-first check-second check-third"
 check_make_sequence release-check "check-first check-second check-third"
 
-bash "${repo_root}/scripts/ci/check-release-commands.sh" "${repo_root}"
+bash "${repo_root}/scripts/ci/check-release-commands.sh" "${repo_root}" make/tools.mk
 
 /bin/bash "${repo_root}/scripts/ci/check-release-metadata.sh"

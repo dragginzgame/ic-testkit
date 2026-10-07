@@ -86,13 +86,15 @@ documentation guard for that revision, including Intel macOS. It precedes the
   Hook setup and formatting checks also require an already prepared `rustfmt`
   component; use `rustup component add rustfmt` during explicit setup.
 - `curl`, gzip and xz-capable tar for explicit tool setup. Run `make install-tools`
-  to prepare pinned jq/yq and IC executables locally, then `make tools-check` for
+  to prepare pinned jq/yq, ripgrep with PCRE2, cloc and IC executables locally,
+  then `make tools-check` for
   offline byte/version verification. Versions and native digests have one owner
   in `ci/tool-versions.env` and `ci/ic-tools.tsv`. See the shared
   [bootstrap instructions](local-setup.md#bootstrap-prerequisites).
   Make selects `.tools/host/bin` and `.tools/ic/bin`; direct Cargo calls use the
   explicit PATH and `POCKET_IC_BIN` exports in the README.
-- `cloc` for the optional LOC report; jq comes from local host-tool setup.
+- Perl for the prepared standalone cloc payload and read-only sibling tooling
+  report; core modules supply the report's JSON and digest support.
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
   `POCKET_IC_BIN` to its exact local path to avoid upstream automatic download.
   Managed startup takes an explicit caller-provided binary and owns its child.
@@ -185,6 +187,8 @@ cargo fetch --locked
 /bin/bash scripts/ci/check-installation-version.sh
 /bin/bash scripts/ci/check-publish-guards.sh
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
+cargo test -p ic-testkit --locked --offline --test server_runner
+POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic" cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
 cargo test -p ic-testkit --locked --offline --lib artifacts::host_tests
 cargo test -p ic-testkit --locked --offline --lib artifacts::wasm::tests
 cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
@@ -218,7 +222,8 @@ The `portable-hosts` and `pocket-ic-concurrency` workflow jobs exercise the
 declared native hosts. For LOC tooling after installing its prerequisites:
 
 ```bash
-/bin/bash scripts/dev/cloc.sh
+make cloc
+make cloc-tooling
 ```
 
 The maintainer owns full pre-push, release and publication gates. Agents run
@@ -669,3 +674,256 @@ with semantically different upstream implementations. Existing selected
 installers, pinning fixtures and release-command checks already match their
 canonical owner and were not reimplemented. The scoped review supports this
 convergence; it is not a whole-product or performance audit.
+
+
+After the maintainer released 0.20.0 at
+`5ed6a2e62c06fb13f90891b0c53c7b393688e57e`, the existing dirty lockfile selected
+all four published host crates at 0.3.2. Pending 0.20.1 preserves that selection
+without resolving another upgrade or changing package versions. Offline cache
+preparation succeeds with `cargo fetch --locked --offline`. Packaged Rust sources
+match owner commit `c7c0d85765054909c05d86f6d3fd2c9965510335`.
+
+The consumer regression covers equivalent dangling input aliases, symlink chains
+and direct missing-target paths through its path-policy adapter, without creating
+the missing input tree. Focused Linux cache-filesystem (9), transaction (28) and
+digest (9) tests pass, with retained logs at `/tmp/ic-testkit-0201-cache-fs.log`,
+`/tmp/ic-testkit-0201-transactions.log` and `/tmp/ic-testkit-0201-digest.log`.
+Examples, Rust 1.88 host library and wasm32 library checks pass. This is local
+qualification of the prepared graph, not native macOS acceptance.
+
+The exact-source [host 0.3.2 workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37589678525)
+passes Linux and MSRV but fails both macOS 15 architectures in
+`existing_file_traversal_errors_survive_missing_suffix_normalization`: an expected
+error instead returns a canonical temporary-directory path. Public failure
+evidence and the native-contract investigation are recorded on
+[host #1](https://github.com/dragginzgame/ic-host-tooling/issues/1#issuecomment-6033745092).
+The pending consumer selection is not release-ready until that owner failure is
+resolved and native consumer qualification succeeds. Existing 0.20.0 release
+CI and the new patch's dependency qualification remain distinct.
+
+### 0.20.1 updated owner qualification (2026-10-07)
+
+The macOS owner blocker above is superseded by published IC Host Tooling 0.3.3,
+`3d18ca9a9ed0ac5935a16c5bac99694d8e9a7d0a`. Its path fixture now compares with
+native canonicalization instead of requiring Linux's traversal error on Darwin;
+the production path implementation is unchanged. The
+[exact-source owner workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37595113180)
+passes Linux, macOS 15 ARM, macOS 15 Intel and MSRV. All four selected packaged
+Rust source trees match that committed revision. Explicit selected-cache
+preparation and subsequent `cargo fetch --locked --offline` succeed.
+
+Shared Tooling 0.1.15, `bfb50bd0884b5e6c5ee9592056531c6108f96d73`, is adopted
+through a clean committed export with 55 verified files. Unrelated sibling edits
+are excluded and preserved. Its
+[owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37593142226)
+passes all configured jobs. The reviewed `make/tools.mk` replaces six copied
+setup/check recipes and supplies LOC reporting. CI removes separate package-manager
+ripgrep provisioning and uses the same checksum-pinned local tool set. Hook and
+release-command fixtures project the include explicitly. No named Rust function,
+method or type was removed in this batch; tool ownership moved to the snapshot.
+
+Focused Linux qualification passes: cache-filesystem (9), transaction (28) and
+digest (9) tests; example, Rust 1.88 library and wasm32 library checks; snapshot,
+formatting, consumer hook preservation, consumer release adapters and metadata,
+host installation/rejection fixtures, shared Make-command fixtures and tooling
+LOC fixtures. Explicit host setup prepares pinned ripgrep with PCRE2 and cloc;
+`make tools-check dependency-pins-check` then passes offline. `make cloc` reports
+both workspace members. Logs use `/tmp/ic-testkit-0201-host033-*.log` and
+`/tmp/ic-testkit-0201-shared0115-*.log`. Shellcheck and Perl syntax checks pass.
+
+Both exact 0.20.0 consumer runs now pass:
+[branch CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37591084435) and
+[tag CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37591084619).
+Those results qualify the released source, not this pending 0.20.1 graph and
+snapshot. Matching native consumer CI and full maintainer validation remain the
+delivery checks. No full consumer gate, package-version change, commit, tag,
+push or publication was run during this update.
+
+The subsequent compatible CI evidence change addresses
+[#17](https://github.com/dragginzgame/ic-testkit/issues/17). Final failure-only
+uploaders in `checks` and `portable-hosts` include installer diagnostics,
+`target/validation-failures` and hidden host/IC installation candidates.
+Portable operator checks select a retained directory under the runner's temporary
+root. Upload scopes exclude the general build directory and expire after 14 days;
+the original failing setup/check step stays failed.
+
+Focused local evidence is retained at
+`/tmp/ic-testkit-0201-ci-retention.iqV1QV`. An unchanged shared installer receives
+a substitute incomplete download and returns status 23 through the same Bash
+pipefail/tee setup as CI. Its failed candidate remains, no active tool selection
+is published, and commands after the pipeline do not run. A controlled failing
+Make target exercises the unchanged shared logger and retains complete failure
+logs and temporary fixtures. Parsed workflow upload paths include those actual
+files and enable hidden-file collection. Host-installer and consumer-hook fixtures
+pass with the new explicit temporary-directory selection. Actionlint, dependency
+declaration checks and whitespace checks pass. This proves local retention and
+scope selection, not hosted artifact delivery; no remote workflow was dispatched
+and no complete consumer gate was run.
+
+### Pending 0.21.0 qualification (2026-10-07)
+
+The maintainer selected 0.21.0 for the complete pending batch because workspace
+discovery and default Cargo-state ownership change public behavior. Package
+metadata remains 0.20.0 and the four selected host crates remain 0.3.3. Published
+history is preserved. Host 0.4 is not adopted while its breaking reader/error
+cleanup remains unpublished; the public host re-exports require minor-release
+coordination even when direct Testkit calls do not use the removed APIs.
+
+`workspace_root_for` delegates to prepared Cargo's offline workspace locator and
+returns a fallible result. Real dependency-free Cargo fixtures cover App members,
+explicit workspace selection, excluded packages, independent roots, unlisted
+packages and missing paths. Discovery creates neither lockfiles nor build output.
+All maintained Rust callers handle the result. New Wasm specs share workspace
+compiler state across fingerprints under existing locks; explicit isolation and
+caller-selected pruning/maintenance remain supported. A synthetic Cargo build
+fixture demonstrates two distinct exact fingerprints using the same retained
+compiler directory. Existing persisted layouts and byte identities are unchanged;
+old isolated targets are preserved for explicit maintenance rather than reset.
+
+The new `tick_until` predicate helper has four focused tests for initial success
+and failure, exact round/poll ordering, completion at the budget boundary,
+exhaustion and retained typed error causes. Progression is tested with controlled
+round callbacks, not a live PocketIC server. Its public adapter calls upstream
+time advancement and tick operations; it adds no wall-clock timeout or application
+readiness policy.
+
+Reviewed Shared Tooling 0.1.16 at
+`b69507367d45e3db9543359e689e1fcba0467ff4` is exported through a private clean
+consumer after verifying the existing 0.1.15 snapshot, preserving pending local
+adoption and sibling work. The new snapshot has 56 verified files, including the
+linked canister audit addendum. Canonical runner, release-metadata/finalizer,
+tool-command and tooling-LOC fixtures pass locally. Consumer release adapters
+exercise whitespace-bearing draft headings through both changelog views.
+Snapshot, hooks, formatting, pins, Actionlint and local documentation links pass.
+The [0.1.16 owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37598153506)
+was still queued at the latest inspection; native owner acceptance remains open.
+
+Focused Linux runtime results: 4 time-helper, 4 artifact-helper, 58 Wasm-cache,
+12 Wasm-batch and 4 artifact-handoff tests pass (one optional handoff worker test
+is ignored). The first batch attempt found a fixture relying on implicit isolation;
+it now selects that maintained mode explicitly, and the full focused module
+passes. Original failure evidence remains at `/tmp/ic-testkit-0210-wasm-batch.log`;
+the passing retry and subsequent logs use `/tmp/ic-testkit-0210-*.log`.
+All test/example callers compile, strict library Clippy, Rust 1.88, rustdoc and
+wasm32 library checks pass. Consumer hook and release-adapter checks pass after
+selecting the new draft. No full consumer CI/release gate, commit, tag, push or
+publication was executed. Matching native consumer CI remains maintainer-owned.
+
+### Shared Tooling 0.1.17 snapshot review
+
+The reviewed clean source at `88f1d70cdf671aefb9507d7a81411ed5daa358b3`
+refreshes the existing 56-file selection through the canonical distribution
+helper. Selected file bytes and modes are unchanged from 0.1.16; its correction
+is in the upstream LOC fixture, which this consumer does not vendor. Snapshot,
+prepared offline host/IC tools, dependency declarations and whitespace checks
+pass. No Rust source or dependency selection changed during this refresh.
+
+The canonical upstream LOC fixture passes locally with checkout-local `TMPDIR`
+and an inherited consumer `CARGO_TARGET_DIR`. A separate disposable enclosing
+checkout with an ancestor Cargo target configuration still causes that fixture
+to fail; removing only that configuration makes the control pass. This remaining
+fixture isolation gap is reported on
+[Shared Tooling #47](https://github.com/dragginzgame/shared-tooling/issues/47).
+Evidence is retained under the checkout's `target/shared-0117-review.*`, including
+the failing attempt and passing control. These are Linux fixture results, not
+production reporter failure or native macOS qualification. The
+[exact-source owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37601115116)
+was queued at inspection. Full consumer gates and release effects were not run.
+
+### Environment startup and command-scoped server qualification
+
+Pending 0.21.0 adds environment selection and the command-scoped server runner
+for [#19](https://github.com/dragginzgame/ic-testkit/issues/19). It reuses published
+IC Host Process 0.3.3 for bounded version execution and the existing Testkit
+process-group cleanup engine. Library command cancellation does not install
+signal handlers; only the CLI owns those process-wide actions. The native test
+gate explicitly selects the real cross-process probe after its ordinary tests.
+
+Focused Linux results: 16 startup tests and six synthetic runner subprocess
+tests pass. The subprocess cases cover URL selection, version/configuration
+refusal, explicit TTL, borrowed server ownership, command spawn failure, status
+propagation and owned descendant cleanup after completion or SIGTERM. Startup
+cases additionally cover cancellation before effects and callback-panic cleanup.
+The live runner starts the prepared PocketIC 16.0.0 binary and a separate
+process creates and deletes an instance through the exported environment URL.
+Its initial sandbox attempt failed at loopback bind; the authorized retry outside
+that restriction passes. Both attempts remain in
+`/tmp/ic-testkit-0210-server-live*.log`.
+
+Focused strict Clippy, Rust 1.88 library/binary checks, wasm32 library checks,
+rustdoc, formatting, snapshot verification and pin declarations pass. The earlier
+Clippy attempts are retained separately from the corrected final check. Logs
+use `/tmp/ic-testkit-0210-startup-final.log` and
+`/tmp/ic-testkit-0210-server-*.log`. Full consumer CI/release gates and matching
+native macOS delivery remain maintainer-owned; no commit or release was made.
+
+Shared Tooling now has an active uncommitted candidate for the remaining LOC
+fixture gap on base `88f1d70cdf671aefb9507d7a81411ed5daa358b3`. A frozen copy of
+its two fixture scripts and reporter passes both focused fixtures with enclosing
+Cargo/Git scratch, ancestor target configuration and inherited target selection.
+Input hashes and logs are retained in `/tmp/ic-testkit-shared0117-candidate.*`.
+The active owner checkout was preserved, and the current snapshot still records
+the committed 0.1.17 source; candidate evidence does not establish committed
+adoption or native host qualification.
+
+### IC Host Tooling 0.4.0 consumer qualification
+
+All four selected registry crates are 0.4.0. Their Cargo VCS metadata records
+`6b171744def811882ba6c71d50135efa898302a9`, and each packaged Rust source tree
+matches that clean owning revision. The
+[exact-source owner workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37602699181)
+passes Linux, macOS 15 ARM64/Intel and MSRV. These owner results qualify the
+published source, separately from the pending Testkit adoption.
+
+The existing locked 0.4 selection was preserved and explicitly prepared with
+`cargo fetch --locked --offline`. Consumer changes reuse the host's typed I/O
+conversion while retaining stale-sidecar/invalid-file policy, and use its bounded
+reader for startup log prefixes. Live tests and the baseline example use explicit
+environment startup. A compiler-shim regression qualifies reuse, invalidation
+after selected compiler identity changes, and explicit `RUSTC` precedence with
+real Cargo metadata and a synthetic Wasm producer. It does not qualify an actual
+nightly build-std compiler or post-link optimizer.
+
+Focused Linux results: 16 startup, nine cache-filesystem, one exact-stamp and one
+compiler-identity test pass. The affected live integration targets pass 37 tests,
+and the real cross-process runner creates/deletes an instance using the prepared
+PocketIC binary. The first integration attempt exposed two assertions comparing
+server-local numeric IDs across different servers; overlap checks now use URL
+plus ID, and rebuild checks use outcome and recipe-call evidence. Both the failed
+attempt and passing retry are retained under
+`/tmp/ic-testkit-0210-host040-live-tests*.log`.
+
+Strict Clippy for the changed library, binary, integration and example callers,
+Rust 1.88 library/binary checks, wasm32 library, rustdoc, formatting, snapshot and
+pin checks pass. Qualification logs use `/tmp/ic-testkit-0210-host040-*.log`; the
+compiler regression uses `/tmp/ic-testkit-0210-shim-identity.log`. Full Testkit
+CI/release gates and matching native macOS consumer qualification remain
+maintainer-owned. No package metadata version, commit, tag or release changed.
+
+The adopted Shared Tooling 0.1.17
+[owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37601115116)
+has since completed successfully. That result covers the committed snapshot;
+the later LOC fixture corrections remain uncommitted owner work and are not
+included in this consumer's snapshot.
+
+### Shared Tooling 0.1.18 follow-up adoption
+
+The awaited correction is committed at
+`a3430b34b32a60f3b245a2b4f7e2f5321556fe56`. The canonical exporter refreshes a
+private clean consumer after verifying the accepted 0.1.17 selection; copying
+only its declared export preserves pending consumer work and active sibling
+edits. The 57-file snapshot includes the newly required Rust setup helper used
+by `make/tools.mk`. Its complete Rust set remains optional here; ordinary
+validation does not install or select additional tools implicitly.
+
+Committed-source LOC context, tooling-inventory, validation-runner and
+tool-command fixtures pass. The LOC context combines enclosing Git/Cargo
+membership, ancestor Cargo target configuration and inherited output selection.
+Snapshot, prepared offline host/IC tools and dependency pins pass, as do consumer
+hook/formatting and release-adapter fixtures and the actual manifest-selected
+workspace LOC report. Export and fixture evidence is retained under
+`/tmp/ic-testkit-shared0118-export.*`; consumer adapter logs use
+`/tmp/ic-testkit-0210-shared0118-*.log`. The
+[exact-source owner workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37604299590)
+was still running at inspection; this local qualification does not establish
+native macOS acceptance. Full consumer gates and release effects were not run.

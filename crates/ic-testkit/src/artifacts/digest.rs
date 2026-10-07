@@ -190,12 +190,11 @@ pub(super) fn read_file_with_limit(path: &Path, maximum_len: usize) -> io::Resul
     match read_file(path, maximum_len) {
         Ok(contents) => Ok(Some(contents)),
         Err(ArtifactError::LimitExceeded { .. }) => Ok(None),
-        Err(ArtifactError::Io(source)) => Err(source),
         Err(ArtifactError::NotRegularFile) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             ArtifactError::NotRegularFile,
         )),
-        Err(error) => Err(io::Error::other(error)),
+        Err(error) => Err(error.into()),
     }
 }
 

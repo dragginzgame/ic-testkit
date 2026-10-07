@@ -8,6 +8,121 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.21.0]
+
+### Breaking: IC Host Tooling 0.4 re-exports
+
+All four publicly re-exported host crates now select the published 0.4 line.
+Move retired `ic_host_fs::durable` read calls to the bounded `read` module:
+`read_file_no_follow` and `read_optional_file_no_follow` return `ArtifactError`.
+`read::read_private_bytes` returns `Result<Option<_>, PrivateFileReadError>`;
+only missing files return `None`, and failures must not trigger key replacement.
+Replace `durable::lock_file` with `lock_regular_file_with_parents` and handle
+`RegularFileLockError` for progress locks. See the
+[host migration details](https://github.com/dragginzgame/ic-host-tooling/blob/6b171744def811882ba6c71d50135efa898302a9/docs/changelog/0.4.md)
+([host #14](https://github.com/dragginzgame/ic-host-tooling/issues/14),
+[#13](https://github.com/dragginzgame/ic-testkit/issues/13)). Testkit's cache
+budgets, stale-sidecar handling and retained layouts remain unchanged. Typed
+host-to-I/O conversion and bounded prefix capture now reuse the host owners.
+
+### Breaking: Cargo-owned workspace discovery and shared build state
+
+`workspace_root_for` accepts a manifest directory and returns `io::Result<PathBuf>`.
+Propagate or handle the result. It invokes Cargo's offline `locate-project
+--workspace` against the actual manifest; App paths, explicit workspace selection,
+excluded packages and independent workspaces follow Cargo's contract. Missing or
+unlisted manifests fail instead of falling back to the supplied directory. Cargo
+must already be prepared; discovery does not resolve dependencies or install tools.
+
+`WasmBuildSpec::new` now defaults to the workspace-relative
+`target/ic-testkit-incremental` Cargo target. Misses across fingerprints share
+compiler state under the existing process lock; exact final Wasm entries keep
+their existing identities and retention guards. Override the shared target when
+needed, or call `with_isolated_builds()` for intentionally independent compiler
+state. Shared-target maintenance configured on an isolated spec is rejected.
+
+Configure byte/age limits through the existing exact-entry pruning and shared-target
+maintenance builders. No universal limits are imposed. Existing isolated targets
+and retained exact entries are preserved: prune obsolete targets explicitly under
+their existing maintenance contract. There is no format reinterpretation, new
+reader or automatic retained-installation reset
+([#18](https://github.com/dragginzgame/ic-testkit/issues/18)).
+
+### Added
+
+- `PocketIcStartupConfig::from_env(timeout)` selects `IC_TESTKIT_POCKET_IC_URL`
+  before `POCKET_IC_BIN`. Invalid selected values fail without fallback; missing
+  configuration returns `NotConfigured`. The explicit executable's bounded
+  `--version` probe requires the selected PocketIC server identity and successful
+  exit. It never installs, downloads or performs cache discovery.
+- `ic-testkit-server run [--ttl SECONDS] [--startup-timeout SECONDS] -- COMMAND`
+  exports the shared URL to a command and retains managed server ownership until
+  completion. Command status is preserved; SIGINT/SIGTERM/SIGHUP return `128 +
+  signal` after cleanup. `--ttl` is optional and only applies to owned servers.
+  Startup defaults to 30 seconds per version/startup phase; interruption is
+  observed after bounded startup. External URL mode never terminates the borrowed
+  server. `PocketIcStartupConfig::run_command` uses the existing owned-group
+  lifecycle engine and accepts caller-owned cancellation without installing
+  signal handlers in library code
+  ([#19](https://github.com/dragginzgame/ic-testkit/issues/19)).
+- `pic::tick_until` checks a caller-owned predicate before mutation, then advances
+  time and ticks for at most the supplied number of pending rounds.
+  `TickUntilError<E>` distinguishes exhausted progression from the original
+  predicate failure. Zero rounds still allow an initial check, and completion
+  on the last round succeeds. The round budget does not impose a wall-clock
+  timeout ([#20](https://github.com/dragginzgame/ic-testkit/issues/20)).
+
+### Fixed
+
+- Resolve dangling input symlink chains to their missing targets through the
+  selected IC Host Tooling 0.4.0 libraries, keeping equivalent cache-input paths
+  on one identity ([host #1](https://github.com/dragginzgame/ic-host-tooling/issues/1),
+  [#13](https://github.com/dragginzgame/ic-testkit/issues/13)).
+- Upload retained validation logs and host/IC installer candidates after failed
+  native CI jobs. Portable tooling checks use an explicit fixture directory that
+  is included in the failure artifact. Setup diagnostics and complete CI output
+  are retained without changing failure propagation; artifacts expire after
+  14 days ([#17](https://github.com/dragginzgame/ic-testkit/issues/17)).
+
+### Changed
+
+- Live integration tests and the multi-canister baseline example require explicit
+  environment startup instead of permitting upstream binary downloads. Prepare
+  `POCKET_IC_BIN` or configure `IC_TESTKIT_POCKET_IC_URL`; dedicated-server probes
+  require the binary. Overlap checks identify instances by server URL and ID.
+  Benchmark documentation selects `FetchedLog` and requires complete samples;
+  managed output remains a bounded diagnostic prefix
+  ([#23](https://github.com/dragginzgame/ic-testkit/issues/23)).
+- Clarify `with_rustc_program` as an identity probe for a shim's actual compiler.
+  Explicit `RUSTC` through `with_extra_env` selects both the Cargo environment
+  and fingerprint probe and takes precedence. Regression coverage checks reuse,
+  invalidation after compiler identity changes, and that precedence. Post-link
+  work continues to use the existing cached external artifact transaction
+  ([#21](https://github.com/dragginzgame/ic-testkit/issues/21)).
+- Use the reviewed Shared Tooling 0.1.18 `make/tools.mk` for setup, offline tool
+  verification, workspace Rust LOC and read-only sibling tooling reports.
+  `make install-tools` and CI prepare pinned ripgrep with PCRE2 and cloc as well
+  as jq/yq and IC executables. Existing checkouts must rerun explicit setup;
+  `make tools-check` remains offline and never installs missing tools.
+- Cargo target aliases exclude their physical output from LOC totals. Validation
+  target options and assignments fail before gate dispatch. Canonical fixture
+  qualification covers enclosing workspaces and inherited target settings
+  ([shared #31](https://github.com/dragginzgame/shared-tooling/issues/31),
+  [shared #30](https://github.com/dragginzgame/shared-tooling/issues/30),
+  [shared #47](https://github.com/dragginzgame/shared-tooling/issues/47),
+  [shared #53](https://github.com/dragginzgame/shared-tooling/issues/53)).
+- Optional `make install-rust-tools` prepares the shared pinned cargo-sort,
+  cargo-sort-derives and candid-extractor set under `.tools/rust`; its offline
+  check is `make rust-tools-check`. The common PATH selects that directory when
+  prepared. Ordinary validation and common setup retain their existing selections
+  ([shared #51](https://github.com/dragginzgame/shared-tooling/issues/51)).
+- The shared release finalizer accepts trailing spaces/tabs on draft headings,
+  keeping their notes under the selected finalized release. The shared validation
+  runner preserves the first failed Make invocation's exit status rather than
+  normalizing it to 1. Its default evidence selection remains unchanged here
+  ([shared #38](https://github.com/dragginzgame/shared-tooling/issues/38),
+  [shared #37](https://github.com/dragginzgame/shared-tooling/issues/37)).
+
 ## [0.20.0] - 2026-10-07
 
 ### Breaking: explicit shared host owners

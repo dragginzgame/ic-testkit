@@ -68,23 +68,32 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Prepare the pinned manifest formatter
         run: make install-format-tools
-      - name: Prepare portable check prerequisites
-        run: |
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update; sudo apt-get install -y ripgrep ;;
-            macOS) brew install ripgrep ;;
-            *) echo "Unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
-          esac
       - name: Prepare pinned local host and IC tools
+        shell: bash
         run: |
-          make install-tools
+          make install-tools 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
           echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
           echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
           echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
       - name: Prepare selected dependencies
         run: cargo fetch --locked
       - name: Run complete CI gate
-        run: make ci
+        shell: bash
+        run: make ci 2>&1 | tee "$RUNNER_TEMP/ic-testkit-validation.log"
+      - name: Retain failed validation and installer evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: checks-failure-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/ic-testkit-tools-install.log
+            ${{ runner.temp }}/ic-testkit-validation.log
+            ${{ github.workspace }}/target/validation-failures
+            ${{ github.workspace }}/.tools/host-set.*
+            ${{ github.workspace }}/.tools/ic-set.*
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
 
   portable-hosts:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
@@ -109,17 +118,10 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
       - name: Prepare the pinned manifest formatter
         run: make install-format-tools
-      - name: Prepare portable check prerequisites
-        run: |
-          case "$RUNNER_OS" in
-            Linux) sudo apt-get update; sudo apt-get install -y ripgrep ;;
-            macOS) brew install ripgrep ;;
-            *) echo "Unsupported runner OS: $RUNNER_OS" >&2; exit 1 ;;
-          esac
       - name: Prepare pinned local host and IC tools with the system Bash
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         run: |
-          make install-tools
+          make install-tools 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
           echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
           echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
           echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
@@ -130,7 +132,10 @@ jobs:
         run: cargo fetch --locked
       - name: Verify portable operator tooling with the system Bash
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        env:
+          TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
         run: |
+          mkdir -p "$TMPDIR"
           /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
           make tools-check dependency-pins-check
           /bin/bash scripts/ci/test-host-tools.sh
@@ -151,6 +156,20 @@ jobs:
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
       - name: Check native fixture benchmark driver and sampler
         run: cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
+      - name: Retain failed portable and installer evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: portable-failure-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/ic-testkit-tools-install.log
+            ${{ runner.temp }}/ic-testkit-portable-fixtures
+            ${{ github.workspace }}/target/validation-failures
+            ${{ github.workspace }}/.tools/host-set.*
+            ${{ github.workspace }}/.tools/ic-set.*
+          include-hidden-files: true
+          retention-days: 14
+          if-no-files-found: ignore
 
   pocket-ic-concurrency:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')

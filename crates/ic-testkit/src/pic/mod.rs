@@ -6,7 +6,7 @@
 //!
 //! Construct and own [`PocketIc`] instances normally, then import individual
 //! extension traits or [`prelude`] for Candid calls, installation, diagnostics,
-//! snapshots, fallible startup, and nanosecond time conversion. Native
+//! snapshots, fallible startup, bounded predicate polling and nanosecond time conversion. Native
 //! simulator operations remain upstream inherent methods.
 //!
 //! [`PocketIcManagedServer`] can explicitly own one exact caller-selected
@@ -69,7 +69,7 @@ pub use startup::{
     PocketIcBuilderExt, PocketIcManagedServer, PocketIcManagedServerOutput, PocketIcStartupConfig,
     PocketIcStartupError,
 };
-pub use time::PocketIcTimeExt;
+pub use time::{PocketIcTimeExt, TickUntilError, tick_until};
 pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};
 
 /// All PocketIC extension traits, and no data types.

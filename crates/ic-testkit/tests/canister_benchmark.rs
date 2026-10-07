@@ -18,7 +18,7 @@ use ic_testkit::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
-    pic::{InstallSpec, PocketIc, StandaloneCanisterFixture},
+    pic::{InstallSpec, StandaloneCanisterFixture},
 };
 use std::{
     fs,
@@ -567,7 +567,8 @@ fn assert_reused_batch_with_failure(
 
 #[test]
 fn perf_probe_canister_emits_parseable_benchmark_markers() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -628,7 +629,7 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     let wasm = read_wasm(&target_dir, PERF_PROBE_PACKAGE, "debug", 128 * 1024 * 1024)
         .expect("read bounded Wasm");
     let fixture =
-        StandaloneCanisterFixture::install(PocketIc::new(), InstallSpec::new(wasm, vec![], 0));
+        StandaloneCanisterFixture::install(support::pocket_ic(), InstallSpec::new(wasm, vec![], 0));
     let result: u64 = fixture
         .update_candid("benchmark_once", ())
         .expect("benchmark_once update call");
@@ -680,7 +681,8 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
 
 #[test]
 fn exact_wasm_cache_coordinates_overlapping_builds() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -731,7 +733,8 @@ fn exact_wasm_cache_coordinates_overlapping_builds() {
 
 #[test]
 fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -825,7 +828,8 @@ fn shared_incremental_wasm_cache_keeps_mutable_cargo_state_outside_exact_entries
 
 #[test]
 fn scheduled_shared_target_maintenance_participates_in_wasm_acquisition() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -1046,7 +1050,8 @@ fn resolved_cargo_inputs_guard_transactional_artifacts_through_commit() {
 
 #[test]
 fn failed_shared_incremental_build_preserves_cargo_state_without_publishing_an_entry() {
-    let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+    let workspace =
+        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()

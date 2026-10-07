@@ -74,6 +74,22 @@ enum PocketIcStartupSource {
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum PocketIcStartupError {
+    /// Neither the shared server URL nor an explicit executable was configured.
+    NotConfigured,
+    /// A selected environment value was empty or was not valid Unicode.
+    InvalidEnvironment { variable: &'static str },
+    /// The bounded version probe failed, including nonzero exit or timeout.
+    ServerVersionProbe {
+        source: ic_host_process::tool::ToolError,
+    },
+    /// The selected executable does not report the qualified server identity.
+    ServerVersionMismatch { expected: String, observed: Vec<u8> },
+    /// Command execution failed; cleanup diagnostics retain the original error.
+    CommandRun {
+        program: PathBuf,
+        source: io::Error,
+        termination_error: Option<String>,
+    },
     /// The caller supplied a zero timeout or unusable hard TTL.
     InvalidConfiguration { message: String },
     /// A caller-provided existing server URL could not be parsed.
@@ -146,6 +162,77 @@ pub trait PocketIcBuilderExt {
 }
 
 impl PocketIcStartupConfig {
+    /// Select the shared environment contract without discovery or downloads.
+    ///
+    /// `IC_TESTKIT_POCKET_IC_URL` takes precedence over `POCKET_IC_BIN`. An
+    /// explicitly empty or invalid selected value fails rather than falling
+    /// back. URL mode never launches a version probe or claims server ownership.
+    /// Binary mode resolves the explicit path and checks `--version` against
+    /// [`pocket_ic::LATEST_SERVER_VERSION`] using the shared bounded capture
+    /// engine. This is version qualification, not executable-byte admission;
+    /// prepare and verify the binary with `make install-tools` / `tools-check`.
+    /// The probe has its own `timeout`; subsequent startup has the same budget.
+    pub fn from_env(timeout: Duration) -> Result<Self, PocketIcStartupError> {
+        Self::from_environment(timeout, |name| std::env::var_os(name))
+    }
+
+    fn from_environment(
+        timeout: Duration,
+        mut variable: impl FnMut(&str) -> Option<std::ffi::OsString>,
+    ) -> Result<Self, PocketIcStartupError> {
+        if let Some(value) = variable("IC_TESTKIT_POCKET_IC_URL") {
+            let server_url = value
+                .into_string()
+                .ok()
+                .filter(|value| !value.is_empty())
+                .ok_or(PocketIcStartupError::InvalidEnvironment {
+                    variable: "IC_TESTKIT_POCKET_IC_URL",
+                })?;
+            let config = Self::connect(&server_url, timeout);
+            config.validate()?;
+            let parsed =
+                server_url
+                    .parse()
+                    .map_err(|error| PocketIcStartupError::InvalidServerUrl {
+                        server_url: server_url.clone(),
+                        message: format!("{error}"),
+                    })?;
+            let _ = PocketIcBuilder::new().with_server_url(parsed);
+            return Ok(config);
+        }
+        let value = variable("POCKET_IC_BIN").ok_or(PocketIcStartupError::NotConfigured)?;
+        if value.is_empty() {
+            return Err(PocketIcStartupError::InvalidEnvironment {
+                variable: "POCKET_IC_BIN",
+            });
+        }
+        let path = PathBuf::from(value);
+        let binary = fs::canonicalize(&path).map_err(|source| PocketIcStartupError::Io {
+            operation: "resolve configured PocketIC executable",
+            path,
+            source,
+        })?;
+        let config = Self::spawn(&binary, timeout);
+        config.validate()?;
+        let evidence = ic_host_process::tool::capture_command(
+            Command::new(&binary).arg("--version"),
+            ic_host_process::tool::OutputLimits {
+                stdout_bytes: SERVER_OUTPUT_LIMIT,
+                stderr_bytes: SERVER_OUTPUT_LIMIT,
+                timeout,
+            },
+        )
+        .map_err(|source| PocketIcStartupError::ServerVersionProbe { source })?;
+        let expected = format!("pocket-ic-server {}", pocket_ic::LATEST_SERVER_VERSION);
+        if std::str::from_utf8(&evidence.stdout).map(str::trim) != Ok(expected.as_str()) {
+            return Err(PocketIcStartupError::ServerVersionMismatch {
+                expected,
+                observed: evidence.stdout,
+            });
+        }
+        Ok(config)
+    }
+
     /// Spawn and monitor one exact PocketIC server binary.
     ///
     /// Startup allocates a unique private temporary directory while leaving
@@ -242,6 +329,79 @@ impl PocketIcStartupConfig {
             started,
         )?;
         Ok(PocketIcManagedServer { server, url })
+    }
+
+    /// Run a command with `IC_TESTKIT_POCKET_IC_URL` set to this server.
+    ///
+    /// Spawn mode retains the managed server until command completion; connect
+    /// mode borrows the external server and never terminates it. The command's
+    /// IO and other environment selections remain caller-owned. Cancellation
+    /// is polled after bounded startup and every 20 ms while the command runs.
+    /// It returns an [`io::ErrorKind::Interrupted`] error after cleanup.
+    ///
+    /// On Unix the command starts in a new owned process group. Completion,
+    /// cancellation and observation failures terminate remaining group members
+    /// before reaping the leader, using the same lifecycle engine as managed
+    /// servers. This does not impose a command deadline or sandbox descendants
+    /// that deliberately leave the owned group. Other hosts own the direct child.
+    pub fn run_command(
+        self,
+        command: &mut Command,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<ExitStatus, PocketIcStartupError> {
+        self.validate()?;
+        if cancelled() {
+            return Err(PocketIcStartupError::Io {
+                operation: "run command with PocketIC server",
+                path: PathBuf::from(command.get_program()),
+                source: io::Error::from(io::ErrorKind::Interrupted),
+            });
+        }
+        let (server, url) = if let Some(url) = self.server_url() {
+            (None, url.to_owned())
+        } else {
+            let server = self.start_managed_server()?;
+            let url = server.url().to_owned();
+            (Some(server), url)
+        };
+        let command_error = |source| PocketIcStartupError::Io {
+            operation: "run command with PocketIC server",
+            path: PathBuf::from(command.get_program()),
+            source,
+        };
+        if cancelled() {
+            return Err(command_error(io::Error::from(io::ErrorKind::Interrupted)));
+        }
+        command.env("IC_TESTKIT_POCKET_IC_URL", url);
+        #[cfg(unix)]
+        command.process_group(0);
+        let child = command.spawn().map_err(|source| PocketIcStartupError::Io {
+            operation: "spawn command with PocketIC server",
+            path: PathBuf::from(command.get_program()),
+            source,
+        })?;
+        let mut owned_child = CommandChild(Some(child));
+        let result = loop {
+            if cancelled() {
+                break Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+            match poll_child(owned_child.0.as_mut().expect("command child remains owned")) {
+                Ok(Some(status)) => break Ok(status),
+                Ok(None) => thread::sleep(STARTUP_POLL_INTERVAL),
+                Err(source) => break Err(source),
+            }
+        };
+        let mut child = owned_child.0.take().expect("command child remains owned");
+        let termination_error = result
+            .is_err()
+            .then(|| terminate_child(&mut child))
+            .flatten();
+        drop(server);
+        result.map_err(|source| PocketIcStartupError::CommandRun {
+            program: PathBuf::from(command.get_program()),
+            source,
+            termination_error,
+        })
     }
 
     fn validate(&self) -> Result<(), PocketIcStartupError> {
@@ -430,6 +590,16 @@ struct ManagedServer {
     binary: PathBuf,
     files: StartupFiles,
     started: Instant,
+}
+
+struct CommandChild(Option<Child>);
+
+impl Drop for CommandChild {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = terminate_child(&mut child);
+        }
+    }
 }
 
 enum PortFileState {
@@ -807,14 +977,12 @@ fn read_bounded_lossy(path: &Path) -> String {
         return String::new();
     };
     let length = file.metadata().map_or(0, |metadata| metadata.len());
-    let mut bytes = Vec::with_capacity(SERVER_OUTPUT_LIMIT);
-    if file
-        .take(SERVER_OUTPUT_LIMIT as u64)
-        .read_to_end(&mut bytes)
-        .is_err()
-    {
+    let Ok(bytes) = ic_host_artifacts::artifact::read_reader(
+        file.take(SERVER_OUTPUT_LIMIT as u64),
+        SERVER_OUTPUT_LIMIT,
+    ) else {
         return String::new();
-    }
+    };
     let mut output = String::from_utf8_lossy(&bytes).into_owned();
     let omitted = length.saturating_sub(bytes.len() as u64);
     if omitted > 0 {
@@ -843,6 +1011,15 @@ fn open_regular_startup_file(path: &Path) -> io::Result<File> {
 impl std::fmt::Display for PocketIcStartupError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NotConfigured => formatter.write_str("configure IC_TESTKIT_POCKET_IC_URL or POCKET_IC_BIN; prepare a verified binary with make install-tools"),
+            Self::InvalidEnvironment { variable } => write!(formatter, "invalid selected environment value: {variable}"),
+            Self::ServerVersionProbe { source } => write!(formatter, "PocketIC version probe failed: {source}"),
+            Self::ServerVersionMismatch { expected, observed } => write!(formatter, "PocketIC version mismatch: expected {expected:?}, observed {:?}", String::from_utf8_lossy(observed)),
+            Self::CommandRun { program, source, termination_error } => {
+                write!(formatter, "command {} failed: {source}", program.display())?;
+                if let Some(error) = termination_error { write!(formatter, "; cleanup also failed: {error}")?; }
+                Ok(())
+            }
             Self::InvalidConfiguration { message } => formatter.write_str(message),
             Self::InvalidServerUrl {
                 server_url,
@@ -919,7 +1096,9 @@ impl std::fmt::Display for PocketIcStartupError {
 impl std::error::Error for PocketIcStartupError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::ServerVersionProbe { source } => Some(source),
             Self::Io { source, .. }
+            | Self::CommandRun { source, .. }
             | Self::ServerSpawn { source, .. }
             | Self::BuilderThreadSpawn { source } => Some(source),
             _ => None,
@@ -949,6 +1128,113 @@ mod tests {
         process::Command,
         sync::mpsc,
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn command_cancellation_before_startup_has_no_spawn_effects() {
+        let error = PocketIcStartupConfig::spawn("/missing/server", Duration::from_secs(1))
+            .run_command(&mut Command::new("/missing/command"), || true)
+            .unwrap_err();
+        assert!(
+            matches!(error, PocketIcStartupError::Io { source, .. } if source.kind() == std::io::ErrorKind::Interrupted)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancellation_callback_panic_still_reaps_the_owned_command() {
+        let script = TestServerScript::new(
+            "cancel-panic",
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$1\"\nexec sleep 30\n",
+        );
+        let pid_file = script.path().with_extension("pid");
+        let result = std::panic::catch_unwind(|| {
+            PocketIcStartupConfig::connect("http://127.0.0.1:12345/", Duration::from_secs(1))
+                .run_command(Command::new(script.path()).arg(&pid_file), || {
+                    if fs::read_to_string(&pid_file).is_ok_and(|value| !value.is_empty()) {
+                        panic!("caller cancellation failed");
+                    }
+                    false
+                })
+        });
+        assert!(result.is_err());
+        let pid = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        assert!(process_state(pid).is_none_or(|state| state == 'Z'));
+        fs::remove_file(pid_file).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn environment_selection_prefers_urls_and_fails_closed() {
+        let timeout = Duration::from_secs(1);
+        let config = PocketIcStartupConfig::from_environment(timeout, |name| {
+            Some(
+                if name == "IC_TESTKIT_POCKET_IC_URL" {
+                    "http://127.0.0.1:12345/"
+                } else {
+                    "/missing/server"
+                }
+                .into(),
+            )
+        })
+        .unwrap();
+        assert_eq!(config.server_url(), Some("http://127.0.0.1:12345/"));
+        assert!(config.server_binary().is_none());
+        assert!(matches!(
+            PocketIcStartupConfig::from_environment(timeout, |_| None),
+            Err(PocketIcStartupError::NotConfigured)
+        ));
+        assert!(matches!(
+            PocketIcStartupConfig::from_environment(timeout, |_| Some("".into())),
+            Err(PocketIcStartupError::InvalidEnvironment {
+                variable: "IC_TESTKIT_POCKET_IC_URL"
+            })
+        ));
+        assert!(matches!(
+            PocketIcStartupConfig::from_environment(timeout, |_| Some("bad URL".into())),
+            Err(PocketIcStartupError::InvalidServerUrl { .. })
+        ));
+        use std::os::unix::ffi::OsStringExt as _;
+        assert!(matches!(
+            PocketIcStartupConfig::from_environment(timeout, |_| Some(
+                std::ffi::OsString::from_vec(vec![0xff])
+            )),
+            Err(PocketIcStartupError::InvalidEnvironment { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn environment_binary_selection_uses_bounded_shared_version_capture() {
+        for (label, body, expected) in [
+            ("qualified", "printf 'pocket-ic-server 16.0.0\\n'", 0),
+            ("wrong-version", "printf 'pocket-ic-server 15.0.0\\n'", 1),
+            (
+                "failed-version",
+                "printf 'pocket-ic-server 16.0.0\\n'; exit 23",
+                2,
+            ),
+            ("invalid-utf8", "printf '\\377'", 1),
+            ("version-timeout", "exec sleep 30", 2),
+        ] {
+            let script = TestServerScript::new(
+                label,
+                &format!("#!/bin/sh\n[ \"$1\" = --version ] || exit 99\n{body}\n"),
+            );
+            let result =
+                PocketIcStartupConfig::from_environment(Duration::from_millis(200), |name| {
+                    (name == "POCKET_IC_BIN").then(|| script.path().into_os_string())
+                });
+            match (expected, result) {
+                (0, Ok(config)) => {
+                    assert_eq!(config.server_binary(), Some(script.path().as_path()))
+                }
+                (1, Err(PocketIcStartupError::ServerVersionMismatch { .. }))
+                | (2, Err(PocketIcStartupError::ServerVersionProbe { .. })) => {}
+                (_, result) => panic!("unexpected {label} result: {result:?}"),
+            }
+        }
+    }
 
     #[cfg(unix)]
     fn process_state(pid: u32) -> Option<char> {
@@ -1369,11 +1655,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires IC_TESTKIT_POCKET_IC_SERVER=<caller-provided PocketIC server binary>"]
+    #[ignore = "requires POCKET_IC_BIN=<caller-provided PocketIC server binary>"]
     fn caller_provided_server_publishes_port_constructs_instance_and_cleans_up() {
-        let binary = std::env::var_os("IC_TESTKIT_POCKET_IC_SERVER")
+        let binary = std::env::var_os("POCKET_IC_BIN")
             .map(PathBuf::from)
-            .expect("set IC_TESTKIT_POCKET_IC_SERVER to the exact server binary");
+            .expect("set POCKET_IC_BIN to the exact server binary");
         let one_shot_sequence = super::STARTUP_FILE_SEQUENCE.load(super::Ordering::Relaxed);
         let one_shot_directory = std::env::temp_dir().join(format!(
             "ic-testkit-pocket-ic-startup-{}-{one_shot_sequence}",

@@ -867,6 +867,9 @@ impl WasmBuildSpec {
     /// the caller's working directory. Shared targets are workspace-relative.
     /// Package names are sorted and deduplicated for identity, discovery,
     /// Cargo invocation, and artifact paths.
+    /// Misses share the workspace-relative `target/ic-testkit-incremental`
+    /// Cargo target by default. Use [`Self::with_isolated_builds`] when compiler
+    /// state must be independent, and select retention limits explicitly.
     /// Acquisition always builds package libraries with Cargo's `--lib` flag;
     /// binary and other targets cannot replace the canister library output.
     /// Each acquired package must declare a `cdylib` library with the same name
@@ -896,7 +899,9 @@ impl WasmBuildSpec {
             target: DEFAULT_TARGET.to_owned(),
             cargo_program: std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()),
             rustc_program: std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()),
-            cache_mode: WasmBuildCacheMode::Isolated,
+            cache_mode: WasmBuildCacheMode::SharedIncremental {
+                target_dir: PathBuf::from("target/ic-testkit-incremental"),
+            },
             prune_policy: None,
             prune_interval: None,
             shared_incremental_maintenance_config: None,
@@ -991,6 +996,12 @@ impl WasmBuildSpec {
     }
 
     /// Override the Rust compiler executable used to fingerprint the toolchain.
+    ///
+    /// This selects the `-vV` identity probe; it does not change the compiler
+    /// invoked by Cargo or infer a compiler hidden inside a Cargo shim. Supply
+    /// the actual shim-selected compiler. To configure Cargo and its identity
+    /// together, use `with_extra_env([("RUSTC", program)])`; that explicit environment
+    /// selection takes precedence over this identity-only setting.
     #[must_use]
     pub fn with_rustc_program(mut self, program: impl Into<OsString>) -> Self {
         self.rustc_program = program.into();
@@ -1010,9 +1021,19 @@ impl WasmBuildSpec {
         self
     }
 
+    /// Build each fingerprint in a separate Cargo target instead of sharing state.
+    ///
+    /// Select this when the test explicitly requires isolated compiler state.
+    /// Retained targets need a caller-selected prune policy to bound disk use.
+    #[must_use]
+    pub fn with_isolated_builds(mut self) -> Self {
+        self.cache_mode = WasmBuildCacheMode::Isolated;
+        self
+    }
+
     /// Schedule caller-owned shared-target retention as part of acquisition.
     ///
-    /// This option requires [`Self::with_shared_incremental_target`]. Every
+    /// This option requires shared incremental mode (the default). Every
     /// acquisition coordinates through that target, including an exact hit,
     /// so a missing target can be created and receive its first schedule
     /// marker immediately. Matching recent passes only check the marker; due

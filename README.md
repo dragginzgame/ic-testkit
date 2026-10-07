@@ -186,6 +186,7 @@ restored or validated.
 | Fixture pools | `CachedStandaloneCanisterFixturePool`, `CachedPocketIcBaselinePool` | Bounded standalone or recipe-driven multi-canister baseline reuse |
 | Diagnostics | `PocketIcDiagnosticsExt` | Controller-aware structured status and bounded log reporting |
 | Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
+| Readiness progression | `tick_until` | Bounded advance/tick rounds with a caller-owned predicate |
 | Artifacts | `ArtifactCacheSpec`, `WasmBuildSpec`, `WatchedInputSnapshot` | Transactional external artifact sets, content-addressed Wasm builds, bounded retention, and exact freshness stamps |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
@@ -342,16 +343,51 @@ files and use nonblocking opens on Unix so a replaced FIFO cannot stall startup
 or output capture. Non-regular port files return `PocketIcStartupError::Io` with
 `InvalidData`; unreadable output streams are omitted.
 Keep the handle alive until every instance connected through its URL has been
-dropped. The handle is process-local: a CI topology spanning several Cargo or
-test-runner processes
-should keep one runner-owned external server and give each process its URL via
-bounded `PocketIcStartupConfig::connect` instead.
+dropped. For suites spanning several Cargo or test-runner processes, keep one
+runner-owned server and use the shared environment contract in each process:
 
-ic-testkit does not discover, download, cache, or validate server binaries.
-Resolve the exact compatible executable before `spawn`, hash it when runtime
-provenance matters, and record it with the report. `LATEST_SERVER_VERSION`
-exposes the version expected by the client, and `PocketIc::get_server_url()`
-exposes the active endpoint.
+```rust,no_run
+use ic_testkit::pic::{PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig};
+use std::time::Duration;
+
+let config = PocketIcStartupConfig::from_env(Duration::from_secs(30))?;
+let pocket_ic = PocketIcBuilder::new().with_application_subnet().try_build(config)?;
+# Ok::<(), ic_testkit::pic::PocketIcStartupError>(())
+```
+
+`from_env` prefers `IC_TESTKIT_POCKET_IC_URL`, then `POCKET_IC_BIN`. An empty or
+invalid selected value fails; it never falls back to another variable or searches
+a cache. URL mode connects without taking server ownership. Binary mode requires
+a successful, bounded `--version` check matching `LATEST_SERVER_VERSION`; the
+probe and subsequent startup each have the supplied timeout budget.
+
+Install the command with `cargo install --locked ic-testkit`, or run it from this
+checkout with `cargo run --locked -p ic-testkit --bin ic-testkit-server --`:
+
+```bash
+make install-tools
+make tools-check
+export POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic"
+ic-testkit-server run --ttl 900 -- cargo test --locked -p my-integration-tests
+```
+
+The runner exports `IC_TESTKIT_POCKET_IC_URL` to the command, retains the managed
+server until completion, inherits terminal IO and preserves the command's exit
+status. SIGINT, SIGTERM and SIGHUP clean up the owned command/server groups and
+return `128 + signal`. Interruption during startup is observed after the bounded
+startup phase. Descendants that deliberately leave an owned group remain
+caller-owned; there is no command deadline or protection against SIGKILL.
+`--startup-timeout SECONDS` defaults to 30. Hard TTL is disabled unless `--ttl`
+is supplied; supplying it with an external URL is rejected. External URL mode
+borrows the existing server and leaves it running. Library callers can use
+`PocketIcStartupConfig::run_command` with their own cancellation callback;
+library code installs no process-wide signal handlers.
+
+ic-testkit does not discover, download or cache server binaries. Explicit `spawn`
+continues to assume caller admission. Version checks do not authenticate executable
+bytes: use the shared `make tools-check` receipt verification for a prepared
+bundle, or admit an external binary yourself. `PocketIc::get_server_url()` exposes
+the active endpoint.
 
 ## Canister installation and fixtures
 
@@ -705,13 +741,46 @@ let now_ns = pocket_ic.current_time_nanos();
 ```
 
 Use PocketIC's inherent `get_time`, `set_time`, `set_certified_time`,
-`advance_time`, and `tick` methods for everything else.
+`advance_time`, and `tick` methods for direct simulator operations. For a
+caller-owned readiness condition, `tick_until` bounds simulated progression:
+
+```rust,no_run
+use ic_testkit::pic::{PocketIc, TickUntilError, tick_until};
+use std::{task::Poll, time::Duration};
+
+fn await_condition(
+    pic: &PocketIc,
+    mut ready: impl FnMut(&PocketIc) -> Result<bool, String>,
+) -> Result<(), TickUntilError<String>> {
+    tick_until(pic, 20, Duration::from_secs(1), |pic| match ready(pic) {
+        Ok(true) => Poll::Ready(Ok(())),
+        Ok(false) => Poll::Pending,
+        Err(error) => Poll::Ready(Err(error)),
+    })
+}
+```
+
+The initial check does not mutate time. Each pending check permits one time
+advance and tick, followed by another check, up to the round budget. Completion
+on the last round succeeds. Zero rounds still permit the initial check; zero
+duration allows ticking without advancing time. This is a simulated-round
+budget, not a wall-clock timeout for PocketIC calls or the predicate.
 
 ## Wasm artifact helpers
 
 The host-only `artifacts` module provides workspace-relative paths, dedicated
 test target directories, content-addressed build coordination, Wasm loading,
 and exact generated-artifact freshness checks:
+
+`workspace_root_for` asks prepared Cargo for actual workspace membership and
+returns `io::Result<PathBuf>`. It supports App layouts, exclusions and independent
+workspaces without guessing from directory names or resolving dependencies.
+`WasmBuildSpec::new` shares `<workspace>/target/ic-testkit-incremental` compiler
+state across fingerprints by default. Exact final artifacts remain independently
+cached. Select `with_isolated_builds()` only when separate compiler state is
+required; configure age/byte retention through the existing pruning and
+shared-target maintenance builders. Existing isolated build directories are
+preserved and need explicit maintenance if no longer wanted.
 
 ```rust,no_run
 use ic_testkit::artifacts::{
@@ -720,7 +789,8 @@ use ic_testkit::artifacts::{
 };
 use std::time::Duration;
 
-let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"));
+let workspace = workspace_root_for(env!("CARGO_MANIFEST_DIR"))
+    .expect("resolve the crate's Cargo workspace");
 let target = test_target_dir(&workspace, "pic-wasm");
 let spec = WasmBuildSpec::new(
     &workspace,
@@ -774,6 +844,16 @@ and profile arguments, Cargo and rustc identities, explicit child environment,
 selected inherited environment, and caller-declared additional inputs. This
 validated semantic workspace projection lets an unrelated host-only workspace
 dependency or lockfile change retain the same exact Wasm key.
+
+For a Cargo shim that selects another compiler, pair `with_cargo_program(shim)`
+with `with_rustc_program(actual_compiler)` so the `-vV` probe fingerprints that
+compiler. The latter selects identity only; it does not configure the shim's
+build. When Cargo should use a selected compiler, use
+`with_extra_env([("RUSTC", actual_compiler)])`, which also takes precedence for
+the identity probe. Keep the selected compiler consistent with the build command.
+Use the [cached external transform recipe](crates/ic-testkit/examples/transactional_artifact_cache.rs) for
+post-link work, retain the source acquisition through commit, and include the
+input bytes and admitted transform identity in its `ArtifactCacheSpec`.
 
 The complete workspace manifest and lockfile remain part of a separate,
 conservative validation digest. They are rehashed around builds and attached
@@ -864,8 +944,8 @@ libraries, and binary-only packages return `InvalidSpec`. Input-only snapshots
 from `resolve_cargo_build_inputs` can still describe arbitrary Cargo targets
 for transactional artifact recipes.
 
-Source-edit-heavy suites can opt into a caller-owned shared Cargo target while
-retaining exact immutable final Wasm entries:
+Suites can override the default workspace shared Cargo target while retaining
+exact immutable final Wasm entries:
 
 ```rust,no_run
 use ic_testkit::artifacts::{
@@ -1408,19 +1488,25 @@ The default line format is:
 ICTK|<label>:<start-or-end>|<instructions>|<heap_bytes>|<memory_bytes>|<total_allocation>
 ```
 
-Host code parses, pairs, and aggregates captured markers:
+For benchmarks, fetch the measured canister's logs and select
+`BenchmarkEventSource::FetchedLog`. Confirm that the capture contains the complete
+sample before accepting results. Managed server stdout/stderr retain only their
+first 16 KiB per stream and can omit later markers, so they are diagnostic output.
+Host code parses, pairs, and aggregates captured canister markers:
 
 ```rust
 use ic_testkit::benchmark::{
-    BenchmarkParserConfig, aggregate_benchmark_spans,
-    pair_benchmark_spans, parse_benchmark_events,
+    BenchmarkEventSource, BenchmarkParserConfig, aggregate_benchmark_spans,
+    pair_benchmark_spans, parse_benchmark_events_from_source,
 };
 
 let input = "\
 ICTK|storage/write:start|100|200|300|400
 ICTK|storage/write:end|150|260|390|430
 ";
-let parsed = parse_benchmark_events(input, &BenchmarkParserConfig::default());
+let parsed = parse_benchmark_events_from_source(
+    input, &BenchmarkParserConfig::default(), BenchmarkEventSource::FetchedLog,
+);
 let spans = pair_benchmark_spans(&parsed.events);
 let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
 
@@ -1467,7 +1553,7 @@ assert_eq!(alice, Fake::principal(1));
 ## Scope boundaries
 
 ic-testkit remains generic. It does not define application init payloads,
-endpoint names, role models, readiness polling, canister graph topology,
+endpoint names, role models, application readiness conditions, canister graph topology,
 benchmark labels, regression thresholds, CI failure policy, or broad self-test
 orchestration.
 
@@ -1522,13 +1608,14 @@ make tools-check dependency-pins-check
 ```
 
 The selected versions are recorded in `ci/tool-versions.env` and `ci/ic-tools.tsv`
-and used by CI too. `make install-tools` prepares pinned jq/yq and the common
+and used by CI too. `make install-tools` prepares pinned jq/yq, ripgrep with
+PCRE2, cloc and the common
 IC executables under `.tools/host/bin` and `.tools/ic/bin`. Make selects those
 directories and the local PocketIC server; direct Cargo commands should export
 them explicitly:
 
 ```bash
-export PATH="$PWD/.tools/host/bin:$PWD/.tools/ic/bin:$PATH"
+export PATH="$PWD/.tools/host/bin:$PWD/.tools/ic/bin:$PWD/.tools/rust/bin:$PATH"
 export POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic"
 ```
 
@@ -1536,6 +1623,9 @@ See [bootstrap prerequisites](docs/local-setup.md#bootstrap-prerequisites) and
 [IC tool identities](docs/ic-tools.md). Offline checks verify the prepared
 tools and dependency declarations without downloading or upgrading anything.
 Setup installs tools explicitly; formatting never installs or fetches them.
+The reviewed `make/tools.mk` owns setup, offline checks, `make cloc` for this
+workspace and `make cloc-tooling` for read-only sibling tooling counts. Existing
+checkouts must rerun explicit setup to prepare the newly selected tools.
 Hook activation and formatting checks reject missing formatter prerequisites.
 `make fmt` sorts every workspace Cargo manifest before formatting all Rust code.
 `make fmt-check` performs the matching checks without changing files.
@@ -1561,11 +1651,17 @@ CI, release, and publish flows preserve Cargo build artifacts for incremental
 reuse. Only the standalone, manually invoked `make clean` target runs
 `cargo clean`; it is not part of `CI_TARGETS` or any release recipe.
 
+Failed native `checks` and `portable-hosts` jobs upload scoped diagnostic artifacts
+for 14 days. Download `checks-failure-<runner>` or `portable-failure-<runner>`
+from the Actions run to inspect validation logs, retained tool-installation
+candidates and portable tooling fixtures. The general Cargo build directory
+is excluded.
+
 To exercise bounded managed startup against one exact caller-provided PocketIC
 server binary without invoking any downloader or resolver:
 
 ```bash
-IC_TESTKIT_POCKET_IC_SERVER=/path/to/pocket-ic \
+POCKET_IC_BIN=/path/to/pocket-ic \
   cargo test -p ic-testkit --lib \
   pic::startup::tests::caller_provided_server_publishes_port_constructs_instance_and_cleans_up \
   -- --ignored --exact

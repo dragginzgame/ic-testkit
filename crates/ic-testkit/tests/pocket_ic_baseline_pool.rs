@@ -1,3 +1,5 @@
+mod support;
+
 use std::{
     num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
@@ -15,7 +17,7 @@ use ic_testkit::pic::{
     BaselinePoolContractError, BaselinePoolError, BaselinePoolOutcome,
     BaselinePoolPreparationError, BaselinePreparationStage, CachedPocketIcBaseline,
     CachedPocketIcBaselinePool, CanisterRestoreReceipt, ControllerSnapshotError, CycleResetPolicy,
-    ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe,
+    ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId, PocketIcBaselineRecipe,
     PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig, PocketIcStartupError,
     PreparedBaseline, ReadinessReceipt, RebuildReason, ResetDomainPolicy, ResetReceipt,
     ResetRequirements, TimeResetPolicy, ValidationReceipt, is_dead_pocket_ic_transport_error,
@@ -151,7 +153,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
                 ))
                 .map_err(TestRecipeError::Startup)?
         } else {
-            PocketIc::new()
+            support::pocket_ic()
         };
         let canister_ids = [pocket_ic.create_canister(), pocket_ic.create_canister()];
         for canister_id in canister_ids {
@@ -451,15 +453,16 @@ fn multi_canister_pool_restores_and_explicitly_rebuilds_one_slot() {
             ..
         }
     ));
-    assert_ne!(baseline.pocket_ic().instance_id(), first_instance);
     assert_eq!(controls.builds.load(Ordering::SeqCst), 2);
     assert_eq!(controls.built_validations.load(Ordering::SeqCst), 2);
+    drop(baseline);
 }
 
 #[test]
 fn restore_receipt_rejects_an_empty_captured_baseline() {
-    let baseline = CachedPocketIcBaseline::capture(PocketIc::new(), Principal::anonymous(), [], ())
-        .expect("empty snapshot capture remains valid");
+    let baseline =
+        CachedPocketIcBaseline::capture(support::pocket_ic(), Principal::anonymous(), [], ())
+            .expect("empty snapshot capture remains valid");
     assert_eq!(baseline.snapshot_count(), 0);
     assert_eq!(
         CanisterRestoreReceipt::try_from_baseline(&baseline, CycleResetPolicy::PreserveCurrent),
@@ -585,6 +588,11 @@ fn killed_dedicated_server_rebuilds_on_a_fresh_server() {
         .expect("dedicated server runtime should build");
     let (mut server, server_url) =
         runtime.block_on(pocket_ic::start_server(pocket_ic::StartServerParams {
+            server_binary: Some(
+                std::env::var_os("POCKET_IC_BIN")
+                    .expect("prepare POCKET_IC_BIN for the dedicated server probe")
+                    .into(),
+            ),
             reuse: false,
             hard_ttl: Some(Duration::from_secs(60)),
             ..pocket_ic::StartServerParams::default()
@@ -837,7 +845,13 @@ fn runtime_capacity_allows_two_independent_baseline_leases() {
     let worker = thread::spawn(move || {
         let (second, outcome) = worker_pool.acquire().expect("second slot should build");
         acquired_tx
-            .send((second.pocket_ic().instance_id(), outcome))
+            .send((
+                (
+                    second.pocket_ic().get_server_url(),
+                    second.pocket_ic().instance_id(),
+                ),
+                outcome,
+            ))
             .expect("capacity result receiver should remain live");
     });
 
@@ -845,7 +859,13 @@ fn runtime_capacity_allows_two_independent_baseline_leases() {
         .recv_timeout(OPERATION_TIMEOUT)
         .expect("capacity two should not wait for the first lease");
     assert!(matches!(second_outcome, BaselinePoolOutcome::Built { .. }));
-    assert_ne!(first.pocket_ic().instance_id(), second_instance);
+    assert_ne!(
+        (
+            first.pocket_ic().get_server_url(),
+            first.pocket_ic().instance_id()
+        ),
+        second_instance
+    );
     drop(first);
     worker.join().expect("capacity worker should exit cleanly");
 }

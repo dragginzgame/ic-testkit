@@ -268,7 +268,8 @@ fn batch_maintenance_configures_each_shared_target_once() {
         .with_shared_incremental_target("shared-a");
     let other = WasmBuildSpec::new(Path::new("."), Path::new("exact-c"), &["c"], "debug")
         .with_shared_incremental_target("shared-b");
-    let isolated = WasmBuildSpec::new(Path::new("."), Path::new("exact-d"), &["d"], "debug");
+    let isolated = WasmBuildSpec::new(Path::new("."), Path::new("exact-d"), &["d"], "debug")
+        .with_isolated_builds();
 
     let prepared_first = tracker
         .prepare_spec(&first)

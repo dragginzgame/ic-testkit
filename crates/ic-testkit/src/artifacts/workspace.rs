@@ -1,21 +1,66 @@
-use std::path::{Path, PathBuf};
+use std::{
+    io,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
-/// Resolve the conventional workspace root from a crate manifest directory.
+/// Ask Cargo for the workspace owning a crate manifest directory.
 ///
-/// A manifest directly below `<workspace>/crates` resolves to `<workspace>`;
-/// other paths are returned unchanged.
-#[must_use]
-pub fn workspace_root_for(crate_manifest_dir: &str) -> PathBuf {
-    let manifest_dir = PathBuf::from(crate_manifest_dir);
-    if manifest_dir.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("crates")) {
-        return manifest_dir
-            .parent()
-            .and_then(Path::parent)
-            .map(PathBuf::from)
-            .expect("workspace root");
+/// Cargo owns membership, explicit `package.workspace`, exclusions and nested
+/// independent workspaces. This performs an offline `locate-project`, without
+/// resolving dependencies or installing a toolchain. It never guesses from the
+/// directory layout or falls back to the supplied directory.
+///
+/// # Errors
+/// Returns filesystem, Cargo invocation or invalid Cargo response errors.
+pub fn workspace_root_for(crate_manifest_dir: impl AsRef<Path>) -> io::Result<PathBuf> {
+    let manifest = crate_manifest_dir
+        .as_ref()
+        .canonicalize()?
+        .join("Cargo.toml");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .args([
+            "--offline",
+            "locate-project",
+            "--workspace",
+            "--message-format=json",
+        ])
+        .arg("--manifest-path")
+        .arg(manifest)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "Cargo workspace discovery failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
     }
-
-    manifest_dir
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let manifest = response
+        .get("root")
+        .and_then(serde_json::Value::as_str)
+        .map(Path::new)
+        .filter(|path| {
+            path.is_absolute() && path.file_name() == Some(std::ffi::OsStr::new("Cargo.toml"))
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Cargo returned no absolute workspace manifest",
+            )
+        })?;
+    manifest.parent().map(Path::to_owned).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Cargo workspace manifest has no parent",
+        )
+    })
 }
 
 /// Return `<workspace>/target/<name>` for isolated host-side test artifacts.
