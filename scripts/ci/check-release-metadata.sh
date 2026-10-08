@@ -37,7 +37,28 @@ case "$1" in
       exit "${ADAPTER_HASH_STATUS:-0}"
     fi
     ;;
-  rev-parse) [[ "$*" == 'rev-parse --git-path release-state' ]] || exit 97; echo .release-state ;;
+  rev-parse)
+    case "$*" in
+      'rev-parse --git-path release-state') echo .release-state ;;
+      'rev-parse --show-prefix') printf '' ;;
+      *) exit 97 ;;
+    esac
+    ;;
+  status)
+    [[ "$*" == 'status --porcelain=v1 -z --untracked-files=all' ]] || exit 97
+    [[ "${ADAPTER_SOURCE_STATUS:-0}" -eq 0 ]] || exit "$ADAPTER_SOURCE_STATUS"
+    [[ -z "${ADAPTER_STAGED_DIRTY:-}" ]] || printf 'M  %s\0' "$ADAPTER_STAGED_DIRTY"
+    [[ -z "${ADAPTER_DIRTY:-}" ]] || printf ' M %s\0' "$ADAPTER_DIRTY"
+    if [[ "${ADAPTER_REAL_UNTRACKED:-}" == true ]]; then
+      paths="$(mktemp)"
+      trap 'rm -f "$paths"' EXIT
+      "$REAL_GIT" ls-files --others --exclude-standard -z > "$paths"
+      while IFS= read -r -d '' path; do printf '?? %s\0' "$path"; done < "$paths"
+    elif [[ -n "${ADAPTER_UNTRACKED:-}" ]]; then
+      printf '?? %s\0' "$ADAPTER_UNTRACKED"
+    fi
+    exit "${ADAPTER_UNTRACKED_STATUS:-0}"
+    ;;
   ls-tree)
     [[ "$2" == bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb && "$3" == -- ]] || exit 97
     file="$4"
@@ -47,21 +68,10 @@ case "$1" in
     exit "${ADAPTER_COMMIT_STATUS:-0}"
     ;;
   ls-files)
-    if [[ "$2" == --others ]]; then
-      if [[ "${ADAPTER_REAL_UNTRACKED:-}" == true ]]; then exec "$REAL_GIT" "$@"; fi
-      printf '%s' "${ADAPTER_UNTRACKED:-}"
-      exit "${ADAPTER_UNTRACKED_STATUS:-0}"
-    fi
+    [[ "$2" == --error-unmatch ]] || exit 97
     ;;
   diff)
     case "$2" in
-      --name-only)
-        [[ "${ADAPTER_DIFF_STATUS:-0}" -eq 0 ]] || exit "$ADAPTER_DIFF_STATUS"
-        if [[ "$*" == *--cached* && -n "${ADAPTER_STAGED_DIRTY:-}" ]]; then
-          printf '%s\0' "$ADAPTER_STAGED_DIRTY"
-        fi
-        [[ -z "${ADAPTER_DIRTY:-}" ]] || printf '%s\0' "$ADAPTER_DIRTY"
-        ;;
       --quiet) exit "${ADAPTER_UNSTAGED:-0}" ;;
       --binary)
         for file in Cargo.toml Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md; do
@@ -132,7 +142,7 @@ new_fixture() {
   # inputs. Only the complete validation gate and Git effects are substituted.
   mkdir -p scripts/release scripts/ci ci
   cp "$repo_root/scripts/release/metadata.sh" scripts/release/
-  for helper in read-cargo-workspace-version.sh next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk; do
+  for helper in check-release-source.sh read-cargo-workspace-version.sh next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk; do
     cp "$repo_root/scripts/ci/$helper" scripts/ci/
   done
   cp "$repo_root/ci/tool-versions.env" ci/
@@ -724,17 +734,21 @@ expect_failure prepare
 [[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$previous" ]] || fail "fixture invariant in $PWD at line $LINENO"
 
 new_fixture admission
-export ADAPTER_DIFF_STATUS=9
+export ADAPTER_SOURCE_STATUS=9
 expect_failure preflight
-unset ADAPTER_DIFF_STATUS
-export ADAPTER_STAGED_DIRTY='staged unrelated file.rs'
+unset ADAPTER_SOURCE_STATUS
+export ADAPTER_STAGED_DIRTY=$'staged unrelated\nfile.rs'
 expect_failure preflight
+printf -v rendered_path '%q' "$ADAPTER_STAGED_DIRTY"
+grep -F -- "$rendered_path" rejected.log >/dev/null || fail 'missing staged-path diagnosis'
 unset ADAPTER_STAGED_DIRTY
 export ADAPTER_DIRTY='unrelated file.rs'
 expect_failure preflight
 unset ADAPTER_DIRTY
 export ADAPTER_UNTRACKED='untracked release input'
 expect_failure preflight
+printf -v rendered_path '%q' "$ADAPTER_UNTRACKED"
+grep -F -- "$rendered_path" rejected.log >/dev/null || fail 'missing untracked-path diagnosis'
 unset ADAPTER_UNTRACKED
 adapter verify
 cp ".release-state/$RELEASE_VERSION.validation" admitted-receipt

@@ -1746,13 +1746,11 @@ were likewise left unselected. Native consumer artifact transport remains pendin
 
 ### PocketIC 16.1 server selection
 
-For the pending 0.25.0 batch, `ci/ic-tools.tsv` is the single consumer-owned
-IC tool matrix, outside `.shared-tooling.snapshot`. Its base is Shared Tooling
-`db039347d2372b877c1c46dcdd2b5c3aa9412009`; only PocketIC changes to 16.1.0.
-The shared default documented in `docs/ic-tools.md` remains 16.0.0. The local
-selection uses the scoped pin exception in `docs/consuming-snapshots.md`, without
-patching any shared installer or maintaining a second catalog. Future snapshot
-refreshes must preserve this ownership until the shared default is adopted again.
+`ci/ic-tools.tsv` is the single shared-owned IC tool matrix in the reviewed
+0.1.29 snapshot `1a54fb625d6e47efa64c4384808ecbc87be84e7e`, adopted for
+pending 0.25.3. Its PocketIC 16.1 versions and hashes match the consumer selection
+qualified in 0.25.0. The temporary consumer pin exception used in 0.25.0–0.25.2
+is retired; future refreshes use the canonical catalog and common installers.
 
 The Linux x86-64, macOS Intel and macOS Apple Silicon archive hashes were
 reviewed against the official
@@ -1884,3 +1882,31 @@ and whitespace checks pass. Evidence uses
 These tests use actual native filesystem locks, not a mocked acquisition result.
 Native macOS qualification remains with the configured CI jobs; no full local
 gate was run. No functions, methods or types were deleted in this adapter change.
+
+### Pending 0.25.3 Shared Tooling adoption
+
+Shared Tooling 0.1.29 at `1a54fb625d6e47efa64c4384808ecbc87be84e7e`
+was exported through its canonical helper from a clean, pinned checkout. All
+81 snapshot files verify. The canonical IC catalog replaces the temporary
+consumer selection; comparison of all non-comment records confirms unchanged
+tool versions, hosts and hashes. Explicit `make install-ic-tools` verified the
+canonical bundle before offline checks; prior installed sets were preserved.
+The comment-only catalog change required another download, reported in
+[Shared #79](https://github.com/dragginzgame/shared-tooling/issues/79).
+
+Consumer release metadata now delegates source admission to the shared helper,
+retaining its tracked regular-file checks and existing release recovery order.
+The consumer fixture substitutes Git status and release effects; its untracked
+file case uses real Git enumeration. The upstream owner's separate real-Git
+fixture verifies source/index preservation and observation failures. Both pass
+on Linux with genuine Bash 3.2 selected for Bash invocations, including inherited
+CDPATH coverage; explicitly selected system-shell children remain system shells.
+
+Prepared offline tools, dependency declarations, formatting, snapshot checks,
+dependency-pin fixtures, release-runner simulations and ShellCheck pass. Logs
+are retained at `/tmp/ic-testkit-0253-*.log`. No Rust source, manifest version or
+lock selection changed, and no functions, methods or types were removed.
+No schedule was activated. Native macOS and full maintainer gates remain
+unqualified by these local checks. Further lock-opening reuse waits for the
+committed and published Host API tracked in
+[Host #27](https://github.com/dragginzgame/ic-host-tooling/issues/27).

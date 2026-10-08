@@ -22,23 +22,10 @@ hash_file() { git hash-object --no-filters -- "$1"; }
 input_digest() { git diff --binary HEAD -- | git hash-object --stdin; }
 
 check_paths() {
-  local path allowed file path_list untracked
-  # Git paths are NUL-delimited; whitespace in an unrelated name cannot evade
-  # admission. Inspect index and worktree separately so opposing staged and
-  # unstaged changes cannot cancel out and evade preflight.
-  path_list="$(mktemp "$state/paths.XXXXXX")"
-  git diff --name-only -z -- > "$path_list"
-  git diff --name-only -z --cached -- >> "$path_list"
-  while IFS= read -r -d '' path; do
-    allowed=false
-    for file in "${files[@]}"; do
-      [[ "$path" != "$file" ]] || allowed=true
-    done
-    [[ "$allowed" == true ]] || fail "unrelated work: $path"
-  done < "$path_list"
-  rm -f "$path_list"
-  untracked="$(git ls-files --others --exclude-standard)" || fail "cannot inspect untracked work"
-  [[ -z "$untracked" ]] || fail "untracked work"
+  local file
+  local allowed=()
+  for file in "${files[@]}"; do allowed+=(--allow "$file"); done
+  bash "$script_dir/../ci/check-release-source.sh" "${allowed[@]}" || return
   for file in "${files[@]}"; do
     [[ -f "$file" && ! -L "$file" ]] || fail "missing or symlinked metadata: $file"
     git ls-files --error-unmatch -- "$file" >/dev/null

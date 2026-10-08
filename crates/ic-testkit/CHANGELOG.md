@@ -8,6 +8,17 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.25.3]
+
+### Changed
+
+- Adopt Shared Tooling 0.1.29 and restore its ownership of the IC tool catalog,
+  retaining the selected PocketIC 16.1 versions and hashes
+  ([shared #76](https://github.com/dragginzgame/shared-tooling/issues/76)).
+- Use shared release-source admission to identify staged, unstaged and untracked
+  paths that block release, while preserving consumer metadata checks
+  ([shared #74](https://github.com/dragginzgame/shared-tooling/issues/74)).
+
 ## [0.25.2] - 2026-10-08
 
 ### Changed

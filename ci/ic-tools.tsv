@@ -1,7 +1,5 @@
 # tool	version	host	archive_sha256
-# Consumer-owned selection based on Shared Tooling db039347d2372b877c1c46dcdd2b5c3aa9412009.
-# PocketIC 16.1.0 official asset digests reviewed 2026-10-08; other rows reviewed 2026-10-06.
-# See docs/hosts.md#pocketic-161-server-selection for the scoped selection and qualification.
+# Official GitHub release asset digests, reviewed 2026-10-06. See docs/ic-tools.md.
 quill	0.5.4	linux-x86_64	73105578372086e349a45e9dfd67cfe05f005ff8024449d35969aaa9cff4a357
 quill	0.5.4	darwin-x86_64	cd69f32e2cb24babe344491eb42cc0c00fc29870dfdb6e2661eaaecf6dd8b1c3
 quill	0.5.4	darwin-arm64	70cc62bef97e813eb828e82a71299036536d3fec57c1428adbca3f83d363235b

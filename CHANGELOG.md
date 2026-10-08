@@ -6,6 +6,17 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.25.3]
+
+### Changed
+
+- Adopt Shared Tooling 0.1.29 and restore its ownership of the IC tool catalog,
+  retaining the selected PocketIC 16.1 versions and hashes
+  ([shared #76](https://github.com/dragginzgame/shared-tooling/issues/76)).
+- Use shared release-source admission to identify staged, unstaged and untracked
+  paths that block release, while preserving consumer metadata checks
+  ([shared #74](https://github.com/dragginzgame/shared-tooling/issues/74)).
+
 ## [0.25.2] - 2026-10-08
 
 ### Changed
