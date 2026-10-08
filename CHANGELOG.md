@@ -6,6 +6,23 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.22.3]
+
+### Added
+
+- Retain complete PocketIC stdout/stderr independently of server teardown with
+  `PocketIcStartupConfig::with_server_output_files` or the runner's paired
+  `--server-stdout` / `--server-stderr` flags. Callers own the new file paths,
+  retention and disk budget; status propagation and bounded excerpts are unchanged
+  ([#29](https://github.com/dragginzgame/ic-testkit/issues/29)).
+
+### Changed
+
+- Adopt Shared Tooling 0.1.25 and its corrected evidence archiver, replacing
+  local archive mechanics while preserving Testkit's CI selection and retention
+  ([#28](https://github.com/dragginzgame/ic-testkit/issues/28),
+  [shared #59](https://github.com/dragginzgame/shared-tooling/issues/59)).
+
 ## [0.22.2] - 2026-10-08
 
 ### Changed

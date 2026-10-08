@@ -1419,3 +1419,48 @@ has passed Linux and lint/security, but Apple Silicon failed artifact download
 and its consequent verification; Intel qualification is still running. Those
 observations do not qualify this pending consumer snapshot on native macOS or
 close either repository's archive issue.
+
+### 2026-10-08: caller-owned PocketIC output and shared archive adoption
+
+The compatible 0.22.3 draft adds
+`PocketIcStartupConfig::with_server_output_files(stdout, stderr)` and paired
+runner flags `--server-stdout` / `--server-stderr` for two new caller-selected
+files. Parent custody, retention, presentation and disk budget stay with the
+caller. Creation refuses occupied final entries and requests owner-only Unix
+permissions. Raw streams survive partial preparation, startup failure, server
+exit, command completion and cancellation; process-group ownership and bounded
+public excerpts stay unchanged. Private port state is still removed. Connect
+mode rejects output custody because it owns no server process.
+
+Locked offline cache preparation passed without changing the selected lockfile.
+Focused Linux startup tests pass (18; one prepared-server test ignored), including
+markers after 20 KiB of raw bytes in both streams, private file permissions,
+occupied file/symlink/FIFO refusal, partial preparation and original error/status
+propagation. After final test cleanup, the two output-custody tests pass again.
+Runner tests pass (8; two live tests ignored), including raw stream retention
+following nonzero command completion and real SIGTERM cleanup of the synthetic
+server, command and descendants. Package Clippy with library/tests/runner targets
+and `-D warnings` passes. Initial new-test lint failures and corrected results
+remain in `/tmp/ic-testkit-0223-{clippy,clippy-final}.log`; runtime logs are
+`/tmp/ic-testkit-0223-{startup,startup-final,output-final,runner,runner-final}.log`.
+The final startup and runner checks include absolute path anchoring at startup
+and CLI relative-path selection; the final Clippy log covers that source.
+
+The 62-file snapshot now selects committed Shared Tooling 0.1.25
+`eeb72e741199bd8574280eacb3542d8379b912f6`, including its canonical archive helper.
+The consumer collector retains explicit roots/outcomes, cleared TAR_OPTIONS,
+partial-to-complete publication and retention policy. Shared and consumer archive
+fixtures, ShellCheck, snapshot verification and dependency pins pass on Linux;
+archive logs remain at `/tmp/ic-testkit-0223-{evidence,shared-archive}.log`.
+The actual exported-archive verifier also passes a local copied-file round trip
+at `/tmp/ic-testkit-0223-roundtrip.nphbOZ`; this is not hosted artifact proof.
+Sibling dirty release-tracking edits were inspected and preserved, not adopted.
+
+Released 0.22.2 `2da9f92fbe7fc31c37136e99cac46179e08911ad`
+[tag CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37762453183)
+passed all applicable checks on Linux and both native macOS hosts, including
+portable artifact upload/download and process qualification. Exact-source
+[Shared 0.1.25 CI](https://github.com/dragginzgame/shared-tooling/actions/runs/37762726615)
+also passed. Those runs qualify their released sources, not this pending consumer
+batch. Native macOS/process/artifact qualification for these consumer changes
+remains with the configured CI; no broad gate, release or workflow dispatch ran.

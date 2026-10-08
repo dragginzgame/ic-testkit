@@ -385,6 +385,26 @@ borrows the existing server and leaves it running. Library callers can use
 `PocketIcStartupConfig::run_command` with their own cancellation callback;
 library code installs no process-wide signal handlers.
 
+For complete raw diagnostics after startup failure, command failure or interruption,
+select two new files with `PocketIcStartupConfig::with_server_output_files(stdout,
+stderr)`, or use the paired CLI flags:
+
+```bash
+attempt="$(mktemp -d "${TMPDIR:-/tmp}/pocket-ic-attempt.XXXXXX")"
+printf 'PocketIC diagnostics: %s\n' "$attempt"
+ic-testkit-server run --server-stdout "$attempt/stdout" \
+  --server-stderr "$attempt/stderr" -- cargo test --locked -p my-integration-tests
+```
+
+The parent directories must already exist and remain under caller control.
+Existing files, symlinks and special files are refused without truncation.
+Created files have private Unix permissions and survive successful runs and
+all cleanup paths, including a partially prepared pair. Callers select their
+retention, disk budget and presentation; streams have no automatic size limit.
+Port/readiness files remain private temporary state and are removed normally.
+This selection requires an owned server; external URL mode rejects it.
+Public `output()` and error excerpts still read only the first 16 KiB per stream.
+
 ic-testkit does not discover, download or cache server binaries. Explicit `spawn`
 continues to assume caller admission. Version checks do not authenticate executable
 bytes: use the shared `make tools-check` receipt verification for a prepared
@@ -1498,8 +1518,10 @@ ICTK|<label>:<start-or-end>|<instructions>|<heap_bytes>|<memory_bytes>|<total_al
 
 For benchmarks, fetch the measured canister's logs and select
 `BenchmarkEventSource::FetchedLog`. Confirm that the capture contains the complete
-sample before accepting results. Managed server stdout/stderr retain only their
-first 16 KiB per stream and can omit later markers, so they are diagnostic output.
+sample before accepting results. Managed server output/error excerpts retain only their
+first 16 KiB per stream and can omit later markers. Caller-selected raw output
+files contain the complete streams, but do not by themselves establish a
+complete benchmark sample.
 Host code parses, pairs, and aggregates captured canister markers:
 
 ```rust

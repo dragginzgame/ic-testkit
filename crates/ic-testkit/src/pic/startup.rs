@@ -34,6 +34,7 @@ pub struct PocketIcStartupConfig {
     source: PocketIcStartupSource,
     timeout: Duration,
     server_hard_ttl: Option<Duration>,
+    server_output_files: Option<(PathBuf, PathBuf)>,
 }
 
 /// Caller-owned PocketIC server process with bounded startup and output capture.
@@ -243,6 +244,7 @@ impl PocketIcStartupConfig {
             },
             timeout,
             server_hard_ttl: None,
+            server_output_files: None,
         }
     }
 
@@ -258,6 +260,7 @@ impl PocketIcStartupConfig {
             },
             timeout,
             server_hard_ttl: None,
+            server_output_files: None,
         }
     }
 
@@ -265,6 +268,26 @@ impl PocketIcStartupConfig {
     #[must_use]
     pub const fn with_server_hard_ttl(mut self, hard_ttl: Duration) -> Self {
         self.server_hard_ttl = Some(hard_ttl);
+        self
+    }
+
+    /// Capture complete raw server streams in two caller-owned new files.
+    ///
+    /// Requires spawn mode. Both parent directories must exist and remain under
+    /// caller control; relative paths resolve at startup. Existing files,
+    /// symlinks and special files are refused, without truncating them. New files
+    /// have Unix mode 0600. Created output survives success, startup failure,
+    /// cancellation and server teardown, including a partially prepared pair.
+    /// The caller owns retention, disk budget and path presentation. Without
+    /// this selection, output remains temporary and is removed during cleanup.
+    /// Public output/error excerpts still read at most 16 KiB per stream.
+    #[must_use]
+    pub fn with_server_output_files(
+        mut self,
+        stdout: impl Into<PathBuf>,
+        stderr: impl Into<PathBuf>,
+    ) -> Self {
+        self.server_output_files = Some((stdout.into(), stderr.into()));
         self
     }
 
@@ -322,6 +345,7 @@ impl PocketIcStartupConfig {
         let (server, url) = ManagedServer::start(
             server_binary,
             self.server_hard_ttl,
+            self.server_output_files,
             deadline,
             self.timeout,
             started,
@@ -414,6 +438,11 @@ impl PocketIcStartupConfig {
     }
 
     fn validate(&self) -> Result<(), PocketIcStartupError> {
+        if self.server_url().is_some() && self.server_output_files.is_some() {
+            return Err(PocketIcStartupError::InvalidConfiguration {
+                message: "server output files require a spawn configuration".to_owned(),
+            });
+        }
         if self.timeout.is_zero() {
             return Err(PocketIcStartupError::InvalidConfiguration {
                 message: "PocketIC startup timeout must be greater than zero".to_owned(),
@@ -492,6 +521,7 @@ impl PocketIcBuilderExt for PocketIcBuilder {
                 let (server, server_url) = ManagedServer::start(
                     server_binary,
                     config.server_hard_ttl,
+                    config.server_output_files,
                     deadline,
                     config.timeout,
                     started,
@@ -611,11 +641,12 @@ impl ManagedServer {
     fn start(
         binary: PathBuf,
         hard_ttl: Option<Duration>,
+        output_files: Option<(PathBuf, PathBuf)>,
         deadline: Instant,
         timeout: Duration,
         started: Instant,
     ) -> Result<(Self, String), PocketIcStartupError> {
-        let (files, stdout, stderr) = StartupFiles::create()?;
+        let (files, stdout, stderr) = StartupFiles::create(output_files)?;
         let mut command = Command::new(&binary);
         if let Some(hard_ttl) = hard_ttl {
             command
@@ -798,7 +829,19 @@ struct StartupFiles {
 }
 
 impl StartupFiles {
-    fn create() -> Result<(Self, File, File), PocketIcStartupError> {
+    fn create(
+        output_files: Option<(PathBuf, PathBuf)>,
+    ) -> Result<(Self, File, File), PocketIcStartupError> {
+        let output_files = output_files
+            .map(|(stdout, stderr)| {
+                Ok::<_, PocketIcStartupError>((
+                    std::path::absolute(&stdout)
+                        .map_err(|source| startup_file_error("resolve", &stdout, source))?,
+                    std::path::absolute(&stderr)
+                        .map_err(|source| startup_file_error("resolve", &stderr, source))?,
+                ))
+            })
+            .transpose()?;
         loop {
             let sequence = STARTUP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
             let base = std::env::temp_dir().join(format!(
@@ -815,10 +858,12 @@ impl StartupFiles {
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(source) => return Err(startup_file_error("create", &base, source)),
             }
+            let (stdout_path, stderr_path) =
+                output_files.unwrap_or_else(|| (base.join("stdout"), base.join("stderr")));
             let files = Self {
                 port: base.join("port"),
-                stdout: base.join("stdout"),
-                stderr: base.join("stderr"),
+                stdout: stdout_path,
+                stderr: stderr_path,
                 directory: base,
             };
             let stdout = create_new_file(&files.stdout)
@@ -837,7 +882,11 @@ impl Drop for StartupFiles {
 }
 
 fn create_new_file(path: &Path) -> io::Result<File> {
-    OpenOptions::new().write(true).create_new(true).open(path)
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(path)
 }
 
 fn startup_file_error(
@@ -1146,7 +1195,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn reading_large_sparse_server_output_is_bounded() {
-        let (files, _, _) = StartupFiles::create().expect("allocate startup files");
+        let (files, _, _) = StartupFiles::create(None).expect("allocate startup files");
         let mut file = fs::File::create(&files.stdout).expect("create sparse log");
         file.write_all(b"server started\n").expect("write prefix");
         let size = 8_u64 * 1024 * 1024 * 1024;
@@ -1163,7 +1212,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn startup_readers_reject_fifos_without_waiting_for_a_writer() {
-        let (files, stdout, stderr) = StartupFiles::create().expect("allocate startup files");
+        let (files, stdout, stderr) = StartupFiles::create(None).expect("allocate startup files");
         drop((stdout, stderr));
         fs::remove_file(&files.stdout).unwrap();
         fs::remove_file(&files.stderr).unwrap();
@@ -1230,7 +1279,7 @@ mod tests {
 
     #[test]
     fn port_file_readiness_preserves_partial_writes_and_rejects_oversized_contents() {
-        let (files, _, _) = StartupFiles::create().expect("allocate startup files");
+        let (files, _, _) = StartupFiles::create(None).expect("allocate startup files");
         let server = super::ManagedServer {
             child: None,
             binary: PathBuf::from("unused-server"),
@@ -1322,7 +1371,7 @@ mod tests {
 
     #[test]
     fn startup_files_leave_the_server_owned_port_path_absent() {
-        let (files, stdout, stderr) = StartupFiles::create().expect("allocate startup files");
+        let (files, stdout, stderr) = StartupFiles::create(None).expect("allocate startup files");
         let directory = files.directory.clone();
 
         assert!(directory.is_dir());
@@ -1342,6 +1391,153 @@ mod tests {
         drop(stderr);
         drop(files);
         assert!(!directory.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn caller_output_files_survive_startup_command_and_cancellation_cleanup() {
+        for outcome in [
+            "timeout",
+            "startup-exit",
+            "server-exit",
+            "command-exit",
+            "cancel",
+            "success",
+        ] {
+            let (owner, _, _) = StartupFiles::create(None).unwrap();
+            let stdout = owner.directory.join("retained-stdout");
+            let stderr = owner.directory.join("retained-stderr");
+            let ending = match outcome {
+                "timeout" => "exec sleep 30",
+                "startup-exit" => "exit 41",
+                "server-exit" => {
+                    "printf '34567\\n' > \"$2\"; while [ ! -s \"$0.command\" ]; do sleep 0.02; done; exit 42"
+                }
+                _ => "printf '34567\\n' > \"$2\"; exec sleep 30",
+            };
+            let script = TestServerScript::new(
+                outcome,
+                &format!(
+                    "#!/bin/sh\nprintf '%s\\n%s\\n' \"$$\" \"$2\" > \"$0.pid\"\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf raw-stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf raw-stderr-end >&2\n{ending}\n"
+                ),
+            );
+            let pid_file = script.path().with_extension("pid");
+            let command_file = script.path().with_extension("command");
+            let config = PocketIcStartupConfig::spawn(
+                script.path(),
+                Duration::from_millis(if outcome == "timeout" { 1000 } else { 2000 }),
+            )
+            .with_server_output_files(&stdout, &stderr);
+            if outcome == "timeout" || outcome == "startup-exit" {
+                let error = config.start_managed_server().err().unwrap();
+                match (outcome, error) {
+                    ("timeout", PocketIcStartupError::ReadinessTimeout { stdout, stderr, .. }) => {
+                        assert!(stdout.contains("truncated"));
+                        assert!(!stderr.contains("raw-stderr-end"));
+                    }
+                    ("startup-exit", PocketIcStartupError::ServerExited { status, .. }) => {
+                        assert_eq!(status.code(), Some(41));
+                    }
+                    (_, error) => panic!("unexpected startup result: {error:?}"),
+                }
+            } else {
+                let command_end = match outcome {
+                    "command-exit" => "exit 37",
+                    "success" => "exit 0",
+                    _ => "exec sleep 30",
+                };
+                let result = config.run_command(
+                    Command::new("/bin/sh")
+                        .args([
+                            "-c",
+                            &format!("printf '%s' \"$$\" > \"$1\"; {command_end}"),
+                            "fixture",
+                        ])
+                        .arg(&command_file),
+                    || {
+                        outcome == "cancel"
+                            && fs::metadata(&command_file).is_ok_and(|m| m.len() > 0)
+                    },
+                );
+                match (outcome, result) {
+                    ("command-exit", Ok(status)) => assert_eq!(status.code(), Some(37)),
+                    ("success", Ok(status)) => assert!(status.success()),
+                    ("server-exit", Err(PocketIcStartupError::ServerExited { status, .. })) => {
+                        assert_eq!(status.code(), Some(42));
+                    }
+                    ("cancel", Err(PocketIcStartupError::CommandRun { source, .. })) => {
+                        assert_eq!(source.kind(), std::io::ErrorKind::Interrupted);
+                    }
+                    (_, result) => panic!("unexpected command result: {result:?}"),
+                }
+                let pid = fs::read_to_string(&command_file).unwrap().parse().unwrap();
+                assert!(process_state(pid).is_none_or(|state| state == 'Z'));
+                fs::remove_file(command_file).unwrap();
+            }
+            for (path, suffix) in [(&stdout, b"raw-stdout-end"), (&stderr, b"raw-stderr-end")] {
+                let bytes = fs::read(path).unwrap();
+                assert_eq!(bytes.len(), 20 * 1024 + suffix.len());
+                assert!(bytes.ends_with(suffix));
+                assert_eq!(
+                    fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                    0o600
+                );
+            }
+            let report = fs::read_to_string(&pid_file).unwrap();
+            let mut lines = report.lines();
+            assert_eq!(process_state(lines.next().unwrap().parse().unwrap()), None);
+            assert!(
+                !PathBuf::from(lines.next().unwrap())
+                    .parent()
+                    .unwrap()
+                    .exists()
+            );
+            fs::remove_file(pid_file).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn caller_output_files_refuse_existing_entries_and_keep_partial_preparation() {
+        use std::os::unix::fs::symlink;
+
+        let (owner, _, _) = StartupFiles::create(None).unwrap();
+        let stdout = owner.directory.join("retained-stdout");
+        let stderr = owner.directory.join("retained-stderr");
+        let unrelated = owner.directory.join("unrelated");
+        fs::write(&unrelated, b"original").unwrap();
+        symlink(&unrelated, &stderr).unwrap();
+        let error = StartupFiles::create(Some((stdout.clone(), stderr.clone())))
+            .err()
+            .unwrap();
+        assert!(
+            matches!(error, PocketIcStartupError::Io { source, .. } if source.kind() == std::io::ErrorKind::AlreadyExists)
+        );
+        assert!(stdout.is_file());
+        assert_eq!(fs::read(&unrelated).unwrap(), b"original");
+        fs::write(&stdout, b"retained attempt").unwrap();
+        assert!(StartupFiles::create(Some((stdout.clone(), stderr.clone()))).is_err());
+        assert_eq!(fs::read(&stdout).unwrap(), b"retained attempt");
+        fs::remove_file(stderr.clone()).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(&stderr)
+                .status()
+                .unwrap()
+                .success()
+        );
+        fs::remove_file(stdout.clone()).unwrap();
+        assert!(StartupFiles::create(Some((stdout.clone(), stderr.clone()))).is_err());
+        assert!(stdout.is_file());
+        let error =
+            PocketIcStartupConfig::connect("http://127.0.0.1:12345/", Duration::from_secs(1))
+                .with_server_output_files(&stdout, &stderr)
+                .run_command(&mut Command::new("/missing/command"), || false)
+                .unwrap_err();
+        assert!(matches!(
+            error,
+            PocketIcStartupError::InvalidConfiguration { .. }
+        ));
     }
 
     #[cfg(unix)]

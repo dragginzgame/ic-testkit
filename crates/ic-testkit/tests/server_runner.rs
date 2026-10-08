@@ -24,7 +24,7 @@ impl Fixture {
         fs::create_dir(&fixture.0).unwrap();
         support::executable::write_executable_script(
             &fixture.0.join("server"),
-            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server 16.0.0\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server 16.0.0\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf stderr-end >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
         );
         fixture
     }
@@ -97,6 +97,33 @@ fn owned_server_exports_url_passes_ttl_and_preserves_command_exit() {
 }
 
 #[test]
+fn runner_retains_complete_server_streams_after_command_failure() {
+    let fixture = Fixture::new();
+    let stdout = fixture.0.join("stdout");
+    let stderr = fixture.0.join("stderr");
+    let output = fixture
+        .runner()
+        .current_dir(&fixture.0)
+        .args(["run", "--server-stdout"])
+        .arg("stdout")
+        .arg("--server-stderr")
+        .arg("stderr")
+        .args(["--", "/bin/sh", "-c", "exit 37"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(37),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"");
+    assert!(fs::read(stdout).unwrap().ends_with(b"stdout-end"));
+    assert!(fs::read(stderr).unwrap().ends_with(b"stderr-end"));
+    assert!(stopped(fixture.pid("server.pid")));
+}
+
+#[test]
 fn external_server_precedence_borrows_ownership_and_rejects_owned_ttl() {
     let fixture = Fixture::new();
     let output = fixture
@@ -132,6 +159,16 @@ fn invalid_configuration_and_version_failure_never_run_the_command() {
     for args in [
         vec!["run", "--ttl", "0", "--", "/bin/sh"],
         vec!["run", "--"],
+        vec!["run", "--server-stdout", "out", "--", "/bin/sh"],
+        vec![
+            "run",
+            "--server-stdout",
+            "out",
+            "--server-stdout",
+            "other",
+            "--",
+            "/bin/sh",
+        ],
         vec![
             "run",
             "--startup-timeout",
@@ -301,7 +338,14 @@ fn interruption_terminates_the_owned_server_command_and_descendants() {
     command
         .env("COMMAND_PID_FILE", fixture.0.join("command.pid"))
         .env("DESCENDANT_PID_FILE", fixture.0.join("descendant.pid"));
-    let mut runner = Running(command.args(["run", "--", "/bin/sh", "-c", "printf '%s' \"$$\" > \"$COMMAND_PID_FILE\"; sleep 30 & printf '%s' \"$!\" > \"$DESCENDANT_PID_FILE\"; wait"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+    let stdout = fixture.0.join("stdout");
+    let stderr = fixture.0.join("stderr");
+    command
+        .args(["run", "--server-stdout"])
+        .arg(&stdout)
+        .arg("--server-stderr")
+        .arg(&stderr);
+    let mut runner = Running(command.args(["--", "/bin/sh", "-c", "printf '%s' \"$$\" > \"$COMMAND_PID_FILE\"; sleep 30 & printf '%s' \"$!\" > \"$DESCENDANT_PID_FILE\"; wait"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
     wait_until(|| {
         fixture.0.join("descendant.pid").exists()
             && fs::metadata(fixture.0.join("descendant.pid"))
@@ -324,4 +368,6 @@ fn interruption_terminates_the_owned_server_command_and_descendants() {
     });
     assert_eq!(status.unwrap().code(), Some(143));
     wait_until(|| stopped(server) && stopped(child) && stopped(descendant));
+    assert!(fs::read(stdout).unwrap().ends_with(b"stdout-end"));
+    assert!(fs::read(stderr).unwrap().ends_with(b"stderr-end"));
 }

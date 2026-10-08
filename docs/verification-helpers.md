@@ -14,10 +14,12 @@ bash scripts/ci/archive-evidence.sh "$RUNNER_TEMP/evidence.tar.gz" \
 ```
 
 The Bash 3.2 helper takes a new output path followed by explicit root/relative-path
-pairs. It requires tar and gzip. Select only existing evidence; the caller decides
+pairs. Relative roots and output paths resolve from the caller's current directory,
+independently of `CDPATH` or option-like names. It requires tar and gzip.
+Select only existing evidence; the caller decides
 which optional paths exist. The output parent must exist and the output must stay
 outside every selected input. Creation refuses an occupied output, including a
-symlink. Failed creation retains any partial archive and all original inputs.
+symlink or a named pipe. Failed creation retains any partial archive and all original inputs.
 Success prints the archive's absolute path and leaves the inputs intact.
 
 Each path becomes an archive member relative to its supplied root. Paths must

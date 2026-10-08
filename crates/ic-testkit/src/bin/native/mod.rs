@@ -1,6 +1,7 @@
 use std::{
     ffi::OsString,
     io,
+    path::PathBuf,
     process::{Command, ExitCode},
     sync::atomic::{AtomicI32, Ordering},
     time::Duration,
@@ -9,8 +10,14 @@ use std::{
 use ic_testkit::pic::PocketIcStartupConfig;
 
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
-const USAGE: &str =
-    "usage: ic-testkit-server run [--ttl SECONDS] [--startup-timeout SECONDS] -- COMMAND [ARG...]";
+const USAGE: &str = "usage: ic-testkit-server run [--ttl SECONDS] [--startup-timeout SECONDS] [--server-stdout NEW-FILE --server-stderr NEW-FILE] -- COMMAND [ARG...]";
+
+struct RunArguments {
+    timeout: Duration,
+    ttl: Option<Duration>,
+    output_files: Option<(PathBuf, PathBuf)>,
+    command: Command,
+}
 
 extern "C" fn interrupted(signal: libc::c_int) {
     INTERRUPTED.store(signal, Ordering::Relaxed);
@@ -51,15 +58,15 @@ impl Drop for Signals {
     }
 }
 
-fn parse(
-    mut arguments: impl Iterator<Item = OsString>,
-) -> Result<(Duration, Option<Duration>, Command), String> {
+fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<RunArguments, String> {
     if arguments.next().as_deref() != Some(std::ffi::OsStr::new("run")) {
         return Err(USAGE.to_owned());
     }
     let mut timeout = Duration::from_secs(30);
     let mut ttl = None;
     let mut selected_timeout = false;
+    let mut stdout = None;
+    let mut stderr = None;
     while let Some(argument) = arguments.next() {
         if argument == "--" {
             let executable = arguments
@@ -68,7 +75,38 @@ fn parse(
                 .ok_or(USAGE)?;
             let mut command = Command::new(executable);
             command.args(arguments);
-            return Ok((timeout, ttl, command));
+            let output_files = match (stdout, stderr) {
+                (Some(stdout), Some(stderr)) => Some((stdout, stderr)),
+                (None, None) => None,
+                _ => {
+                    return Err(
+                        "--server-stdout and --server-stderr must be selected together".to_owned(),
+                    );
+                }
+            };
+            return Ok(RunArguments {
+                timeout,
+                ttl,
+                output_files,
+                command,
+            });
+        }
+        if argument == "--server-stdout" || argument == "--server-stderr" {
+            let selection = if argument == "--server-stdout" {
+                &mut stdout
+            } else {
+                &mut stderr
+            };
+            if selection.is_some() {
+                return Err(USAGE.to_owned());
+            }
+            *selection = Some(PathBuf::from(
+                arguments
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or(USAGE)?,
+            ));
+            continue;
         }
         let is_ttl = argument == "--ttl";
         if !(is_ttl && ttl.is_none() || argument == "--startup-timeout" && !selected_timeout) {
@@ -91,7 +129,12 @@ fn parse(
 }
 
 pub fn main() -> ExitCode {
-    let (timeout, ttl, mut command) = match parse(std::env::args_os().skip(1)) {
+    let RunArguments {
+        timeout,
+        ttl,
+        output_files,
+        mut command,
+    } = match parse(std::env::args_os().skip(1)) {
         Ok(arguments) => arguments,
         Err(error) => {
             eprintln!("{error}");
@@ -106,6 +149,9 @@ pub fn main() -> ExitCode {
                 return Err("--ttl requires an owned server selected by POCKET_IC_BIN".into());
             }
             config = config.with_server_hard_ttl(ttl);
+        }
+        if let Some((stdout, stderr)) = output_files {
+            config = config.with_server_output_files(stdout, stderr);
         }
         Ok::<_, Box<dyn std::error::Error>>(
             config.run_command(&mut command, || INTERRUPTED.load(Ordering::Relaxed) != 0)?,

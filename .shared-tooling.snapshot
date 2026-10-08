@@ -1,7 +1,7 @@
 # Shared Tooling snapshot v1
 format	1
 source	https://github.com/dragginzgame/shared-tooling
-revision	e9bfdc54c0daefc3dbbdfe091e5665dca5468eb3
+revision	eeb72e741199bd8574280eacb3542d8379b912f6
 file	fe90530851fed47985442343664b5f5f44fde396d78a0d6f489cc1562c61592d	-	DRAGGINZGAME.md
 file	59f6cb0b47fcfa698396776bbb391737292ebf34457ad7c65803fe7b36961499	-	docs/principles/README.md
 file	9315c9faffa4f36cfab496342535bf49d728ddd2111e8e127cbc44b3fac89ce7	-	docs/principles/decision-artifact-discipline.md
@@ -43,7 +43,7 @@ file	9ddc7b53043ab551a66c4a8abd4618b1793adc8ca74917258e9e220992ca9fc1	x	scripts/
 file	a82ba3f689f17e06506a0ef553ac3ebbba7b38648b247c73bf4d962eaaa6cd3e	x	scripts/ci/test-host-tools.sh
 file	0d4a45581e26987baaaa91cd49748e3b7b3ffa76b01f32d1db84560bd5baa68a	x	scripts/ci/test-ic-tools.sh
 file	75c53efefe025efb4f817879c802c201ca9d06a2c7ba7aefc25701b9aebf6170	x	scripts/ci/test-dependency-pins.sh
-file	e04e23c91bf8714dc7f7dbe8f47ec06bc2c5909b978ecec49b9f1eeb7c12c0fd	-	docs/verification-helpers.md
+file	77aadb32fe003786a714d5001ab564b4324c5b63ce2831f1ef6f4736f6715fe1	-	docs/verification-helpers.md
 file	ff1ebbbb5058171553b49ce28d5812d2711ae2d658a792bcf8a92cbf537a1ef5	x	scripts/ci/check-crates-io-version.sh
 file	5dd38585740657f98f655c15c4f617ca05dc4b6304e0925675a44376ec33309b	x	scripts/ci/check-release-commands.sh
 file	40f31a19d6115411ebffe7c26e3ed30b8af7eead10dd4830de8d5a9312291222	x	scripts/ci/read-cargo-workspace-version.sh
@@ -63,3 +63,4 @@ file	49e5c54defd9330aacf2635fd36803f3ea469ea278a2628f63dbd82458dfd5a9	-	scripts/
 file	502d20283b758ad3f72f94118af3d1c8bbb28ed06bfff57ec83b0acbcffc5806	x	scripts/ci/test-rust-tools.sh
 file	05838a36f21bb4299617ae8965687791062c94d768181f5f97676cc577382153	-	rules/contributions.md
 file	fc40c8ad1c4ab850fda0e60b8cb0b3201724d020966e4d7e5d07620781f5e814	-	scripts/ci/release-pr.sh
+file	5be336cb3e8045b2d2d536542a94944b376ee812b03f786a90b9d962ab697f13	x	scripts/ci/archive-evidence.sh

@@ -77,9 +77,7 @@ if RUNNER_TEMP="$fixture/linked-temp" bash "$collector" checks; then exit 1; fi
 # A failed archiver retains its partial output and original evidence.
 rm "$GITHUB_WORKSPACE/target"
 mkdir "$fixture/bin" "$fixture/failed-temp"
-# The generated tar substitute expands its own argument, not this shell's.
-# shellcheck disable=SC2016
-printf '#!%s\nprintf partial > "$2"\nexit 23\n' "$BASH" > "$fixture/bin/tar"
+printf '#!%s\nprintf partial\nexit 23\n' "$BASH" > "$fixture/bin/tar"
 chmod +x "$fixture/bin/tar"
 if PATH="$fixture/bin:$PATH" RUNNER_TEMP="$fixture/failed-temp" bash "$collector" checks; then exit 1; fi
 [[ "$(cat "$fixture/failed-temp/ic-testkit-checks-failure/evidence.tar.gz.partial")" == partial ]]
