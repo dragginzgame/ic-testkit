@@ -53,6 +53,10 @@ The table describes the intended CI contract. Passing qualification for a
 revision requires its matching workflow run; adding a matrix entry does not
 establish that the run passed.
 
+The portable job allows 25 minutes including native setup and evidence upload.
+Its regression step has a separate 15-minute limit, leaving time for the failure
+collector after an overlong suite. Lint/security retains its 10-minute limit.
+
 All three jobs also run real Prettier/Rust hook qualification and a native
 installer failure-artifact round trip, described below. These are separate
 from the offline portable suite.

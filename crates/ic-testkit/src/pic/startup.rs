@@ -3,7 +3,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read as _},
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus, Stdio},
     sync::{
         atomic::{AtomicU64, Ordering},
         mpsc::{self, RecvTimeoutError},
@@ -13,11 +13,9 @@ use std::{
 };
 
 #[cfg(unix)]
-use std::os::unix::{
-    fs::{DirBuilderExt as _, OpenOptionsExt as _},
-    process::CommandExt as _,
-};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 
+use ic_host_process::child::OwnedChild;
 use pocket_ic::{PocketIc, PocketIcBuilder};
 
 use super::transport;
@@ -376,19 +374,17 @@ impl PocketIcStartupConfig {
             return Err(command_error(io::Error::from(io::ErrorKind::Interrupted)));
         }
         command.env("IC_TESTKIT_POCKET_IC_URL", url);
-        #[cfg(unix)]
-        command.process_group(0);
-        let child = command.spawn().map_err(|source| PocketIcStartupError::Io {
-            operation: "spawn command with PocketIC server",
-            path: PathBuf::from(command.get_program()),
-            source,
-        })?;
-        let mut owned_child = CommandChild(Some(child));
+        let mut owned_child =
+            OwnedChild::spawn(command).map_err(|source| PocketIcStartupError::Io {
+                operation: "spawn command with PocketIC server",
+                path: PathBuf::from(command.get_program()),
+                source,
+            })?;
         let result = loop {
             if cancelled() {
                 break Err(io::Error::from(io::ErrorKind::Interrupted));
             }
-            match poll_child(owned_child.0.as_mut().expect("command child remains owned")) {
+            match owned_child.try_wait() {
                 Ok(Some(status)) => break Ok(status),
                 Ok(None) => {
                     if let Some(managed) = server.as_mut()
@@ -405,10 +401,9 @@ impl PocketIcStartupConfig {
                 Err(source) => break Err(source),
             }
         };
-        let mut child = owned_child.0.take().expect("command child remains owned");
         let termination_error = result
             .is_err()
-            .then(|| terminate_child(&mut child))
+            .then(|| owned_child.terminate().err().map(|error| error.to_string()))
             .flatten();
         drop(server);
         result.map_err(|source| PocketIcStartupError::CommandRun {
@@ -600,20 +595,10 @@ fn build_bounded(
 }
 
 struct ManagedServer {
-    child: Option<Child>,
+    child: Option<OwnedChild>,
     binary: PathBuf,
     files: StartupFiles,
     started: Instant,
-}
-
-struct CommandChild(Option<Child>);
-
-impl Drop for CommandChild {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = terminate_child(&mut child);
-        }
-    }
 }
 
 enum PortFileState {
@@ -642,16 +627,12 @@ impl ManagedServer {
             .arg(&files.port)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        #[cfg(unix)]
-        {
-            command.process_group(0);
-        }
-        let child = command
-            .spawn()
-            .map_err(|source| PocketIcStartupError::ServerSpawn {
+        let child = OwnedChild::spawn(&mut command).map_err(|source| {
+            PocketIcStartupError::ServerSpawn {
                 server_binary: binary.clone(),
                 source,
-            })?;
+            }
+        })?;
         let mut server = Self {
             child: Some(child),
             binary,
@@ -704,7 +685,7 @@ impl ManagedServer {
             .child
             .as_mut()
             .expect("managed server child must remain present");
-        poll_child(child).map_err(|source| PocketIcStartupError::Io {
+        child.try_wait().map_err(|source| PocketIcStartupError::Io {
             operation: "inspect PocketIC server child",
             path: self.binary.clone(),
             source,
@@ -762,7 +743,7 @@ impl ManagedServer {
 
     fn terminate_and_capture(mut self) -> CapturedServer {
         let termination_error = match self.child.take() {
-            Some(mut child) => terminate_child(&mut child),
+            Some(mut child) => child.terminate().err().map(|error| error.to_string()),
             None => None,
         };
         let mut captured = self.capture();
@@ -787,124 +768,9 @@ impl ManagedServer {
                 // this thread fails. On Unix, Drop terminates the group before reaping.
                 let mut server = self;
                 if let Some(child) = server.child.as_mut() {
-                    #[cfg(unix)]
-                    let _ = wait_for_child_exit(child, false);
-                    #[cfg(not(unix))]
                     let _ = child.wait();
                 }
             });
-    }
-}
-
-impl Drop for ManagedServer {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = terminate_child(&mut child);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn wait_for_child_exit(child: &Child, nonblocking: bool) -> io::Result<bool> {
-    // WNOWAIT keeps the leader's PID reserved until group cleanup completes.
-    let flags = libc::WEXITED | libc::WNOWAIT | if nonblocking { libc::WNOHANG } else { 0 };
-    loop {
-        // SAFETY: siginfo_t is a C value for which zero initialization is valid.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        // SAFETY: the PID is an owned, unreaped child and info is writable.
-        let result = unsafe { libc::waitid(libc::P_PID, child.id(), &raw mut info, flags) };
-        if result == 0 {
-            return Ok(info.si_signo != 0);
-        }
-        let error = io::Error::last_os_error();
-        if error.kind() != io::ErrorKind::Interrupted {
-            return Err(error);
-        }
-    }
-}
-
-fn poll_child(child: &mut Child) -> io::Result<Option<ExitStatus>> {
-    #[cfg(unix)]
-    {
-        if !wait_for_child_exit(child, true)? {
-            return Ok(None);
-        }
-        // The leader is still unreaped, so its process group cannot be reused.
-        terminate_process_group(child)?;
-        child.wait().map(Some)
-    }
-    #[cfg(not(unix))]
-    child.try_wait()
-}
-
-#[cfg(unix)]
-fn terminate_process_group(child: &Child) -> io::Result<()> {
-    let group = libc::pid_t::try_from(child.id())
-        .map_err(|_| io::Error::other("managed child PID exceeds the OS process ID range"))?;
-    loop {
-        // SAFETY: spawn sets this child's PGID to its PID, and it remains
-        // unreaped until after this call. No caller/test-runner group is used.
-        let result = unsafe { libc::killpg(group, libc::SIGKILL) };
-        if result == 0 {
-            return Ok(());
-        }
-        let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(());
-        }
-        #[cfg(target_os = "macos")]
-        if error.raw_os_error() == Some(libc::EPERM) && wait_for_child_exit(child, true)? {
-            // Darwin's group signal path excludes zombies and can report EPERM
-            // for the unreaped leader alone. Verify that exact state; permission
-            // failures for a group with any other member still propagate.
-            // Two slots distinguish the sole leader from a larger/truncated group.
-            let mut members: [libc::pid_t; 2] = [0; 2];
-            let size = libc::c_int::try_from(std::mem::size_of_val(&members))
-                .expect("two process IDs fit in a libproc buffer size");
-            // SAFETY: members is writable for size bytes. The owned unreaped
-            // leader reserves this group ID across the query and later wait.
-            let count =
-                unsafe { libc::proc_listpgrppids(group, members.as_mut_ptr().cast(), size) };
-            if count == 1 && members[0] == group {
-                return Ok(());
-            }
-        }
-        if error.kind() != io::ErrorKind::Interrupted {
-            return Err(error);
-        }
-    }
-}
-
-#[cfg(unix)]
-fn terminate_child(child: &mut Child) -> Option<String> {
-    let termination = terminate_process_group(child);
-    if termination.is_err() {
-        let _ = child.kill();
-    }
-    let wait = child.wait();
-    termination
-        .and_then(|()| wait.map(|_| ()))
-        .err()
-        .map(|error| error.to_string())
-}
-
-#[cfg(not(unix))]
-fn terminate_child(child: &mut Child) -> Option<String> {
-    match child.try_wait() {
-        Ok(Some(_)) => None,
-        Ok(None) => child
-            .kill()
-            .and_then(|()| child.wait().map(|_| ()))
-            .err()
-            .map(|error| error.to_string()),
-        Err(inspect_error) => {
-            let termination_error = child.kill().and_then(|()| child.wait().map(|_| ())).err();
-            termination_error.map(|termination_error| {
-                format!(
-                    "failed to inspect child before termination: {inspect_error}; termination also failed: {termination_error}"
-                )
-            })
-        }
     }
 }
 

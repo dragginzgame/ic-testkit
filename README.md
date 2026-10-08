@@ -1311,6 +1311,9 @@ resolution, execution and Git provenance belong to `ic_host_process`; Candid
 extraction and response decoding belong to `ic_host_tools`. Execution, resolution,
 Candid and provenance are Unix-only.
 Structural Wasm inspection does not replace PocketIC's runtime validation.
+The host-crate re-exports select IC Host 0.5; gzip encoding accepts numeric levels
+0–9. When upgrading from 0.21, update Wasm fact literals and exhaustive inspection
+error matches as described in the [0.22 migration guide](crates/ic-testkit/CHANGELOG.md#0220).
 
 The `transactional_artifact_cache` example uses shared digest/version admission
 and bounded execution for its transformer. Supply a reviewed raw executable

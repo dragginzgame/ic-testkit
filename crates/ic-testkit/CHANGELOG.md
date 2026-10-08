@@ -8,6 +8,44 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.22.0]
+
+### Breaking and migration
+
+- The public `ic_host_artifacts`, `ic_host_fs`, `ic_host_process` and
+  `ic_host_tools` re-exports now select Host 0.5. Update gzip encoder calls to
+  pass a numeric compression level from 0 through 9, update Wasm fact literals
+  for the expanded facts, and review exhaustive inspection-error matches.
+  See the [Host 0.5 migration notes](https://github.com/dragginzgame/ic-host-tooling/blob/db637fac8b7a9ef62301e1d9009ffeb5ffcd0be7/docs/changelog/0.5.md).
+  This is a pre-1.0 hard cut; no deprecated aliases or compatibility bridges
+  are provided. Repository-owned retained cache layouts are unchanged.
+
+- Observed Cargo builds now run in an owned process group. Observer unwinding
+  stops the compiler group as well as Cargo; callers must not rely on those
+  builds sharing the parent terminal process group. Unobserved builds retain
+  their existing command-output behavior.
+
+### Fixed
+
+- Stop fingerprinting when an excluded cache root cannot be resolved, rather
+  than silently dropping the exclusion. Not-yet-created roots remain accepted;
+  valid digest framing and retained cache layouts are unchanged
+  ([#26](https://github.com/dragginzgame/ic-testkit/issues/26)).
+
+### Changed
+
+- Managed PocketIC servers and commands now use `ic_host_process::child::OwnedChild`
+  for process-group ownership, polling and termination instead of local cleanup
+  implementations ([#25](https://github.com/dragginzgame/ic-testkit/issues/25)).
+  Startup readiness, cancellation, TTL and output bounds remain consumer-owned.
+  Cleanup signals the owned group and reaps its leader; it has no wall-clock
+  bound and cannot contain descendants that escape that group.
+- Adopt Shared Tooling 0.1.23 release helpers. Final checks now revalidate the
+  committed payload and exact annotated tag object before delivery, and completed
+  releases verify their remote tag and branch history. PR lookup aggregates
+  paginated responses with jq without requiring GitHub CLI `--slurp`. This
+  repository continues to use direct atomic branch/tag delivery.
+
 ## [0.21.3] - 2026-10-07
 
 ### Changed

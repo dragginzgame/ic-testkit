@@ -104,7 +104,10 @@ bytes before a consumer commit and does not need the distribution helper.
 `test-cloc-tooling-distribution.sh` remains upstream-only: it qualifies actual
 committed exporter/verifier integration and the consumer fixture's independence.
 `test-cloc-fixture-contexts.sh` is the upstream admission check for the reusable
-LOC fixtures under enclosing Git/Cargo configuration.
+LOC fixtures under enclosing Git/Cargo configuration, including sibling-report
+checks with trailing-slash and aliased temporary roots. Refresh
+`test-cloc-siblings.sh` to receive its physical-path correction; counts, partial
+totals, error handling and retained failures keep their existing contracts.
 
 When refreshing `install-actionlint.sh`, `install-shellcheck.sh`, `install-gitleaks.sh`,
 `install-sccache.sh` or `install-yq.sh`, also declare `scripts/ci/install-ci-tool.sh`

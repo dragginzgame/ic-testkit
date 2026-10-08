@@ -2495,3 +2495,50 @@ fn warm_hits_reject_source_mutation_for_active_and_materialized_artifacts() {
         }
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn observed_cargo_panic_stops_compiler_descendants() {
+    let root = unique_temp_directory("observed-cargo-panic");
+    let pids = root.join("pids");
+    fs::write(
+        root.join("build"),
+        "set -eu\nsleep 30 &\nprintf '%s %s' \"$$\" \"$!\" > pids\nprintf ready\nwait\n",
+    )
+    .unwrap();
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program("/bin/sh");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut observer = |event| {
+            if matches!(event, WasmBuildProgressEvent::CargoOutput { .. }) {
+                panic!("synthetic Cargo observer panic");
+            }
+        };
+        let mut progress = ProgressReporter::observed(
+            WasmBuildProgressConfig::new().with_cargo_output(true),
+            &mut observer,
+        );
+        run_cargo_build(&spec, &root.join("cargo-target"), &mut progress).unwrap();
+    }));
+    assert!(result.is_err(), "observer must panic");
+    for pid in fs::read_to_string(pids).unwrap().split_whitespace() {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let output = std::process::Command::new("/bin/ps")
+                .args(["-p", pid, "-o", "stat="])
+                .output()
+                .unwrap();
+            assert!(output.status.success() || output.status.code() == Some(1));
+            let state = String::from_utf8(output.stdout).unwrap();
+            if state.trim().is_empty() || state.trim().starts_with('Z') {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "Cargo process {pid} remains running"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}

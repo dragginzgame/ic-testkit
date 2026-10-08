@@ -1161,3 +1161,165 @@ including checks, portable fixtures, MSRV and live concurrency on Linux and both
 macOS architectures. Its tag run remains queued at inspection. This establishes
 released-source qualification for the Rust-tool fixture and cache composition;
 it does not qualify pending 0.21.3 bytes.
+
+### 2026-10-07: Shared Tooling 0.1.22 snapshot refresh
+
+Released Testkit 0.21.3 is `a8e83a1940e5f44927c6df95b5d1269a3ac699bc`; its
+[branch](https://github.com/dragginzgame/ic-testkit/actions/runs/37661836622) and
+[tag](https://github.com/dragginzgame/ic-testkit/actions/runs/37661836641) CI are
+queued at inspection. The only open Testkit proposal concerns changing the
+maintainer's pre-1.0 hard-cut policy; no compatibility bridge is introduced.
+
+The canonical exporter refreshes the same 61-file selection to committed Shared
+Tooling 0.1.22 `2687f26317952c43c685f7f799ed09288dc10a67`, using a private detached
+source clone to preserve the sibling's active unpublished PR-runner changes.
+Only selected documentation and the revision/digest records change: the current
+release engine, consumer runtime and dependency graph remain unchanged. This
+scope does not introduce a numbered release draft for a governance-only refresh.
+
+Snapshot, prepared tools, declaration pins, formatting and whitespace checks
+pass. The exact-source upstream LOC-context and failure-retention fixtures pass
+on Linux with the consumer's prepared host bin directory explicitly on PATH.
+They cover enclosing Git/Cargo configuration, inherited output selection and
+physical/trailing-slash/aliased TMPDIR roots. These are upstream qualification
+fixtures, not newly selected consumer CI fixtures. The initial attempt lacked
+cloc on PATH and is retained separately; no tool was installed implicitly.
+Evidence uses `/tmp/ic-testkit-shared0122-*.log`; the private clone is identified
+by `/tmp/ic-testkit-shared0122-evidence`. The initial fixture is retained at
+`/tmp/cloc-fixture-contexts.GfpVT4`.
+
+The matching
+[Shared Tooling run](https://github.com/dragginzgame/shared-tooling/actions/runs/37659875012)
+is queued, so native owner acceptance remains outstanding. IC Host's committed
+revision remains 0.4.6 `0fb05f9`; its active unpublished child-process and artifact
+work is preserved and not consumed. No manifests, versions, cache formats,
+release effects or broad gates change in this refresh.
+
+### 2026-10-08: Host 0.5 adoption for pending 0.22.0
+
+The workspace selects the four published IC Host 0.5.0 registry packages,
+explicitly updated from 0.4.6 without changing unrelated lock selections.
+`cargo fetch --locked --offline` prepared the selected graph successfully.
+The [Host release workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37744999108)
+for `db637fac8b7a9ef62301e1d9009ffeb5ffcd0be7` passed MSRV and native Linux,
+macOS 15 ARM64 and Intel jobs. This source now supplies process-group ownership
+through `OwnedChild`; the earlier frozen dirty-candidate rehearsal does not
+serve as registry-backed adoption evidence.
+
+Focused working-tree Linux checks with the actual registry selection pass:
+startup (16 passed, one live test ignored), server runner (7 passed, two live
+checks ignored), artifact host integration (2) and Wasm artifact reading (1).
+Strict library/test Clippy, Rust 1.88 library/binary checking, Wasm target
+checking, `make fmt-check` and declaration pin checking pass. Cargo checks use
+`--locked --offline` and this workspace's `target/`. Logs remain at
+`/tmp/ic-testkit-022-*.log`. These tests use synthetic servers and transforms;
+they do not qualify live PocketIC or native macOS execution of this changed
+consumer source. Full gates and native consumer CI remain maintainer-owned.
+
+The canonical 61-file Shared Tooling snapshot now selects 0.1.23,
+`0ba0ad00ed94848e54ecc82629b6b7873b7284c0`. Snapshot verification passes.
+The release-runner and PR fixtures pass against a committed-source export at
+`/tmp/ic-testkit-shared0123-proof`; the consumer does not vendor those upstream
+fixtures. Initial attempts to invoke absent consumer fixture paths failed and
+are retained at `/tmp/ic-testkit-022-release-runner.log` and
+`/tmp/ic-testkit-022-release-pr.log`. The successful committed-source fixture
+logs use the `-proof.log` suffix. The
+[Shared Tooling 0.1.23 workflow](https://github.com/dragginzgame/shared-tooling/actions/runs/37746567888)
+also completed successfully. These fixture runs do not publish a consumer
+release or change its direct delivery policy.
+
+### 2026-10-08: pending 0.22 process ownership audit
+
+Applied `audits/flow-convergence-and-duplication.md` from Shared Tooling
+`0ba0ad00ed94848e54ecc82629b6b7873b7284c0`, with the root AGENTS.md overlay,
+to the dirty pending 0.22 changes based on `a8e83a1940e5f44927c6df95b5d1269a3ac699bc`.
+Source inspection traced managed startup/command ownership, observed Cargo
+execution, bounded reads, atomic copies and cache fingerprint/retention owners.
+This is a scoped flow review, not a whole-crate performance or safety verdict.
+
+The remaining observed-Cargo child guard duplicated ownership and only killed
+its leader on observer unwinding. It now uses published Host 0.5 `OwnedChild`;
+a synthetic compiler-descendant test verifies that neither leader nor descendant
+remains running after callback panic (zombies count as stopped, not reaped).
+Three focused observed-Cargo tests, strict library/test Clippy and formatting
+pass on Linux with the prepared locked/offline graph. Logs are retained at
+`/tmp/ic-testkit-022-audit-*.log`. The new production flow removes 34 net lines
+before documentation; this is a source reduction, not a measured speed-up.
+
+Unobserved command-output execution has no callback unwind lifecycle and remains
+separate. Cache retention locks and length-framed digest domains remain local
+because they carry Testkit-specific retention and retained v1 identity contracts.
+Resource-limit admission and staged executable installation were not added:
+this reviewed flow owns neither replica admission nor tool installation.
+Native macOS consumer CI and live PocketIC qualification remain outstanding;
+these local results do not extend earlier source qualification.
+
+### 2026-10-08: fingerprint exclusion error audit
+
+The scoped `audits/code-hygiene.md` review at Shared Tooling
+`0ba0ad00ed94848e54ecc82629b6b7873b7284c0` and the root overlay examined
+artifact digest and atomic-publication boundaries on the pending 0.22 tree
+based on `a8e83a1940e5f44927c6df95b5d1269a3ac699bc`. Both fingerprint entry
+paths previously discarded all exclusion-root canonicalization errors. The
+shared local resolver now permits only `NotFound` as a not-yet-created root;
+other failures stop acquisition before source-lease digest reuse. Valid input
+framing and retained v1 layouts are unchanged. The bounded correctness finding
+and local fix are tracked in [#26](https://github.com/dragginzgame/ic-testkit/issues/26).
+
+All 10 focused digest tests and strict library/test Clippy pass against the
+prepared locked/offline Host 0.5 registry graph on Linux; formatting passes.
+The native symlink-cycle fixture verifies both fingerprint entrypoints and
+cached composable reuse, while absent exclusions remain accepted. Logs remain
+at `/tmp/ic-testkit-022-audit-digest*.log`. Atomic copying continues to delegate
+publication to Host's durable writer; the local wrapper retains source and
+destination error context. No performance measurement, whole-crate safety verdict,
+native macOS qualification or retained-installation migration is claimed.
+
+### 2026-10-08: scoped complexity review of pending 0.22
+
+Applied `audits/complexity-and-technical-debt.md` from reviewed Shared Tooling
+`0ba0ad00ed94848e54ecc82629b6b7873b7284c0`, with the root AGENTS.md overlay,
+to pending build-progress, batch-reporting and consumer release-adapter owners
+on base `a8e83a1940e5f44927c6df95b5d1269a3ac699bc`. Local and remote Shared
+Tooling main still select 0.1.23; no further snapshot update was needed.
+
+The current progress axes are observer presence, optional heartbeat interval,
+output forwarding and build/cache phase. `ProgressReporter` owns their execution
+and failure-timing projection; batch reports preserve ordered results and partial
+failure evidence. A low-severity duplication finding in `record_phase` was fixed:
+phase selection now chooses one timing slot before shared saturating accumulation.
+Input-resolution phases alone contribute to their subtotal; optional phases still
+distinguish not run from zero elapsed. This removes 48 lines without removing
+symbols, adding public modes or changing cache storage. It is not measured
+performance evidence.
+
+Source rehearsals covered adding a build phase (the enum/phase mapping and timing
+slot remain explicit), changing release metadata files (the consumer adapter and
+its recovery fixtures remain the owner), and changing observer output policy (the
+reporter and stream projection remain separate from process ownership). No new
+framework was justified. The release adapter's retained old/new metadata,
+validation bindings and exact release files are consumer policy; extracting them
+into a generic shared state machine would spread that ownership rather than
+remove an evidenced contract duplicate. Batch domain errors and source-lease
+invalidation also retain independent responsibilities.
+
+During this review another writer changed Cargo.lock to Host 0.5.1 and newer TOML
+packages. That selection was preserved, not resolved by this review. Initial
+locked/offline preparation failed on missing Host 0.5.1 packages; ordinary online
+preparation then failed to resolve static.crates.io in the sandbox. An explicitly
+approved `cargo fetch --locked` with network access downloaded the selected
+packages; subsequent locked/offline preparation succeeded. No version upgrade
+was performed by the cache-preparation commands. The earlier failed batch log
+remains at `/tmp/ic-testkit-022-complexity-batch.log`.
+
+Against the actual prepared selection, 12 focused Wasm batch tests, 3 observed
+Cargo tests, 10 digest tests and 16 startup tests pass (one live startup test
+ignored). Strict library/test Clippy, formatting and shared snapshot verification
+pass. Successful logs use `/tmp/ic-testkit-022-complexity-*.log`, including the
+`batch-prepared` suffix. Host 0.5.1 source at
+`81f9809861159def2fd0987fcb7961cda4afd969` has no library-source changes from
+0.5.0; its [native workflow](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37750135927)
+was still running when inspected. Neither that run nor these Linux checks
+qualify native macOS execution of the pending consumer source. This is a scoped
+complexity review with no unresolved actionable structural finding in the named
+owners, not a whole-repository correctness or performance verdict.

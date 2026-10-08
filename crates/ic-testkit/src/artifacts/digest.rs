@@ -246,6 +246,25 @@ fn destination_is_reusable(destination: &Path, expected_bytes: u64) -> bool {
     }
 }
 
+// A cache root may not have been created yet. Other failures must not silently
+// remove a declared exclusion and change which inputs contribute to identity.
+fn resolve_excluded_roots(paths: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+    paths
+        .iter()
+        .filter_map(|path| match path.canonicalize() {
+            Ok(path) => Some(Ok(path)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+            Err(error) => Some(Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to resolve excluded root {}: {error}",
+                    path.display()
+                ),
+            ))),
+        })
+        .collect()
+}
+
 pub(super) fn digest_labeled_paths<L: AsRef<Path>, P: AsRef<Path>>(
     domain: &str,
     paths: impl IntoIterator<Item = (L, P)>,
@@ -256,10 +275,7 @@ pub(super) fn digest_labeled_paths<L: AsRef<Path>, P: AsRef<Path>>(
         os_bytes(left.as_ref().as_os_str()).cmp(&os_bytes(right.as_ref().as_os_str()))
     });
 
-    let excluded_roots = excluded_roots
-        .iter()
-        .filter_map(|path| path.canonicalize().ok())
-        .collect::<Vec<_>>();
+    let excluded_roots = resolve_excluded_roots(excluded_roots)?;
     let mut visited_directories = BTreeSet::new();
     let mut hasher = InputHasher::new(domain);
     for (label, path) in paths {
@@ -306,10 +322,7 @@ pub(super) fn digest_labeled_paths_composable<'a>(
     paths.sort_by(|(left, _), (right, _)| {
         os_bytes(left.as_os_str()).cmp(&os_bytes(right.as_os_str()))
     });
-    let excluded_roots = excluded_roots
-        .iter()
-        .filter_map(|path| path.canonicalize().ok())
-        .collect::<Vec<_>>();
+    let excluded_roots = resolve_excluded_roots(excluded_roots)?;
     let mut hasher = InputHasher::new(&format!("{domain}/composable-v1"));
     for (label, path) in paths {
         let digest = cache.digest_root(domain, label, path, &excluded_roots)?;
@@ -517,6 +530,44 @@ mod tests {
     use std::{ffi::OsStr, os::unix::ffi::OsStrExt as _};
     #[cfg(windows)]
     use std::{ffi::OsString, os::windows::ffi::OsStringExt as _};
+
+    #[test]
+    #[cfg(unix)]
+    fn exclusion_resolution_errors_stop_both_fingerprint_paths() {
+        use std::os::unix::fs::symlink;
+        let root = unique_temp_directory("invalid-digest-exclusions");
+        let input = root.join("input");
+        fs::write(&input, b"source").unwrap();
+        let cycle = root.join("cycle");
+        symlink("cycle", &cycle).unwrap();
+        let paths = [(std::path::Path::new("input"), input.as_path())];
+        assert!(
+            digest_labeled_paths("exclusions-v1", paths, std::slice::from_ref(&cycle)).is_err()
+        );
+        let mut cache = LabeledPathDigestCache::default();
+        let expected =
+            digest_labeled_paths_composable("exclusions-v1", paths, &[], &mut cache).unwrap();
+        assert!(
+            digest_labeled_paths_composable("exclusions-v1", paths, &[cycle], &mut cache).is_err()
+        );
+        // A not-yet-created cache root remains an accepted exclusion, including
+        // on a reused source-lease digest. A failed resolution cannot reuse it.
+        assert_eq!(
+            digest_labeled_paths_composable(
+                "exclusions-v1",
+                paths,
+                &[root.join("missing")],
+                &mut cache,
+            )
+            .unwrap(),
+            expected
+        );
+        assert_eq!(
+            digest_labeled_paths("exclusions-v1", paths, &[]).unwrap(),
+            digest_labeled_paths("exclusions-v1", paths, &[root.join("missing")]).unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn digest_text_preserves_lowercase_hex_and_leading_zeroes() {

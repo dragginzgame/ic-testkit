@@ -6,6 +6,36 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.22.0]
+
+### Breaking
+
+- Adopt IC Host Tooling 0.5 through the public host-crate re-exports. Gzip
+  encoding now takes numeric levels 0–9; update compression arguments, Wasm
+  fact literals and exhaustive inspection-error matches. See
+  [package migration notes](crates/ic-testkit/CHANGELOG.md#0220).
+
+- Observed Cargo builds now run in an owned process group. Observer unwinding
+  stops the compiler group as well as Cargo; callers must not rely on those
+  builds sharing the parent terminal process group. Unobserved builds retain
+  their existing command-output behavior.
+
+### Fixed
+
+- Stop fingerprinting when an excluded cache root cannot be resolved, rather
+  than silently dropping the exclusion. Not-yet-created roots remain accepted;
+  valid digest framing and retained cache layouts are unchanged
+  ([#26](https://github.com/dragginzgame/ic-testkit/issues/26)).
+
+### Changed
+
+- Delegate managed server and command process-group cleanup to IC Host's
+  shared child owner, preserving readiness, cancellation and bounded diagnostics
+  ([#25](https://github.com/dragginzgame/ic-testkit/issues/25)).
+- Refresh Shared Tooling to 0.1.23: recheck release payload and annotated tags
+  after final hooks, verify completed-release remote identity, and query paginated
+  PR results without requiring a newer GitHub CLI `--slurp` option.
+
 ## [0.21.3] - 2026-10-07
 
 ### Changed

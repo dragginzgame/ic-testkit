@@ -1,3 +1,4 @@
+use ic_host_process::child::OwnedChild;
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
@@ -5,7 +6,7 @@ use std::{
     fs::{self, File},
     io,
     path::{Component, Path, PathBuf},
-    process::{Child, Command, ExitStatus, Output, Stdio},
+    process::{Command, ExitStatus, Output, Stdio},
     sync::{
         Arc, RwLock,
         atomic::{AtomicUsize, Ordering},
@@ -655,87 +656,39 @@ impl ProgressReporter<'_> {
     fn record_phase(&mut self, phase: WasmBuildFailurePhase, elapsed: Duration) {
         self.failure_phase = Some(phase);
         let timings = &mut self.failure_timings;
-        match phase {
-            WasmBuildFailurePhase::Specification => {}
-            WasmBuildFailurePhase::ExactCacheCoordination => {
-                timings.exact_cache_coordination =
-                    timings.exact_cache_coordination.saturating_add(elapsed);
-            }
-            WasmBuildFailurePhase::ToolIdentity => {
-                timings.input_resolution.tool_identity = timings
-                    .input_resolution
-                    .tool_identity
-                    .saturating_add(elapsed);
-                timings.input_resolution.total =
-                    timings.input_resolution.total.saturating_add(elapsed);
-            }
-            WasmBuildFailurePhase::CargoMetadata => {
-                timings.input_resolution.cargo_metadata = timings
-                    .input_resolution
-                    .cargo_metadata
-                    .saturating_add(elapsed);
-                timings.input_resolution.total =
-                    timings.input_resolution.total.saturating_add(elapsed);
-            }
-            WasmBuildFailurePhase::InputDiscovery => {
-                timings.input_resolution.input_discovery = timings
-                    .input_resolution
-                    .input_discovery
-                    .saturating_add(elapsed);
-                timings.input_resolution.total =
-                    timings.input_resolution.total.saturating_add(elapsed);
-            }
-            WasmBuildFailurePhase::ContentHashing => {
-                timings.input_resolution.content_hashing = timings
-                    .input_resolution
-                    .content_hashing
-                    .saturating_add(elapsed);
-                timings.input_resolution.total =
-                    timings.input_resolution.total.saturating_add(elapsed);
-            }
-            WasmBuildFailurePhase::SharedTargetCoordination => {
-                timings.shared_target_coordination = Some(
-                    timings
-                        .shared_target_coordination
-                        .unwrap_or_default()
-                        .saturating_add(elapsed),
-                );
-            }
-            WasmBuildFailurePhase::SharedTargetMaintenance => {
-                timings.shared_target_maintenance = Some(
-                    timings
-                        .shared_target_maintenance
-                        .unwrap_or_default()
-                        .saturating_add(elapsed),
-                );
-            }
-            WasmBuildFailurePhase::CargoBuild => {
-                timings.cargo_build = Some(
-                    timings
-                        .cargo_build
-                        .unwrap_or_default()
-                        .saturating_add(elapsed),
-                );
-            }
+        // Select the authoritative timing slot once. Optional slots distinguish
+        // an unrun phase from one that completed with zero elapsed time.
+        let timing = match phase {
+            WasmBuildFailurePhase::Specification => return,
+            WasmBuildFailurePhase::ExactCacheCoordination => &mut timings.exact_cache_coordination,
+            WasmBuildFailurePhase::ToolIdentity => &mut timings.input_resolution.tool_identity,
+            WasmBuildFailurePhase::CargoMetadata => &mut timings.input_resolution.cargo_metadata,
+            WasmBuildFailurePhase::InputDiscovery => &mut timings.input_resolution.input_discovery,
+            WasmBuildFailurePhase::ContentHashing => &mut timings.input_resolution.content_hashing,
+            WasmBuildFailurePhase::SharedTargetCoordination => timings
+                .shared_target_coordination
+                .get_or_insert(Duration::ZERO),
+            WasmBuildFailurePhase::SharedTargetMaintenance => timings
+                .shared_target_maintenance
+                .get_or_insert(Duration::ZERO),
+            WasmBuildFailurePhase::CargoBuild => timings.cargo_build.get_or_insert(Duration::ZERO),
             WasmBuildFailurePhase::ArtifactPublication => {
-                timings.artifact_publication = Some(
-                    timings
-                        .artifact_publication
-                        .unwrap_or_default()
-                        .saturating_add(elapsed),
-                );
+                timings.artifact_publication.get_or_insert(Duration::ZERO)
             }
-            WasmBuildFailurePhase::ExactCacheMaintenance => {
-                timings.exact_cache_maintenance = Some(
-                    timings
-                        .exact_cache_maintenance
-                        .unwrap_or_default()
-                        .saturating_add(elapsed),
-                );
-            }
-            WasmBuildFailurePhase::Cleanup => {
-                timings.cleanup = Some(timings.cleanup.unwrap_or_default().saturating_add(elapsed));
-            }
+            WasmBuildFailurePhase::ExactCacheMaintenance => timings
+                .exact_cache_maintenance
+                .get_or_insert(Duration::ZERO),
+            WasmBuildFailurePhase::Cleanup => timings.cleanup.get_or_insert(Duration::ZERO),
+        };
+        *timing = timing.saturating_add(elapsed);
+        if matches!(
+            phase,
+            WasmBuildFailurePhase::ToolIdentity
+                | WasmBuildFailurePhase::CargoMetadata
+                | WasmBuildFailurePhase::InputDiscovery
+                | WasmBuildFailurePhase::ContentHashing
+        ) {
+            timings.input_resolution.total = timings.input_resolution.total.saturating_add(elapsed);
         }
     }
 
@@ -2523,7 +2476,10 @@ pub(super) fn build_wasm_canisters_cached_in_batch(
 /// resolution, lock waits, maintenance, Cargo, and publication phases emit
 /// periodic heartbeats, so a legitimate acquisition need not appear stalled.
 /// Observer panics propagate after joining active phase work, terminating the
-/// Cargo child when applicable, and preserving normal cleanup.
+/// Cargo process group when applicable, and preserving normal cleanup.
+/// Observed Cargo builds use a new process group rather than sharing the
+/// parent terminal group. Cleanup reaps Cargo and signals its remaining group
+/// members; escaped descendants and a wall-clock cleanup bound are not covered.
 pub fn build_wasm_canisters_cached_with_progress<F>(
     spec: &WasmBuildSpec,
     config: WasmBuildProgressConfig,
@@ -4815,30 +4771,22 @@ fn run_observed_cargo_build(
     mut command: Command,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<(), WasmBuildError> {
+    // The observer can unwind at any event. Own the compiler group before
+    // invoking it so cleanup reaches descendants as well as the Cargo leader.
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let started = Instant::now();
-    let child = command
-        .spawn()
-        .map_err(|source| WasmBuildError::CommandSpawn {
+    let mut child =
+        OwnedChild::spawn(&mut command).map_err(|source| WasmBuildError::CommandSpawn {
             phase: WasmBuildPhase::CargoBuild,
             program: spec.cargo_program.clone(),
             source,
         })?;
-    let mut child = ObservedChild::new(child);
     progress.emit(WasmBuildProgressEvent::CargoStarted {
         target_dir: build_target_dir.to_owned(),
     });
 
-    let stdout = child
-        .child_mut()
-        .stdout
-        .take()
-        .expect("Cargo stdout must be piped");
-    let stderr = child
-        .child_mut()
-        .stderr
-        .take()
-        .expect("Cargo stderr must be piped");
+    let stdout = child.take_stdout().expect("Cargo stdout must be piped");
+    let stderr = child.take_stderr().expect("Cargo stderr must be piped");
     // Each reader sends at most 8 KiB per chunk. Bound pending chunks while
     // retaining both pipe readers so neither stream can block the other.
     let (sender, chunks) = mpsc::sync_channel(8);
@@ -4976,33 +4924,6 @@ fn join_output_reader(
         path: PathBuf::from(cargo_program),
         source,
     })
-}
-
-struct ObservedChild(Option<Child>);
-
-impl ObservedChild {
-    const fn new(child: Child) -> Self {
-        Self(Some(child))
-    }
-
-    const fn child_mut(&mut self) -> &mut Child {
-        self.0.as_mut().expect("observed child must be present")
-    }
-
-    fn wait(&mut self) -> io::Result<ExitStatus> {
-        let status = self.child_mut().wait()?;
-        self.0.take();
-        Ok(status)
-    }
-}
-
-impl Drop for ObservedChild {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.0.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
 }
 
 fn ensure_command_success(phase: WasmBuildPhase, output: Output) -> Result<Output, WasmBuildError> {
