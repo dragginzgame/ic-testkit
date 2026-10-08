@@ -3,7 +3,10 @@ set -euo pipefail
 
 # Consumer-owned metadata and evidence. The reviewed shared runner alone owns
 # release selection, staging, commits, tags, remote refs and phase recovery.
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="${BASH_SOURCE[0]}"
+[[ "$script_dir" == /* ]] || script_dir="$PWD/$script_dir"
+script_dir="$(cd -P "${script_dir%/*}" && printf '%s/.' "$PWD")"
+script_dir="${script_dir%/.}"
 files=(Cargo.lock CHANGELOG.md crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md Cargo.toml)
 mode="${1:-}"
 [[ $# -eq 1 ]] || { echo "expected one adapter phase" >&2; exit 2; }

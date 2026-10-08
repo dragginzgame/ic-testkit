@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
+# Shared companions: scripts/ci/test-tool-evidence.sh
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd -P)"
+ROOT="$0"
+[[ "$ROOT" == /* ]] || ROOT="$PWD/$ROOT"
+ROOT="$(cd -P "${ROOT%/*}/../.." && printf '%s/.' "$PWD")"
+ROOT="${ROOT%/.}"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/ic-tools-test.XXXXXX")"
 finish() {
     local status=$?
@@ -100,6 +104,9 @@ for host in Linux:x86_64 Darwin:x86_64 Darwin:arm64; do
     install --check > /dev/null 2>&1
     install > /dev/null 2>&1
     [[ "$(wc -l < "$fixture/downloads")" == "$before" ]]
+    (cd "$fixture"; CDPATH="$fixture" bash "$ROOT/scripts/dev/install-ic-tools.sh" \
+        --consumer "${consumer#"$fixture/"}" --pins pins.tsv --check) > /dev/null 2>&1
+    bash "$ROOT/scripts/ci/test-tool-evidence.sh" "$consumer" ic "$pins"
 done
 (
     cd "$fixture"

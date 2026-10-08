@@ -11,7 +11,10 @@ usage() {
     exit 2
 }
 fail() { echo "release refused: $1" >&2; exit 1; }
-runner_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+runner_dir="${BASH_SOURCE[0]}"
+[[ "$runner_dir" == /* ]] || runner_dir="$PWD/$runner_dir"
+runner_dir="$(cd -P "${runner_dir%/*}" && printf '%s/.' "$PWD")"
+runner_dir="${runner_dir%/.}"
 delivery="${RELEASE_DELIVERY:-direct}"
 case "$delivery" in direct|pr) ;; *) fail 'RELEASE_DELIVERY must be direct or pr' ;; esac
 if [[ "$delivery" == pr ]]; then

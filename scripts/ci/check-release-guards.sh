@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+repo_root="${BASH_SOURCE[0]}"
+[[ "$repo_root" == /* ]] || repo_root="$PWD/$repo_root"
+repo_root="$(cd -P "${repo_root%/*}/../.." && printf '%s/.' "$PWD")"
+repo_root="${repo_root%/.}"
 make_bin="$(command -v make)"
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT

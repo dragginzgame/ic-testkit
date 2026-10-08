@@ -689,7 +689,14 @@ esac
         symlink(&proxy, bin.join("cargo")).unwrap();
         symlink(&proxy, bin.join("rustc")).unwrap();
         let server = root.join("server");
-        fs::write(&server, b"#!/bin/sh\nprintf 'pocket-ic-server 16.0.0\\n'\n").unwrap();
+        fs::write(
+            &server,
+            format!(
+                "#!/bin/sh\nprintf 'pocket-ic-server {}\\n'\n",
+                ic_testkit::pocket_ic::LATEST_SERVER_VERSION
+            ),
+        )
+        .unwrap();
         fs::set_permissions(server, fs::Permissions::from_mode(0o700)).unwrap();
         let path = std::env::join_paths(
             std::iter::once(bin.clone())

@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+script_dir="${BASH_SOURCE[0]}"
+[[ "$script_dir" == /* ]] || script_dir="$PWD/$script_dir"
+script_dir="$(cd -P "${script_dir%/*}" && printf '%s/.' "$PWD")"
+script_dir="${script_dir%/.}"
 rewrite=false
 if [[ "${1:-}" == --rewrite ]]; then
   rewrite=true

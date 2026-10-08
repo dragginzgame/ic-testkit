@@ -3,7 +3,10 @@ set -euo pipefail
 
 # Qualify the reviewed hook against this consumer's actual formatting targets
 # and tracked lockfile. No commits, builds, tool installation or network effects.
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
+root="${BASH_SOURCE[0]}"
+[[ "$root" == /* ]] || root="$PWD/$root"
+root="$(cd -P "${root%/*}/../.." && printf '%s/.' "$PWD")"
+root="${root%/.}"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-git-hooks.XXXXXX")"
 cleanup() {
     local status=$?

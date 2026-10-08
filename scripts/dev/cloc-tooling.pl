@@ -191,7 +191,7 @@ for my $name (@names) {
         my %paths = map { $_ => 1 } split /\0/, capture('git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard');
         my (%snapshot, @manifests);
         for my $path (sort keys %paths) {
-            next unless ($path =~ m{(?:^|/)\.shared-tooling(?:-[^/]*)?\.snapshot$} ||
+            next unless ($path =~ m{(?:^|/)\.shared-tooling[^/]*\.snapshot$} ||
                 exists $snapshot_roots{getcwd() . "/$path"}) && -f $path;
             my ($files, $manifest) = load_snapshot($path);
             for my $target (keys %$files) {

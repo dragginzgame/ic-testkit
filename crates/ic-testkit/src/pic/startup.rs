@@ -1309,11 +1309,11 @@ mod tests {
     #[test]
     fn version_capture_cleans_wrapper_descendants_on_exit_and_timeout() {
         for timeout in [false, true] {
-            let ending = if timeout {
-                "wait"
-            } else {
-                "printf 'pocket-ic-server 16.0.0\\n'"
-            };
+            let qualified = format!(
+                "printf 'pocket-ic-server {}\\n'",
+                pocket_ic::LATEST_SERVER_VERSION
+            );
+            let ending = if timeout { "wait" } else { &qualified };
             let script = TestServerScript::new(
                 "version-group",
                 &format!(
@@ -1381,14 +1381,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn environment_binary_selection_uses_bounded_shared_version_capture() {
+        let qualified = format!(
+            "printf 'pocket-ic-server {}\\n'",
+            pocket_ic::LATEST_SERVER_VERSION
+        );
+        let failed = format!("{qualified}; exit 23");
         for (label, body, expected) in [
-            ("qualified", "printf 'pocket-ic-server 16.0.0\\n'", 0),
+            ("qualified", qualified.as_str(), 0),
             ("wrong-version", "printf 'pocket-ic-server 15.0.0\\n'", 1),
-            (
-                "failed-version",
-                "printf 'pocket-ic-server 16.0.0\\n'; exit 23",
-                2,
-            ),
+            ("failed-version", failed.as_str(), 2),
             ("invalid-utf8", "printf '\\377'", 1),
             ("version-timeout", "exec sleep 30", 2),
         ] {

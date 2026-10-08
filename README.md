@@ -30,7 +30,7 @@
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
   <a href="README.md#toolchains-and-checks"><img src="https://img.shields.io/badge/internal%20rust-1.99.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-16.0-green.svg" alt="PocketIC"></a>
+  <a href="Cargo.toml"><img src="https://img.shields.io/badge/PocketIC-16.1-green.svg" alt="PocketIC"></a>
   <a href="https://github.com/dragginzgame/ic-testkit"><img src="https://img.shields.io/badge/GitHub-dragginzgame%2Fic--testkit-black.svg" alt="Repository"></a>
 </p>
 
@@ -372,6 +372,9 @@ make tools-check
 export POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic"
 ic-testkit-server run --ttl 900 -- cargo test --locked -p my-integration-tests
 ```
+
+This checkout selects PocketIC 16.1.0 through its
+[consumer-owned IC tool matrix](docs/hosts.md#pocketic-161-server-selection).
 
 The runner exports `IC_TESTKIT_POCKET_IC_URL` to the command, retains the managed
 server until completion, inherits terminal IO and preserves the command's exit

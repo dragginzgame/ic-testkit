@@ -146,6 +146,11 @@ failed and interrupted setup, and atomic activation using substituted payloads;
 only the separate native installation step qualifies actual upstream binaries.
 Failure-artifact collection runs after native qualification and includes installer
 logs and retained host/IC candidate directories as well as portable fixtures.
+It also selects available `rust-tools-*.log` files and `.tools/rust/build`,
+independently of compact host/IC retention. Rust build evidence is selected only
+through physical parent directories; a final build symlink is retained without
+following it. Consumers capture setup and offline-check output with `tee` under
+the selected temporary root while preserving pipeline failure status.
 The local composite action `.github/actions/retain-failure-evidence/action.yml`
 owns that path selection and uploads one `evidence.tar.gz` created by the shared
 evidence archiver, including hidden inputs and excluding `.git` metadata.
@@ -154,11 +159,15 @@ disposable negative qualification on each native host: the real IC installer
 downloads Quill and rejects an intentionally incorrect pin, then offline checking
 rejects those native bytes under a damaged receipt. Only the fixture's pins and
 receipt are altered; active tools and the reviewed catalog are untouched.
+Rust qualification uses the real Make targets and installer with a failing Cargo
+substitute, followed by the real offline check. Its build payload and both logs
+join the same uploaded/downloaded checksum verification; this qualifies retention,
+rather than compilation of registry packages.
 
 `scripts/ci/qualify-native-failure-retention.sh <new-directory>` performs that
-online negative qualification. It intentionally exits 1 after validating both
-Make failure statuses and writing `expected.sha256`; earlier failures leave no
-completed manifest. All evidence is retained. CI observes the failed step,
+online negative qualification. It intentionally exits 1 after validating the IC
+and Rust Make failure statuses and writing `expected.sha256`; earlier failures
+leave no completed manifest. All evidence is retained. CI observes the failed step,
 requires that invocation's completion output (an old manifest cannot qualify it),
 uploads through the common collector, downloads the exact returned artifact ID,
 and extracts the archive to check its payload against the original checksum

@@ -78,8 +78,60 @@ mv "$GITHUB_WORKSPACE/target" "$GITHUB_WORKSPACE/real-target"
 ln -s real-target "$GITHUB_WORKSPACE/target"
 if RUNNER_TEMP="$fixture/linked-temp" bash "$collector" checks; then exit 1; fi
 [[ ! -e "$fixture/linked-temp/ic-testkit-checks-failure/evidence.tar.gz" ]]
-# A failed archiver retains its partial output and original evidence.
 rm "$GITHUB_WORKSPACE/target"
+# Exercise the real shared selector through this consumer's collector. Synthetic
+# authenticated tools keep the fixture offline and independent of installed sets.
+case "$(uname -s):$(uname -m)" in
+    Linux:x86_64|Linux:amd64) host=LINUX_AMD64; target=x86_64-unknown-linux-musl ;;
+    Linux:aarch64|Linux:arm64) host=LINUX_ARM64; target=aarch64-unknown-linux-gnu ;;
+    Darwin:x86_64) host=DARWIN_AMD64; target=x86_64-apple-darwin ;;
+    Darwin:arm64|Darwin:aarch64) host=DARWIN_ARM64; target=aarch64-apple-darwin ;;
+    *) echo 'unsupported evidence fixture host' >&2; exit 1 ;;
+esac
+verified="$GITHUB_WORKSPACE/.tools/host-set.verified"
+mkdir -p "$verified/bin" "$GITHUB_WORKSPACE/ci" "$fixture/ripgrep-1.0.0-$target"
+for tool in jq yq rg cloc; do
+    case "$tool" in
+        jq) version='jq-1.0.0' ;;
+        yq) version='yq (https://github.com/mikefarah/yq/) version v1.0.0' ;;
+        rg) version='ripgrep 1.0.0' ;;
+        cloc) version='1.0.0' ;;
+    esac
+    printf '#!/bin/sh\necho "%s"\n' "$version" > "$verified/bin/$tool"
+    chmod 755 "$verified/bin/$tool"
+done
+cp "$verified/bin/rg" "$fixture/ripgrep-1.0.0-$target/rg"
+tar -czf "$verified/ripgrep.tar.gz" -C "$fixture" "ripgrep-1.0.0-$target/rg"
+pins="$GITHUB_WORKSPACE/ci/tool-versions.env"
+for tool in JQ YQ RIPGREP CLOC; do
+    printf 'export SHARED_TOOLING_%s_VERSION=1.0.0\n' "$tool" >> "$pins"
+    case "$tool" in
+        JQ) input="$verified/bin/jq" ;;
+        YQ) input="$verified/bin/yq" ;;
+        RIPGREP) input="$verified/ripgrep.tar.gz" ;;
+        CLOC) input="$verified/bin/cloc" ;;
+    esac
+    digest="$(bash "$root/scripts/ci/verify-file-checksum.sh" --print sha256 "$input")"
+    suffix="_$host"; [[ "$tool" != CLOC ]] || suffix=''
+    printf 'export SHARED_TOOLING_%s_SHA256%s=%s\n' "$tool" "$suffix" "$digest" >> "$pins"
+done
+ln -s host-set.verified "$GITHUB_WORKSPACE/.tools/host"
+mkdir "$fixture/compact-temp" "$fixture/compact-unpacked"
+compact="$(RUNNER_TEMP="$fixture/compact-temp" bash "$collector" checks)"
+tar -xzf "$compact" -C "$fixture/compact-unpacked"
+[[ ! -e "$fixture/compact-unpacked/.tools/host-set.verified" ]]
+[[ -x "$fixture/compact-unpacked/.tools/host-set.fixture/bin/probe" ]]
+[[ -s "$fixture/compact-unpacked/tool-evidence/host/check.log" ]]
+cmp "$pins" "$fixture/compact-unpacked/tool-evidence/host/caller-pins"
+[[ "$(cat "$fixture/compact-unpacked/tool-evidence/host/selection.txt")" == "$verified" ]]
+# A selected installation that now fails admission must retain its full bytes.
+printf '\nchanged\n' >> "$verified/bin/jq"
+mkdir "$fixture/changed-temp" "$fixture/changed-unpacked"
+changed="$(RUNNER_TEMP="$fixture/changed-temp" bash "$collector" checks)"
+tar -xzf "$changed" -C "$fixture/changed-unpacked"
+cmp "$verified/bin/jq" "$fixture/changed-unpacked/.tools/host-set.verified/bin/jq"
+[[ -s "$fixture/changed-unpacked/tool-evidence/host/check.log" ]]
+# A failed archiver retains its partial output and original evidence.
 mkdir "$fixture/bin" "$fixture/failed-temp"
 printf '#!%s\nprintf partial\nexit 23\n' "$BASH" > "$fixture/bin/tar"
 chmod +x "$fixture/bin/tar"

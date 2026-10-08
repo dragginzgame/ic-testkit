@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Testkit-owned CI selection; the shared archiver owns archive mechanics.
+# Testkit owns CI roots/retention; shared helpers select tool evidence and archive it.
 # Requires Bash 3.2, tar/gzip and the CI workspace/temp/outcome environment.
 [[ $# -eq 1 ]] || { echo 'expected checks or portable evidence selection' >&2; exit 2; }
 mode="$1"
@@ -41,10 +41,16 @@ done
 if [[ -e "$workspace/target/validation-failures" || -L "$workspace/target/validation-failures" ]]; then
     arguments+=("$workspace" target/validation-failures)
 fi
-shopt -s nullglob
-for path in "$workspace"/.tools/host-set.* "$workspace"/.tools/ic-set.*; do
-    arguments+=("$workspace" "${path#"$workspace"/}")
-done
+diagnostics="$bundle/tool-evidence"
+mkdir "$diagnostics"
+bash "${archiver%/*}/select-tool-evidence.sh" compact "$workspace" "$diagnostics" \
+    "$workspace/ci/tool-versions.env" "$workspace/ci/ic-tools.tsv" > "$diagnostics/selections.nul"
+while IFS= read -r -d '' selected_root && IFS= read -r -d '' selected_path; do
+    arguments+=("$selected_root" "$selected_path")
+done < "$diagnostics/selections.nul"
+if [[ -d "$diagnostics/host" || -d "$diagnostics/ic" ]]; then
+    arguments+=("$bundle" tool-evidence)
+fi
 # Never follow links or include Git metadata. Failed archives and all source
 # evidence remain available; the uploader selects only the completed filename.
 TAR_OPTIONS='' bash "$archiver" \

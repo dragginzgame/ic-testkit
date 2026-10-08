@@ -327,7 +327,8 @@ the actual targets. Rerun without the rejected mode. Consumer
 recipes must still propagate failures and execute their declared gate.
 
 An independently configured fixture owns its own selections:
-clear inherited `MAKEFLAGS`, `MFLAGS` and `MAKEOVERRIDES` before its Make calls,
+clear inherited `MAKEFLAGS`, `MFLAGS`, `MAKEOVERRIDES`, `GNUMAKEFLAGS` and
+`MAKEFILES` before its Make calls,
 then supply the fixture's intended release variables explicitly, including
 `RELEASE_DELIVERY`. Direct fixtures must not inherit an enclosing PR selection.
 

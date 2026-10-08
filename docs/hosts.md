@@ -1597,3 +1597,190 @@ performance probe was not run. Full tests and release gates remain maintainer-ow
 passed MSRV, Linux and native macOS Intel/ARM at exact source
 `491fc0e231b9650526f5f57b9ab7b1f62f02218c`. This qualifies the upstream release;
 this pending consumer hard cut still requires its own matching native CI.
+
+### 2026-10-08: consumer adapter paths for 0.24.1
+
+Released source is `e7a9c6cbad29c4cfb8f5c9a5a0e64f82e9d9c7c1` (0.24.0).
+The next compatible draft is 0.24.1; package metadata, the Host 0.7.0 lock
+selection and the 62-file Shared 0.1.26 snapshot remain unchanged. The scoped
+code-hygiene follow-up reviewed consumer shell entrypoints, nested Make calls,
+and their helper paths against `audits/code-hygiene.md` from Shared
+`75a8a60f49cec11d3f6aecab5c977029c42cc549` and the existing AGENTS overlay.
+
+The publication fixture failed under inherited CDPATH before reaching its
+shared version reader. Its log and inputs remain at
+`/tmp/ic-testkit-0241-cdpath-before.log` and
+`/tmp/ic-testkit-publish-guards.YjFyR2`. Correcting only the fixture exposed the
+same defect in the relative release adapter invoked by Make; that attempt is
+retained at `/tmp/ic-testkit-0241-publish.log` and
+`/tmp/ic-testkit-publish-guards.fycv1K`.
+
+Eight consumer-owned scripts now anchor their invocation before physical cd,
+and preserve captured PWD bytes with a non-newline suffix: release guards,
+metadata qualification, publication guards, hook qualification, installation
+version checking, and the metadata/publication/tag release adapters. Their
+existing admission, recovery, registry and cleanup policies are unchanged.
+Native portable jobs now set CDPATH for release, installation and publication
+checks. No function, method or type was removed; canonical exports were not edited.
+
+Linux release guards (including nested metadata qualification and shared command checks)
+and publication guards pass under CDPATH with Bash 5 and a genuine Bash 3.2.57
+parent. Installation version checking also passes under Bash 3.2/CDPATH.
+Explicit `/bin/bash` children in this Linux rehearsal still use Bash 5; this is
+not native macOS qualification. Ordinary hook qualification passes with empty
+CDPATH. ShellCheck, actionlint and diff checks pass. Logs are retained at
+`/tmp/ic-testkit-0241-{release,release-bash32,publish-final,publish-bash32,install-bash32,hooks-normal,shellcheck,actionlint}.log`.
+No source compilation, full gate, release or remote workflow dispatch was run.
+
+A cloned checkout ending in a newline retains the source patch and successful
+direct installation-version, tag-admission and metadata-files probes under
+Bash 3.2/CDPATH at `/tmp/ic-testkit-0241-path-proof.SvDh6t`. Its direct mocked
+publication checks also pass, but the subsequent Make qualification fails:
+GNU Make's root derivation strips the trailing newline and cannot locate
+`make/tools.mk`. The failed Make log remains in
+`/tmp/ic-testkit-publish-guards.fBzt9U/annotated-tag.log`. These probes qualify
+the adapters' bootstrap, not full Make support for newline checkout names.
+
+Hook qualification under CDPATH separately reaches an unchanged canonical
+installer defect. Inputs/log remain at `/tmp/ic-testkit-git-hooks.9rdl0p` and
+`/tmp/ic-testkit-0241-hooks.log`; reproduction is reported on
+[Shared #67](https://github.com/dragginzgame/shared-tooling/issues/67#issuecomment-6059936638).
+The dirty sibling installer contains a proposed fix, which was not adopted.
+The native hook check retains its existing environment until a reviewed shared
+revision supplies that fix.
+
+[Shared 0.1.26 Intel CI](https://github.com/dragginzgame/shared-tooling/actions/runs/37770856593/job/113289949054)
+hit the 15-minute regression-step timeout after its 19 real-Git tracking cases
+and subsequent PR/metadata checks passed. Failure archive upload succeeded;
+remaining native checks did not finish. This is tracked in
+[Shared #71](https://github.com/dragginzgame/shared-tooling/issues/71).
+Host's newer `81f47841aa5a75c36a0191869a81851b43cebef4` commit changes tooling
+and reports, without Rust/dependency changes or a finalized 0.7.1 release.
+No upstream dirty files or new dependency versions were selected. Consumer
+0.24.0 CI was still incomplete at inspection; this draft needs matching native CI.
+
+### 2026-10-08: Shared 0.1.27 tool-evidence adoption for 0.24.1
+
+The pending 0.24.1 batch now adopts exact committed Shared source
+`db039347d2372b877c1c46dcdd2b5c3aa9412009` (0.1.27), including the later
+relative installer-path corrections. Export used a clean isolated checkout.
+The snapshot grows from 62 to 65 files: the canonical tool selector, its test
+and the companion action required by that test. The exporter initially rejected
+the incomplete companion selection without replacing files; both attempts and
+snapshot verification remain under `/tmp/ic-testkit-shared-0127-adoption.tDx2FC`.
+Canonical files retain upstream bytes/modes. The baseline rules and repository
+description are unchanged. The maintainer's pending Host 0.7.1 lock selection
+was preserved; this batch did not resolve dependencies or change package metadata.
+
+The consumer collector replaces its host/IC wildcard loop with the shared
+selector's NUL-delimited root/path pairs. It explicitly selects compact mode
+with this repository's pins. Active bundles are freshly verified offline before
+their payloads are omitted; caller pins, check logs and IC receipts remain.
+Failed, changed, unmanaged and unselected bundles retain full evidence.
+Testkit still owns its log/fixture roots, outcomes, exclusive attempt directory,
+partial archive and retention policy. No function, method or type was removed.
+Consumer fixtures exercise verified active-set omission, full changed-set
+retention, unselected candidates, early failure, parent-link rejection and
+partial-output preservation through the actual collector. Synthetic tools are
+used; no archive-size or collection-time saving is claimed from these fixtures.
+
+The previously blocked hook fixture now passes under CDPATH, and native CI
+enables that environment for the hook check. Shared host/IC installer fixtures
+and their tool-evidence/action checks pass with Bash 5 and genuine Bash 3.2
+selected for parent and nested `bash` commands on Linux. Rust installer fixtures,
+prepared tool checks, dependency declarations/fixtures, consumer evidence
+fixtures, hook qualification, release/metadata guards, ShellCheck, actionlint
+and 65-file snapshot verification also pass. Explicit `/bin/bash` children in
+the hook and metadata rehearsals remain Linux Bash 5. Logs are under
+`/tmp/ic-testkit-0241-*new*.log`, `/tmp/ic-testkit-0241-compact*.log`,
+`/tmp/ic-testkit-0241-evidence-*.log` and the adoption directory above.
+The copied actual collector, selector, installers and archive verifier pass
+from a newline checkout under Bash 3.2/CDPATH, including export and read-back.
+Source patch/digests and artifacts remain at
+`/tmp/ic-testkit-0241-compact-path-proof.Jz6Ihf`. This is local archive proof;
+native hosted upload/download remains pending. No full gate or release ran.
+
+[Exact-source Shared CI](https://github.com/dragginzgame/shared-tooling/actions/runs/37787910279)
+has successful Linux and lint/security jobs; both macOS jobs remain queued at
+inspection. The earlier `b866d410` run was cancelled. Shared #71's Intel timeout
+budget is unchanged. Consumer qualification still requires matching native CI
+for this pending source; earlier passes do not qualify the new collector.
+
+### 2026-10-08: qualification identity and live test selection for 0.24.1
+
+The pending workflow now downloads the archive by the numeric ID returned by
+its own upload step. The actual Bash guard rejects missing/malformed IDs and
+requires a new destination directory before dispatch; existing payloads remain
+untouched. Download uses the pinned v8 action with merged extraction and strict
+digest failure, followed by the existing payload verifier. The pinned action's
+ID path still lists artifacts; this change establishes exact selection and
+fail-closed inputs, not a proven fix for the observed hosted discovery failure.
+The root cause and native round-trip acceptance remain with
+[#33](https://github.com/dragginzgame/ic-testkit/issues/33). No retries, new upload,
+workflow rerun or transport substitute were introduced.
+
+Native CI also replaces the removed `artifacts::wasm::tests` selection with
+`--test artifact_helpers`. All four maintained Cargo path/readiness/membership
+checks execute and pass. The maintainer-selected lock now includes PocketIC
+16.1.0; the first explicit offline cache preparation failed because that payload
+was missing. Authorized `cargo fetch --locked` preparation then passed, followed
+by the focused locked/offline test. Lock selection and package metadata were not
+changed by this work. PocketIC 16.1's source accepts the pinned 16.0 server;
+this artifact-helper test is not managed-server runtime qualification.
+
+Actionlint passes. A disposable probe executes the actual workflow guard under
+genuine Bash 3.2, proving valid identity admission, missing/malformed identity
+rejection and occupied-destination preservation. Logs are retained at
+`/tmp/ic-testkit-0241-{ci-cache,ci-cache-online,ci-helpers,ci-actionlint,artifact-id-guard}.log`;
+the extracted guard is `/tmp/ic-testkit-0241-artifact-id-guard.sh`.
+No production function, method or type was removed. Host 0.7.2 contains tooling
+changes rather than new Rust runtime behavior; its dirty 0.8 work is a separate
+breaking boundary and was not adopted for 0.24.1. New shared dirty fixtures
+were likewise left unselected. Native consumer artifact transport remains pending.
+
+### PocketIC 16.1 server selection
+
+For the pending 0.25.0 batch, `ci/ic-tools.tsv` is the single consumer-owned
+IC tool matrix, outside `.shared-tooling.snapshot`. Its base is Shared Tooling
+`db039347d2372b877c1c46dcdd2b5c3aa9412009`; only PocketIC changes to 16.1.0.
+The shared default documented in `docs/ic-tools.md` remains 16.0.0. The local
+selection uses the scoped pin exception in `docs/consuming-snapshots.md`, without
+patching any shared installer or maintaining a second catalog. Future snapshot
+refreshes must preserve this ownership until the shared default is adopted again.
+
+The Linux x86-64, macOS Intel and macOS Apple Silicon archive hashes were
+reviewed against the official
+[PocketIC 16.1.0 release](https://github.com/dfinity/pocketic/releases/tag/16.1.0)
+on 2026-10-08. The selected Rust library is also 16.1.0. Explicitly run
+`make install-ic-tools` before offline checks; the shared installer verifies
+archive hashes, exact executable versions and the complete bundle before
+switching `.tools/ic`. Prior sets and failed attempts remain available.
+Native macOS runtime qualification remains with the configured CI matrix;
+asset availability and local Linux checks do not qualify macOS execution.
+
+Local qualification used the actual Linux x86-64 16.1.0 server installed by the
+unchanged shared installer, the locked PocketIC 16.1.0 client, and the maintainer's
+selected IC Host 0.8.0 crates. Startup (21 checks), synthetic server-runner (8),
+real environment-selected server execution (1), live instance/pool concurrency
+(9), and the benchmark driver's standalone tool-context fixture (1) pass.
+Version-sensitive success fixtures now print upstream `LATEST_SERVER_VERSION`
+instead of a copied 16.0.0 constant. Parser tests for accepting/rejecting the
+supported major retain their deliberate fixed input examples.
+
+Strict focused Clippy, selected-file Rust formatting, snapshot integrity,
+dependency declarations and prepared IC bundle checking pass. Logs are retained
+under `/tmp/ic-testkit-0241-pocket161-*.log` (the evidence prefix predates the
+minor-target correction). The initial fixture-version failures and Clippy
+borrow failures remain alongside passing final logs. The first installation
+attempt could not resolve GitHub in the sandbox; authorized network setup
+succeeded and retained both candidate sets. The first live runner attempt could
+not bind localhost in the sandbox; the explicitly authorized socket-enabled
+run passed. macOS runtime and full maintainer gates were not run locally.
+
+The manifest already selected IC Host 0.8.0 when this qualification began.
+Its public `child::CleanupError` and `tool::ExecutionError` add `term_error`,
+which is breaking through this crate's public re-exports. The pending batch is
+therefore numbered 0.25.0 in both changelogs; package versions remain maintainer
+owned. No new cleanup timing policy is selected here. Shared default pin
+adoption is tracked in
+[shared #76](https://github.com/dragginzgame/shared-tooling/issues/76).

@@ -145,10 +145,10 @@ jobs:
           /bin/bash scripts/ci/test-ic-tools.sh
           /bin/bash scripts/ci/test-rust-tools.sh
           /bin/bash scripts/ci/test-dependency-pins.sh
-          /bin/bash scripts/ci/check-release-guards.sh
-          /bin/bash scripts/ci/check-installation-version.sh
-          /bin/bash scripts/ci/check-publish-guards.sh
-          /bin/bash scripts/ci/check-git-hooks.sh
+          CDPATH="$PWD" /bin/bash scripts/ci/check-release-guards.sh
+          CDPATH="$PWD" /bin/bash scripts/ci/check-installation-version.sh
+          CDPATH="$PWD" /bin/bash scripts/ci/check-publish-guards.sh
+          CDPATH="$PWD" /bin/bash scripts/ci/check-git-hooks.sh
           make fmt-check
       - name: Qualify failure evidence archives
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
@@ -157,16 +157,26 @@ jobs:
           TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
         run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh
       - name: Upload archive qualification artifact
+        id: archive-upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: evidence-qualification-${{ matrix.os }}
           path: ${{ runner.temp }}/ic-testkit-archive-proof/evidence.tar.gz
           retention-days: 1
           if-no-files-found: error
+      - name: Check returned archive identity
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        env:
+          ARCHIVE_ID: ${{ steps.archive-upload.outputs.artifact-id }}
+        run: |
+          [[ "$ARCHIVE_ID" =~ ^[1-9][0-9]*$ ]] || { echo 'upload returned no valid artifact ID' >&2; exit 1; }
+          mkdir "$RUNNER_TEMP/ic-testkit-archive-downloaded"
       - name: Download archive qualification artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
-          name: evidence-qualification-${{ matrix.os }}
+          artifact-ids: ${{ steps.archive-upload.outputs.artifact-id }}
+          merge-multiple: true
+          digest-mismatch: error
           path: ${{ runner.temp }}/ic-testkit-archive-downloaded
       - name: Verify downloaded evidence archive
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
@@ -175,10 +185,10 @@ jobs:
         run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh verify "$RUNNER_TEMP/ic-testkit-archive-downloaded/evidence.tar.gz"
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
-      - name: Check shared host-tool and bounded Wasm integration
+      - name: Check shared host-tool integration and artifact helpers
         run: |
           cargo test -p ic-testkit --locked --offline --lib artifacts::host_tests
-          cargo test -p ic-testkit --locked --offline --lib artifacts::wasm::tests
+          cargo test -p ic-testkit --locked --offline --test artifact_helpers
       - name: Check synthetic PocketIC transport and teardown
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
       - name: Check native fixture benchmark driver and sampler

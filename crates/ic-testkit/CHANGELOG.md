@@ -8,6 +8,40 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.25.0]
+
+### Breaking
+
+- Adopt the selected IC Host 0.8 re-exports. Update struct literals and exhaustive
+  destructuring for `ic_host_process::{child::CleanupError, tool::ExecutionError}`
+  to include the new `term_error` field. Existing default cleanup remains
+  immediate KILL with synchronous reaping.
+
+### Fixed
+
+- Make consumer release, publication and qualification adapters resolve their
+  helper paths safely under inherited `CDPATH`. Exercise release, installation,
+  publication and hook qualification with that environment in native CI
+  ([#31](https://github.com/dragginzgame/ic-testkit/issues/31)).
+
+### Changed
+
+- Select PocketIC 16.1 for the Rust client and managed server, with verified
+  native release assets. Run `make install-ic-tools` to prepare the new server.
+- Bind CI archive qualification downloads to the returned upload ID, reject
+  missing identities and occupied destinations, and require digest verification
+  ([#33](https://github.com/dragginzgame/ic-testkit/issues/33)).
+- Run the maintained artifact-helper integration checks in native CI instead
+  of an empty selection left after the Wasm reader API removal.
+- Adopt Shared Tooling 0.1.27, including canonical path fixes and corrected
+  snapshot discovery in tooling counts
+  ([shared #67](https://github.com/dragginzgame/shared-tooling/issues/67),
+  [shared #69](https://github.com/dragginzgame/shared-tooling/issues/69)).
+- Use shared tool-evidence selection in CI failure archives. Freshly verified
+  active bundles contribute pins, check logs and IC receipts; changed or
+  unselected bundles remain in full
+  ([shared #66](https://github.com/dragginzgame/shared-tooling/issues/66)).
+
 ## [0.24.0] - 2026-10-08
 
 ### Breaking

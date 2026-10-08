@@ -24,7 +24,10 @@ impl Fixture {
         fs::create_dir(&fixture.0).unwrap();
         support::executable::write_executable_script(
             &fixture.0.join("server"),
-            "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server 16.0.0\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf stderr-end >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server {}\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf stderr-end >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
+                ic_testkit::pocket_ic::LATEST_SERVER_VERSION
+            ),
         );
         fixture
     }
@@ -199,7 +202,10 @@ fn invalid_configuration_and_version_failure_never_run_the_command() {
     }
     support::executable::write_executable_script(
         &fixture.0.join("failed-version"),
-        "#!/bin/sh\nprintf 'pocket-ic-server 16.0.0\\n'\nexit 23\n",
+        format!(
+            "#!/bin/sh\nprintf 'pocket-ic-server {}\\n'\nexit 23\n",
+            ic_testkit::pocket_ic::LATEST_SERVER_VERSION
+        ),
     );
     let output = fixture
         .runner()
