@@ -6,6 +6,17 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.22.2]
+
+### Changed
+
+- Adopt Shared Tooling 0.1.24: completed direct releases refresh the matching
+  local upstream observation without repeating delivery; tooling reports include
+  `bin/` and repositories awaiting their first commit
+  ([shared #62](https://github.com/dragginzgame/shared-tooling/issues/62),
+  [shared #61](https://github.com/dragginzgame/shared-tooling/issues/61)).
+  Keep the existing failure collector pending the corrected shared archive helper.
+
 ## [0.22.1] - 2026-10-08
 
 ### Fixed

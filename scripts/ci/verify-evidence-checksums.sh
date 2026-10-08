@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Shared companions: scripts/ci/verify-file-checksum.sh
 set -euo pipefail
 
 # Read retained sha256sum-format manifests; the reviewed helper owns hashing

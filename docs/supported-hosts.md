@@ -80,6 +80,7 @@ required to run setup. Make targets and CI select this same local tool set.
 | `scripts/dev/gh-ci.sh` | Git and an authenticated GitHub CLI |
 | `scripts/ci/run-validation-targets.sh` | GNU Make plus `awk`, `grep` or `rg`, `sed`, `tail`, and `tee` |
 | Archive installer scripts | `curl`, `tar`, a SHA-256 implementation, and the archive codec used by the selected tool |
+| Evidence archiver | Bash 3.2+, tar and gzip; explicit existing roots and relative selections |
 | `scripts/dev/install-rust-tools.sh` | Prepared Rust/Cargo toolchain and native compilation prerequisites for explicit registry installation; offline `--check` only runs the selected local executables |
 | Local IC tool setup | Bash 3.2+, `curl`, `tar`, xz/gzip, Perl, and a SHA-256 implementation; see [IC tools](ic-tools.md) |
 | PocketIC exact alignment | Prepared Cargo toolchain and locked offline dependency cache, jq and awk; explicit owning manifest and reviewed IC pin matrix |
@@ -92,7 +93,7 @@ required to run setup. Make targets and CI select this same local tool set.
 | Dependency pin checker | Git, jq, Mike Farah yq v4.47.2+; Cargo when Cargo manifests exist |
 | Workspace-version reader | Prepared Cargo, jq and Mike Farah yq v4.47.2+; explicit Cargo.toml input; no dependency resolution |
 | Release runner | GNU Make, Git, `date`, explicit consumer metadata/check targets, and Bash 3.2 |
-| PR release delivery | The release runner prerequisites, authenticated GitHub CLI with `gh api --paginate --slurp`, jq, and Git supporting `switch`, `worktree` and `fetch --no-write-fetch-head`; see the [PR contract](releases.md#pr-delivery) |
+| PR release delivery | The release runner prerequisites, authenticated GitHub CLI with `gh api --paginate`, jq, and Git supporting `switch`, `worktree` and `fetch --no-write-fetch-head`; see the [PR contract](releases.md#pr-delivery) |
 | Changelog finalizer | System awk with regular-expression `RS` (the declared Linux/macOS hosts); preserves historical EOF bytes without GNU `RT` |
 | Rust pre-commit hook and installer | Git, GNU Make, consumer-owned `fmt` prerequisites (Cargo/rustfmt and an exact `cargo-sort` version), Bash 3.2 and standard Unix file utilities |
 | Consumer formatting adoption checker | The hook prerequisites above, Perl-free shell utilities, and reviewed consumer Make inputs; no implicit downloads |
@@ -146,7 +147,9 @@ only the separate native installation step qualifies actual upstream binaries.
 Failure-artifact collection runs after native qualification and includes installer
 logs and retained host/IC candidate directories as well as portable fixtures.
 The local composite action `.github/actions/retain-failure-evidence/action.yml`
-owns that path selection and hidden-file policy. The same action collects a
+owns that path selection and uploads one `evidence.tar.gz` created by the shared
+evidence archiver, including hidden inputs and excluding `.git` metadata.
+The same action collects a
 disposable negative qualification on each native host: the real IC installer
 downloads Quill and rejects an intentionally incorrect pin, then offline checking
 rejects those native bytes under a damaged receipt. Only the fixture's pins and
@@ -158,7 +161,9 @@ Make failure statuses and writing `expected.sha256`; earlier failures leave no
 completed manifest. All evidence is retained. CI observes the failed step,
 requires that invocation's completion output (an old manifest cannot qualify it),
 uploads through the common collector, downloads the exact returned artifact ID,
-and checks its payload against the original checksum manifest. Missing logs,
+and extracts the archive to check its payload against the original checksum
+manifest. Separate checks cover a newline/colon filename's bytes and mode,
+executable state and a symlink whose target stays outside the selection. Missing logs,
 hidden candidate files, failed uploads, early fixture failures and corrupted
 downloads fail the job. Source hashes, commit, host and run identity stay with
 the artifact. Ordinary failures still reach the final collector. A local fixture

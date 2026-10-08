@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Shared companions: scripts/ci/dependency-pins.jq
 set -euo pipefail
 
 # Read-only, offline checks; requires Git, jq and Mike Farah yq v4.47.2+.

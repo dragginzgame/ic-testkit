@@ -103,6 +103,15 @@ The runner rechecks that selection after validation and before push, rejecting
 changed or additional URLs. Observation and dispatch both use the captured URL,
 so a later remote-name change cannot redirect the push.
 
+URL-form push does not refresh named remote-tracking refs. After direct delivery
+or completed resume verifies the exact remote tag and branch history, the runner
+refreshes the selected branch's matching configured upstream from that observation.
+Git derives the mapping, including custom fetch refspecs; fetch and push destinations
+must agree. The conditional local update preserves newer/divergent or concurrently
+changed tracking values and never dereferences a symbolic tracking ref. Other
+upstreams remain untouched. Local inspection/update failure reports a fetch remedy
+without repeating commit, tag or push; it does not undo confirmed delivery.
+
 `--no-follow-tags` disables implicit annotated-tag publication, including a
 configured `push.followTags`. Both refspecs are explicit: push the selected branch
 and this release's tag, without publishing other local tags. `--atomic` requires

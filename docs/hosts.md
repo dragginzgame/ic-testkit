@@ -1390,3 +1390,32 @@ These are native Linux archive/selection observations, not an actual artifact
 service round trip or native macOS proof. The configured changed-workflow CI
 remains the owner of those outstanding checks. Shared Tooling's helper still
 has no committed source beyond the recorded 0.1.23 snapshot at inspection.
+
+### 2026-10-08: Shared Tooling 0.1.24 adoption
+
+The compatible 0.22.2 draft refreshes the existing 61-file selection from exact
+committed Shared Tooling 0.1.24
+`e9bfdc54c0daefc3dbbdfe091e5665dca5468eb3`. Export used a clean isolated checkout;
+ongoing sibling edits were preserved. Companion admission accepts the existing
+selection. No archive helper was added: [shared #59](https://github.com/dragginzgame/shared-tooling/issues/59)
+records occupied-output, leading-option root and newline-parent defects in the
+committed helper, with a corrected 0.1.25 implementation still uncommitted.
+Testkit's released collector remains unchanged pending that correction.
+
+Focused Linux checks pass for snapshot integrity, dependency declarations/pins,
+ShellCheck, tooling LOC, snapshot distribution and release-runner regressions.
+The runner fixture includes 15 real-Git tracking cases covering completed resume,
+custom mappings, unrelated upstreams, divergent/raced observations and failed
+updates. Logs are retained at `/tmp/ic-testkit-0222-{release,cloc,export}.log`.
+These fixtures use an isolated committed source and inert product gate targets;
+no product release, Cargo build, dependency update or broad validation ran.
+
+At inspection, released Testkit 0.22.1 `fef41481a930a5f65615507cc8039ea69fb5ae87`
+[tag CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37757385152)
+has passed Linux checks, portable artifact qualification and concurrency;
+native macOS jobs remain queued. Exact-source
+[Shared CI](https://github.com/dragginzgame/shared-tooling/actions/runs/37756978585)
+has passed Linux and lint/security, but Apple Silicon failed artifact download
+and its consequent verification; Intel qualification is still running. Those
+observations do not qualify this pending consumer snapshot on native macOS or
+close either repository's archive issue.
