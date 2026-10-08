@@ -34,6 +34,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: ${{ env.IC_TESTKIT_MSRV }}
+          targets: wasm32-unknown-unknown
       - name: Pin cargo/rustc to MSRV
         shell: bash
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_MSRV" >> "$GITHUB_ENV"
@@ -146,6 +147,7 @@ jobs:
           /bin/bash scripts/ci/test-rust-tools.sh
           /bin/bash scripts/ci/test-dependency-pins.sh
           CDPATH="$PWD" /bin/bash scripts/ci/check-release-guards.sh
+          CDPATH="$PWD" /bin/bash scripts/ci/test-release-runner.sh
           CDPATH="$PWD" /bin/bash scripts/ci/check-installation-version.sh
           CDPATH="$PWD" /bin/bash scripts/ci/check-publish-guards.sh
           CDPATH="$PWD" /bin/bash scripts/ci/check-git-hooks.sh

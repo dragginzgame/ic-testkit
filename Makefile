@@ -131,7 +131,11 @@ shared-tooling-check:
 	bash scripts/ci/verify-shared-tooling-snapshot.sh
 
 msrv:
+	rustc +$(MSRV) --version
+	cargo +$(MSRV) --version
 	cargo +$(MSRV) check -p ic-testkit --locked
+	cargo +$(MSRV) check -p ic-testkit --lib --target wasm32-unknown-unknown --locked
+	cargo +$(MSRV) check -p ic_testkit_perf_probe --lib --target wasm32-unknown-unknown --locked
 
 installation-check:
 	bash scripts/ci/check-installation-version.sh

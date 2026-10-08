@@ -335,9 +335,8 @@ pub(super) fn lock_cache_file_with_wait_observer(
 }
 
 pub(super) fn try_lock_cache_file(path: &Path) -> Result<Option<File>, CacheFsError> {
-    let file = open_cache_lock_file(path)?;
-    match file.try_lock_exclusive() {
-        Ok(()) => Ok(Some(file)),
+    match ic_host_fs::durable::try_lock_regular_file_with_parents(path).map_err(io::Error::from) {
+        Ok(file) => Ok(Some(file)),
         Err(error) if error.kind() == io::ErrorKind::WouldBlock => Ok(None),
         Err(source) => Err(CacheFsError {
             operation: "try lock cache",
@@ -704,6 +703,34 @@ mod tests {
         fs,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn nonblocking_cache_locks_preserve_contention_and_reject_redirected_files() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_directory("nonblocking-cache-lock-admission");
+        let lock_path = root.join("lock");
+        fs::write(&lock_path, b"existing lock bytes").unwrap();
+        let held = super::try_lock_cache_file(&lock_path).unwrap().unwrap();
+        assert!(super::try_lock_cache_file(&lock_path).unwrap().is_none());
+        assert_eq!(fs::read(&lock_path).unwrap(), b"existing lock bytes");
+        drop(held);
+        assert!(super::try_lock_cache_file(&lock_path).unwrap().is_some());
+
+        let redirected = root.join("redirected-lock");
+        symlink(&lock_path, &redirected).unwrap();
+        let error = super::try_lock_cache_file(&redirected).unwrap_err();
+        assert_eq!(error.path, redirected);
+        assert!(matches!(
+                error.source.get_ref().and_then(|cause| cause
+                    .downcast_ref::<ic_host_fs::durable::RegularFileLockError>(
+                )),
+                Some(ic_host_fs::durable::RegularFileLockError::NotRegular)
+            ));
+        assert_eq!(fs::read(&lock_path).unwrap(), b"existing lock bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

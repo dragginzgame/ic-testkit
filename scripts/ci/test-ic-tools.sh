@@ -107,6 +107,23 @@ for host in Linux:x86_64 Darwin:x86_64 Darwin:arm64; do
     (cd "$fixture"; CDPATH="$fixture" bash "$ROOT/scripts/dev/install-ic-tools.sh" \
         --consumer "${consumer#"$fixture/"}" --pins pins.tsv --check) > /dev/null 2>&1
     bash "$ROOT/scripts/ci/test-tool-evidence.sh" "$consumer" ic "$pins"
+    # A malformed active link must not authenticate its newline-trimmed sibling.
+    original="$(readlink "$consumer/.tools/ic")"
+    for target in "$original"$'\n' "$original"$'\n\n'; do
+        rm "$consumer/.tools/ic"
+        ln -s "$target" "$consumer/.tools/ic"
+        [[ ! -e "$consumer/.tools/ic/bin" ]]
+        : > "$fixture/executions"
+        expect_failure install --check
+        expect_failure install
+        [[ ! -s "$fixture/executions" && "$(wc -l < "$fixture/downloads")" == "$before" &&
+           ! -e "$consumer/.tools/.ic-tools.lock" ]]
+        perl -e 'my $s=readlink($ARGV[0]); exit(defined($s) && $s eq $ARGV[1] ? 0 : 1)' \
+            "$consumer/.tools/ic" "$target"
+    done
+    rm "$consumer/.tools/ic"
+    ln -s "$original" "$consumer/.tools/ic"
+    install --check > /dev/null 2>&1
 done
 (
     cd "$fixture"

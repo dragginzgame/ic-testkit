@@ -31,7 +31,7 @@ impl Performance {
 
 #[cfg(target_arch = "wasm32")]
 fn wasm_memory_size_bytes() -> u128 {
-    u128::try_from(core::arch::wasm32::memory_size(0)).expect("usize fits into u128")
+    u128::try_from(std::arch::wasm32::memory_size(0)).expect("usize fits into u128")
         * WASM_PAGE_BYTES
 }
 

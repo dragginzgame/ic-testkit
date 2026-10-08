@@ -111,7 +111,9 @@ if [[ -e "$active" && ! -L "$active" ]]; then
     echo 'refusing to replace unmanaged .tools/host' >&2; exit 1
 fi
 if [[ -L "$active" ]]; then
-    selection="$(readlink "$active")"
+    # Preserve trailing newlines so admission checks the literal link target.
+    selection="$(perl -e 'my $s=readlink($ARGV[0]); defined($s) or exit 1; print $s,"/."' "$active")"
+    selection="${selection%/.}"
     [[ "$selection" =~ ^host-set\.[[:alnum:]]+$ ]] || { echo 'unmanaged host-tool selection' >&2; exit 1; }
     if verify "$tool_root/$selection"; then printf '%s\n' "$active/bin"; exit 0; fi
 fi

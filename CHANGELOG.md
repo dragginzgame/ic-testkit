@@ -6,6 +6,24 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.25.2]
+
+### Changed
+
+- Use IC Host 0.8.1's nonblocking regular-file locks for cache pruning and replacement,
+  preserving busy-entry skipping and refusing redirected or special lock files
+  ([Host #24](https://github.com/dragginzgame/ic-host-tooling/issues/24)).
+- Adopt Shared Tooling 0.1.28, rejecting malformed active tool-selection links
+  before execution or downloads and adding its opt-in maintenance task catalog
+  ([shared #75](https://github.com/dragginzgame/shared-tooling/issues/75)).
+
+### Testing
+
+- Qualify release-runner behavior with the shared simulation-only fixture in
+  native CI ([shared #70](https://github.com/dragginzgame/shared-tooling/issues/70)).
+- Record the actual minimum Rust compiler and check both native and Wasm paths,
+  including the Wasm performance probe, at the unchanged Rust 1.88 floor.
+
 ## [0.25.1] - 2026-10-08
 
 ### Testing

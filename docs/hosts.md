@@ -184,6 +184,7 @@ make fmt-check
 /bin/bash scripts/ci/check-git-hooks.sh
 cargo fetch --locked
 /bin/bash scripts/ci/check-release-guards.sh
+CDPATH="$PWD" /bin/bash scripts/ci/test-release-runner.sh
 /bin/bash scripts/ci/check-installation-version.sh
 /bin/bash scripts/ci/check-publish-guards.sh
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
@@ -197,6 +198,11 @@ cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency
 ```
 
 Fetching is an explicit preparation step and preserves the selected lockfile.
+For minimum-compiler qualification, prepare Rust 1.88.0 and its
+`wasm32-unknown-unknown` target explicitly, then run
+`CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 make msrv`. This records Cargo/rustc
+versions and checks the native public package, independent Wasm library path,
+and internal Wasm probe. CI prepares the same minimum compiler/target explicitly.
 For an already prepared offline host, use `cargo fetch --locked --offline`;
 missing cache data is a preparation failure, not permission to select upgrades.
 The focused startup tests use synthetic servers; the caller-provided live
@@ -1805,3 +1811,76 @@ also pass. Logs: `/tmp/ic-testkit-0251-server-{cache,tools,live,actionlint}.log`
 This compatible coverage change selects pending 0.25.1 in both changelogs and
 leaves package versions and published notes intact. Native CI has not run on
 these working changes; no macOS result or complete release gate is claimed.
+
+### Pending 0.25.2 Shared Tooling adoption
+
+Shared Tooling revision `1872ed2c20f6c70689bb2249050b1d673c60bfa0` (0.1.28)
+was reviewed and exported through its canonical helper from a separate clean
+checkout. The 79-file snapshot includes the complete maintenance catalog and
+its declared companions, plus the simulation-only release-runner fixture.
+No timer or agent schedule is activated. `ci/ic-tools.tsv` remains outside the
+snapshot as the single consumer-owned PocketIC 16.1 selection; its bytes and
+other executable selections are unchanged. The export's initial temporary-clone
+remote mismatch and initial reintroduction of default pin ownership are retained
+in `/tmp/ic-testkit-shared-0128.*/export*.log`; both were corrected before tool
+installation or runtime/tool validation, with no installed bundle switch or sibling edits.
+
+The selected IC Host 0.8.1 crates declare Rust 1.88, so lowering the common
+native/Wasm package floor below 1.88 is not supported by this selected graph.
+The development compiler remains separately selected at 1.99. `make msrv` now
+prints actual Cargo/rustc versions, checks the native public package, checks the
+public library's Wasm path independently of the probe, then checks the probe's
+Wasm path. The packages declare no optional feature axes. The standard-library
+Wasm memory intrinsic replaces its equivalent `core` path, following the new
+std-based code rule without a retained compatibility path.
+
+Focused Linux qualification uses locked, explicitly prepared dependencies,
+including the maintainer's pre-existing Host 0.8.1 lock selection. Native and
+Wasm checks pass on actual Rust/Cargo 1.88.0. Host/IC installer fixtures and the
+simulation-only release fixture pass with genuine Bash 3.2 (including nested
+PATH-selected Bash), and the simulation uses its own real-Git refusal guard.
+Malformed active links are rejected before execution/downloads and retain their
+literal bytes. Native CI now runs that same release simulation; real-Git shared
+tracking qualification stays with the upstream owner suite.
+
+Snapshot verification, prepared offline host/IC tools, dependency declarations,
+consumer release guards under inherited CDPATH, actionlint, formatting and
+whitespace checks pass. Logs are retained under
+`/tmp/ic-testkit-0252-*.log`. This is compatible work for pending 0.25.2;
+package versions and finalized release history remain unchanged. Linux results
+and source review do not qualify native macOS or a full maintainer gate.
+
+### Pending 0.25.2 nonblocking cache lock adoption
+
+`artifacts::cache_fs::try_lock_cache_file` now projects
+`ic_host_fs::durable::try_lock_regular_file_with_parents` instead of opening and
+trying an exclusive lock locally. The declaration requires ic-host-fs 0.8.1,
+where the API was introduced; the maintainer-selected lock remains 0.8.2.
+The shared `io::Error::from` projection preserves native WouldBlock and typed
+admission causes. Busy-entry skipping remains local to retention pruning,
+abandoned-staging pruning and replacement of unretained entries. Returned file
+descriptors retain their exclusive lock through each deletion operation.
+
+The new admission refuses redirected or non-regular final lock entries. Trusted
+parents and namespace-lock ordering remain consumer responsibilities. Existing
+v1 lock names and regular lock-file contents remain valid, without a layout
+reset or another retained-format reader. Host performs durable setup before
+nonblocking contention acquisition; this is not a filesystem-latency bound or
+measured pruning speed-up.
+
+Shared retention acquisition and final-owner explicit unlock remain unchanged,
+as do observer cadence and post-open acquisition-duration measurement. Their
+local opener and fs2 dependency remain necessary until the separate admission
+composition gap in [Host #27](https://github.com/dragginzgame/ic-host-tooling/issues/27)
+is resolved; no new consumer opener or try/unlock/reacquire bridge was added.
+
+Linux focused checks pass: 8 cache filesystem tests (including contention,
+reacquisition, redirected-file rejection, preservation of existing lock bytes
+and final retention-owner release), 2 transaction pruning tests, 3 Wasm pruning
+checks and 1 retained-corruption replacement check. Strict library Clippy,
+actual Rust 1.88 public-library compilation, formatting, dependency declarations
+and whitespace checks pass. Evidence uses
+`/tmp/ic-testkit-0252-{cache-lock-*,transaction-pruning,wasm-*-pruning,retained-corruption}.log`.
+These tests use actual native filesystem locks, not a mocked acquisition result.
+Native macOS qualification remains with the configured CI jobs; no full local
+gate was run. No functions, methods or types were deleted in this adapter change.

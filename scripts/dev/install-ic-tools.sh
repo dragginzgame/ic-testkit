@@ -81,7 +81,9 @@ if [[ -e "$active" && ! -L "$active" ]]; then
     echo 'refusing to replace an unmanaged .tools/ic path' >&2; exit 1
 fi
 if [[ -L "$active" ]]; then
-    selection="$(readlink "$active")"
+    # Preserve trailing newlines so admission checks the literal link target.
+    selection="$(perl -e 'my $s=readlink($ARGV[0]); defined($s) or exit 1; print $s,"/."' "$active")"
+    selection="${selection%/.}"
     [[ "$selection" =~ ^ic-set\.[[:alnum:]]+$ ]] || {
         echo 'refusing an unmanaged .tools/ic link' >&2; exit 1;
     }
