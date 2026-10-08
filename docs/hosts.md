@@ -1323,3 +1323,70 @@ was still running when inspected. Neither that run nor these Linux checks
 qualify native macOS execution of the pending consumer source. This is a scoped
 complexity review with no unresolved actionable structural finding in the named
 owners, not a whole-repository correctness or performance verdict.
+
+### 2026-10-08: pending 0.22.1 failure-evidence archives
+
+On released base `2951fd19e58799580e60ec0f6f5864d296271a62`, the local
+workflow fix for [#28](https://github.com/dragginzgame/ic-testkit/issues/28)
+archives each job's existing selected failure-evidence roots instead of giving
+raw legal-Unix filenames to the artifact uploader. `collect-failure-evidence.sh`
+owns only Testkit's checks/portable selections and records the pre-collection
+step context. Missing early-failure files are skipped; original roots stay in
+place. Successful tar creation precedes publication of `evidence.tar.gz`;
+failed attempts retain `evidence.tar.gz.partial`. A second attempt cannot
+replace an existing bundle. Intermediate linked parents are rejected, archive
+links are not dereferenced, inherited TAR_OPTIONS is cleared, and Git metadata
+is excluded. The existing failure artifacts retain their 14-day policy.
+
+Shared Tooling remains committed at 0.1.23
+`0ba0ad00ed94848e54ecc82629b6b7873b7284c0`; its archive helper and related
+[#59](https://github.com/dragginzgame/shared-tooling/issues/59) work were dirty
+and uncommitted at inspection. No sibling file or shared snapshot was edited.
+The consumer adapter is explicitly outside the snapshot; adopting the eventual
+reviewed helper remains separate from this local fix.
+
+Linux focused native execution with GNU tar 1.35 passes early/late evidence
+selection, colon/newline filenames, exact payload and outcome bytes, executable
+and 0640 modes, links without outside content, metadata exclusion, prior-attempt
+preservation, linked-parent refusal and partial-writer retention. Bash syntax,
+ShellCheck 0.11.0, actionlint 1.7.12, YAML parsing and dependency declaration/pin
+checking pass. The first mock-writer test failed because its substitute printed
+partial bytes instead of writing the requested archive path; that attempt is
+retained at `/tmp/ic-testkit-0221-evidence-test.log`. The corrected retry and
+final results remain under `/tmp/ic-testkit-0221-evidence-*.log`.
+
+Portable CI now creates a controlled qualification archive, uploads/downloads
+it with immutable action selections, and verifies the downloaded bytes, modes,
+links and step outcome on all three required native hosts. This adds no live
+failing-job dispatch: actual artifact service and native macOS qualification
+remain pending a run of this changed workflow. Qualification artifacts retain
+one day; failure artifacts retain 14 days. These checks use no Cargo jobs,
+resolve no dependencies, and make no release or publication claim.
+
+The earlier 0.22.0 [tag workflow](https://github.com/dragginzgame/ic-testkit/actions/runs/37752946475)
+now passes, including full native gates and process/portable/concurrency tests;
+its source is the released base above, not this pending archive change. Its
+branch run was still queued when inspected.
+
+### 2026-10-08: qualification-failure evidence containment
+
+The pending 0.22.1 archive fixtures and downloaded-archive verifier now use the
+retained portable TMPDIR in native CI. Portable collection also explicitly
+includes the qualification source/download directories; checks collection
+still excludes those portable-only roots. This prevents a failure in the new
+qualification itself from leaving its detailed fixtures outside failure uploads.
+
+Focused Linux proof at `/tmp/ic-testkit-0221-retained-verifier.h2FgWt`
+creates a valid qualification archive, supplies an incomplete downloaded copy,
+and runs the actual verifier with retained TMPDIR. Verification fails as
+expected and keeps its extraction fixture. The actual portable collector then
+archives that fixture and both qualification inputs; extraction and byte
+comparisons pass. The valid qualification archive separately passes the downloaded
+verifier. Original source inputs and all failed logs remain in that proof tree.
+The maintained selection/round-trip fixture, ShellCheck and actionlint pass;
+its local log is `/tmp/ic-testkit-0221-qualification-retention.log`.
+
+These are native Linux archive/selection observations, not an actual artifact
+service round trip or native macOS proof. The configured changed-workflow CI
+remains the owner of those outstanding checks. Shared Tooling's helper still
+has no committed source beyond the recorded 0.1.23 snapshot at inspection.

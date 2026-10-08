@@ -80,20 +80,23 @@ jobs:
       - name: Run complete CI gate
         shell: bash
         run: make ci 2>&1 | tee "$RUNNER_TEMP/ic-testkit-validation.log"
+      - name: Archive failed validation and installer evidence
+        if: failure()
+        id: checks-evidence
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        env:
+          IC_TESTKIT_FAILURE_STEPS: ${{ toJSON(steps) }}
+        run: |
+          archive="$(bash scripts/ci/collect-failure-evidence.sh checks)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - name: Retain failed validation and installer evidence
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: checks-failure-${{ matrix.os }}
-          path: |
-            ${{ runner.temp }}/ic-testkit-tools-install.log
-            ${{ runner.temp }}/ic-testkit-validation.log
-            ${{ github.workspace }}/target/validation-failures
-            ${{ github.workspace }}/.tools/host-set.*
-            ${{ github.workspace }}/.tools/ic-set.*
-          include-hidden-files: true
+          path: ${{ steps.checks-evidence.outputs.archive }}
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   portable-hosts:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
@@ -147,6 +150,29 @@ jobs:
           /bin/bash scripts/ci/check-publish-guards.sh
           /bin/bash scripts/ci/check-git-hooks.sh
           make fmt-check
+      - name: Qualify failure evidence archives
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        env:
+          IC_TESTKIT_ARCHIVE_PROOF_DIR: ${{ runner.temp }}/ic-testkit-archive-proof
+          TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
+        run: /bin/bash scripts/ci/test-failure-evidence.sh
+      - name: Upload archive qualification artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: evidence-qualification-${{ matrix.os }}
+          path: ${{ runner.temp }}/ic-testkit-archive-proof/evidence.tar.gz
+          retention-days: 1
+          if-no-files-found: error
+      - name: Download archive qualification artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: evidence-qualification-${{ matrix.os }}
+          path: ${{ runner.temp }}/ic-testkit-archive-downloaded
+      - name: Verify downloaded evidence archive
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        env:
+          TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
+        run: /bin/bash scripts/ci/test-failure-evidence.sh verify "$RUNNER_TEMP/ic-testkit-archive-downloaded/evidence.tar.gz"
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
       - name: Check shared host-tool and bounded Wasm integration
@@ -157,20 +183,23 @@ jobs:
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
       - name: Check native fixture benchmark driver and sampler
         run: cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
+      - name: Archive failed portable and installer evidence
+        if: failure()
+        id: portable-evidence
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        env:
+          IC_TESTKIT_FAILURE_STEPS: ${{ toJSON(steps) }}
+        run: |
+          archive="$(bash scripts/ci/collect-failure-evidence.sh portable)"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
       - name: Retain failed portable and installer evidence
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: portable-failure-${{ matrix.os }}
-          path: |
-            ${{ runner.temp }}/ic-testkit-tools-install.log
-            ${{ runner.temp }}/ic-testkit-portable-fixtures
-            ${{ github.workspace }}/target/validation-failures
-            ${{ github.workspace }}/.tools/host-set.*
-            ${{ github.workspace }}/.tools/ic-set.*
-          include-hidden-files: true
+          path: ${{ steps.portable-evidence.outputs.archive }}
           retention-days: 14
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   pocket-ic-concurrency:
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')

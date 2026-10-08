@@ -6,6 +6,17 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.22.1]
+
+### Fixed
+
+- Archive failed CI evidence before upload so legal Unix filenames, file modes
+  and symlinks survive retention. Preserve logs, step outcomes and failed
+  qualification artifacts; add CI upload/download qualification on every
+  supported native host
+  ([#28](https://github.com/dragginzgame/ic-testkit/issues/28),
+  [shared #59](https://github.com/dragginzgame/shared-tooling/issues/59)).
+
 ## [0.22.0] - 2026-10-08
 
 ### Breaking
