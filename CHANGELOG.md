@@ -6,6 +6,29 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.24.0]
+
+### Breaking
+
+- Adopt IC Host 0.7 through the public host-crate re-exports. Update exhaustive
+  matches for `ExecutionFailure::Cancelled` and
+  `ExecutionOperation::{StdinPipe, WriteInput}`; remove references to
+  `ExecutionOperation::{StdoutPipe, StderrPipe}`.
+- Remove `artifacts::read_wasm`. Compose `artifacts::wasm_path` with
+  `ic_host_fs::read::read_file` and retain the caller-selected byte limit.
+
+### Fixed
+
+- Make CI evidence qualification work with inherited `CDPATH` and physical
+  checkout, workspace and temp paths ending in newlines. Exercise these paths
+  in the native archive round-trip checks
+  ([#31](https://github.com/dragginzgame/ic-testkit/issues/31)).
+- Adopt Shared Tooling 0.1.26, including the release-tracking transaction that
+  preserves concurrent symbolic refs and guarded refresh of unchanged,
+  uncommitted snapshots
+  ([shared #62](https://github.com/dragginzgame/shared-tooling/issues/62),
+  [shared #64](https://github.com/dragginzgame/shared-tooling/issues/64)).
+
 ## [0.23.0] - 2026-10-08
 
 ### Breaking

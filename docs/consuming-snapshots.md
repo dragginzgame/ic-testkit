@@ -34,10 +34,9 @@ that needs a different path or behavior owns an adapter rather than a patched
 shared copy.
 
 Refresh checks every declared destination before replacing any file. It refuses
-to overwrite staged or unstaged changes, deletions, or existing untracked/ignored
-files. Preserve or reconcile those changes before retrying; unrelated dirty paths
-remain allowed. A destination already matching the selected source bytes and
-executable state is safe to retry, including after an interrupted refresh. Only
+to overwrite consumer edits, deletions, or unrelated untracked/ignored files.
+Unrelated dirty paths remain allowed. A destination already matching the selected
+source bytes and executable state is safe to retry, including after an interrupted refresh. Only
 declare paths owned by the shared snapshot; the consumer's `AGENTS.md` remains local.
 The manifest is reviewed configuration: an intentional file-set edit is read as
 input and replaced with the resulting manifest, rather than rejected as dirty work.
@@ -54,6 +53,21 @@ set:
 
 Review the resulting consumer diff normally. Refresh never deletes a file and
 does not commit, stage, or push changes.
+
+A previous export need not be committed before refreshing it again. An unchanged
+file may advance when its bytes and executable mode match both the previous
+manifest and that manifest's exact source commit. The old commit must be available
+in the selected source checkout; refresh never fetches it or trusts edited hashes
+without that proof. A selected file that would change must have no staged changes;
+preserve or reconcile those index changes before retrying. Files already matching
+the new source keep the existing interrupted-refresh behavior.
+
+Preparation captures consumer file identities, bytes, modes, selected index
+entries and the manifest, then rechecks them before replacement. Changed paths,
+parents redirected through symlinks, index conflicts and concurrent manifest edits
+are refused. These checks do not lock out editors or make the whole file set
+atomic; stop other edits/validation of selected paths during refresh. A late
+conflict can leave an incomplete refresh, with the same recovery procedure below.
 
 The source remote must continue to match the manifest exactly. Switching
 between SSH, HTTPS, or a fork is an explicit provenance change and requires a

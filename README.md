@@ -1325,21 +1325,33 @@ and exact version admission, bounded output, an explicit environment and a deadl
 for external transforms. Keep the executable and its parent directories protected
 from concurrent writers during admission and execution.
 
-`read_wasm(target_dir, crate_name, profile_target_dir, max_bytes)` now returns
-`Result<Vec<u8>, ic_host_artifacts::artifact::ArtifactError>`. The caller chooses the
-byte limit; failures are typed rather than panics. Stream identities, archives and Wasm inspection belong to `ic_host_artifacts`;
+Read compiled Wasm through the shared filesystem owner:
+
+```rust
+use ic_testkit::{artifacts::wasm_path, ic_host_fs::read::read_file};
+
+let path = wasm_path(target_dir, crate_name, profile_target_dir);
+let bytes = read_file(&path, max_bytes)?;
+```
+
+The caller chooses the byte limit; failures are typed rather than panics.
+Paths must be caller-controlled; symbolic links are allowed. Reading bytes does
+not validate Wasm; use `ic_host_artifacts::wasm::inspect` for structural facts.
+Stream identities, archives and Wasm inspection belong to `ic_host_artifacts`;
 pathname reads and durable publication belong to `ic_host_fs`; executable
 resolution, execution and Git provenance belong to `ic_host_process`; Candid
 extraction and response decoding belong to `ic_host_tools`. Execution, resolution,
 Candid and provenance are Unix-only.
 Structural Wasm inspection does not replace PocketIC's runtime validation.
-The host-crate re-exports select IC Host 0.6; gzip encoding accepts numeric levels
+The host-crate re-exports select IC Host 0.7; gzip encoding accepts numeric levels
 0–9. When upgrading from 0.21, update Wasm fact literals and exhaustive inspection
 error matches as described in the [0.22 migration guide](crates/ic-testkit/CHANGELOG.md#0220).
 The [0.23 migration guide](crates/ic-testkit/CHANGELOG.md#0230) covers Host's
 new `ExecutionError::group_error` and the expanded PocketIC startup errors.
 Startup errors retain their original cause and append secondary cleanup failures
 when displayed; builder failures also retain bounded server stdout/stderr.
+The [0.24 migration guide](crates/ic-testkit/CHANGELOG.md#0240) covers Host's
+changed execution failure categories and replacing `read_wasm` with `read_file`.
 
 The `transactional_artifact_cache` example uses shared digest/version admission
 and bounded execution for its transformer. Supply a reviewed raw executable

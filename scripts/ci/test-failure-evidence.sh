@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-root="$(cd "$(dirname "$0")/../.." && pwd -P)"
+root="$0"
+[[ "$root" == /* ]] || root="$PWD/$root"
+root="$(cd -P "${root%/*}/../.." && printf '%s/.' "$PWD")"
+root="${root%/.}"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-evidence-test.XXXXXX")"
 trap 'if [[ $? == 0 ]]; then rm -rf "$fixture"; else echo "Evidence fixture retained: $fixture" >&2; fi' EXIT
 
@@ -30,8 +33,9 @@ if [[ $# == 2 && "$1" == verify ]]; then
     exit 0
 fi
 [[ $# == 0 ]] || exit 2
-mkdir -p "$fixture/workspace/.tools/host-set.fixture/bin" "$fixture/temp"
-export GITHUB_WORKSPACE="$fixture/workspace" RUNNER_TEMP="$fixture/temp"
+# Exercise physical roots ending in newlines, not only unusual archive members.
+export GITHUB_WORKSPACE="$fixture/"$'workspace\n' RUNNER_TEMP="$fixture/"$'temp\n'
+mkdir -p "$GITHUB_WORKSPACE/.tools/host-set.fixture/bin" "$RUNNER_TEMP"
 export IC_TESTKIT_FAILURE_STEPS='{"prepare":{"outcome":"failure","status":23}}'
 collector="$root/scripts/ci/collect-failure-evidence.sh"
 # An early failure has no logs or tool sets yet; retain its step outcomes.

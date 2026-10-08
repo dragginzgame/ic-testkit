@@ -108,9 +108,14 @@ or completed resume verifies the exact remote tag and branch history, the runner
 refreshes the selected branch's matching configured upstream from that observation.
 Git derives the mapping, including custom fetch refspecs; fetch and push destinations
 must agree. The conditional local update preserves newer/divergent or concurrently
-changed tracking values and never dereferences a symbolic tracking ref. Other
-upstreams remain untouched. Local inspection/update failure reports a fetch remedy
-without repeating commit, tag or push; it does not undo confirmed delivery.
+changed tracking values. It prepares a Git ref transaction, checks that the ref is
+direct while Git holds its lock, and only then commits the observation. A concurrent
+symbolic replacement is preserved even when it resolves to the captured old commit;
+the runner never dereferences or overwrites it. Other upstreams remain untouched.
+This optional refresh uses core Perl IPC and Git's `update-ref --stdin` transaction
+protocol. Failed preparation or type inspection aborts the optional update. Local
+refresh failures report a fetch remedy without repeating commit, tag or push;
+they do not undo confirmed delivery.
 
 `--no-follow-tags` disables implicit annotated-tag publication, including a
 configured `push.followTags`. Both refspecs are explicit: push the selected branch

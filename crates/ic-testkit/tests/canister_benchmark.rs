@@ -12,12 +12,13 @@ use ic_testkit::{
         WasmBuildPhase, WasmBuildProgressConfig, WasmBuildProgressEvent, WasmBuildSession,
         WasmBuildSpec, build_wasm_canisters_cached, build_wasm_canisters_cached_with_progress,
         inspect_shared_incremental_target, prepare_artifact_cache, prune_wasm_build_cache,
-        read_wasm, resolve_cargo_build_inputs, wasm_path, workspace_root_for,
+        resolve_cargo_build_inputs, wasm_path, workspace_root_for,
     },
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
+    ic_host_fs::read::read_file,
     pic::{InstallSpec, StandaloneCanisterFixture},
 };
 use std::{
@@ -48,8 +49,8 @@ fn shared_wasm_target_rejects_library_that_no_longer_produces_wasm() {
     let spec = WasmBuildSpec::new(&workspace, &root.join("exact"), &["feature_a"], "debug")
         .with_shared_incremental_target(&shared);
     let first = build_wasm_canisters_cached(&spec).expect("build initial canister library");
-    let before =
-        read_wasm(&shared, "feature_a", "debug", 128 * 1024 * 1024).expect("read bounded Wasm");
+    let before = read_file(&wasm_path(&shared, "feature_a", "debug"), 128 * 1024 * 1024)
+        .expect("read bounded Wasm");
     let manifest = workspace.join("feature_a/Cargo.toml");
     let contents = fs::read_to_string(&manifest).expect("read canister manifest");
     for changed in [
@@ -75,7 +76,7 @@ fn shared_wasm_target_rejects_library_that_no_longer_produces_wasm() {
                 "a changed library output must not certify old Wasm: {result:?}",
             );
             assert_eq!(
-                read_wasm(&shared, "feature_a", "debug", 128 * 1024 * 1024)
+                read_file(&wasm_path(&shared, "feature_a", "debug"), 128 * 1024 * 1024)
                     .expect("read bounded Wasm"),
                 before
             );
@@ -162,8 +163,8 @@ fn shared_wasm_target_rejects_binary_only_build_before_publication() {
         .with_shared_incremental_target(&shared)
         .with_cargo_profile_args(["--lib"]);
     let first = build_wasm_canisters_cached(&spec).expect("build initial canister Wasm");
-    let before =
-        read_wasm(&shared, "feature_a", "debug", 128 * 1024 * 1024).expect("read bounded Wasm");
+    let before = read_file(&wasm_path(&shared, "feature_a", "debug"), 128 * 1024 * 1024)
+        .expect("read bounded Wasm");
     fs::write(
         workspace.join("shared/src/lib.rs"),
         "pub fn value() -> u8 { 2 }\n",
@@ -180,7 +181,8 @@ fn shared_wasm_target_rejects_binary_only_build_before_publication() {
         "a binary-only build must not certify the old canister output: {result:?}",
     );
     assert_eq!(
-        read_wasm(&shared, "feature_a", "debug", 128 * 1024 * 1024).expect("read bounded Wasm"),
+        read_file(&wasm_path(&shared, "feature_a", "debug"), 128 * 1024 * 1024)
+            .expect("read bounded Wasm"),
         before
     );
     assert!(
@@ -192,7 +194,8 @@ fn shared_wasm_target_rejects_binary_only_build_before_publication() {
     let rebuilt = build_wasm_canisters_cached(&spec).expect("build changed canister Wasm");
     assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
     assert_ne!(
-        read_wasm(&shared, "feature_a", "debug", 128 * 1024 * 1024).expect("read bounded Wasm"),
+        read_file(&wasm_path(&shared, "feature_a", "debug"), 128 * 1024 * 1024)
+            .expect("read bounded Wasm"),
         before
     );
     assert!(matches!(
@@ -215,8 +218,11 @@ fn shared_wasm_target_rejects_mismatched_cargo_profile_before_publication() {
         .with_shared_incremental_target(&shared)
         .with_cargo_profile_args(["--release"]);
     let first = build_wasm_canisters_cached(&spec).expect("build initial release Wasm");
-    let before =
-        read_wasm(&shared, "feature_a", "release", 128 * 1024 * 1024).expect("read bounded Wasm");
+    let before = read_file(
+        &wasm_path(&shared, "feature_a", "release"),
+        128 * 1024 * 1024,
+    )
+    .expect("read bounded Wasm");
     fs::write(
         workspace.join("shared/src/lib.rs"),
         "pub fn value() -> u8 { 2 }\n",
@@ -233,7 +239,11 @@ fn shared_wasm_target_rejects_mismatched_cargo_profile_before_publication() {
         "a debug build must not certify the old release output: {result:?}",
     );
     assert_eq!(
-        read_wasm(&shared, "feature_a", "release", 128 * 1024 * 1024).expect("read bounded Wasm"),
+        read_file(
+            &wasm_path(&shared, "feature_a", "release"),
+            128 * 1024 * 1024
+        )
+        .expect("read bounded Wasm"),
         before
     );
     assert!(!wasm_path(&shared, "feature_a", "debug").exists());
@@ -241,7 +251,11 @@ fn shared_wasm_target_rejects_mismatched_cargo_profile_before_publication() {
     let rebuilt = build_wasm_canisters_cached(&spec).expect("build changed release Wasm");
     assert!(matches!(rebuilt, WasmBuildOutcome::Built(_)));
     assert_ne!(
-        read_wasm(&shared, "feature_a", "release", 128 * 1024 * 1024).expect("read bounded Wasm"),
+        read_file(
+            &wasm_path(&shared, "feature_a", "release"),
+            128 * 1024 * 1024
+        )
+        .expect("read bounded Wasm"),
         before
     );
     assert!(matches!(
@@ -626,8 +640,7 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     assert!(matches!(restored, WasmBuildOutcome::Reused(_)));
     assert!(wasm_path.is_file());
 
-    let wasm = read_wasm(&target_dir, PERF_PROBE_PACKAGE, "debug", 128 * 1024 * 1024)
-        .expect("read bounded Wasm");
+    let wasm = read_file(&wasm_path, 128 * 1024 * 1024).expect("read bounded Wasm");
     let fixture =
         StandaloneCanisterFixture::install(support::pocket_ic(), InstallSpec::new(wasm, vec![], 0));
     let result: u64 = fixture

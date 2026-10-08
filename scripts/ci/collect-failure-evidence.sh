@@ -6,8 +6,17 @@ set -euo pipefail
 [[ $# -eq 1 ]] || { echo 'expected checks or portable evidence selection' >&2; exit 2; }
 mode="$1"
 case "$mode" in checks|portable) ;; *) echo 'unknown evidence selection' >&2; exit 2 ;; esac
-workspace="$(cd "${GITHUB_WORKSPACE:?}" && pwd -P)"
-temporary="$(cd "${RUNNER_TEMP:?}" && pwd -P)"
+workspace="${GITHUB_WORKSPACE:?}"
+[[ "$workspace" == /* ]] || workspace="$PWD/$workspace"
+workspace="$(cd -P "$workspace" && printf '%s/.' "$PWD")"
+workspace="${workspace%/.}"
+temporary="${RUNNER_TEMP:?}"
+[[ "$temporary" == /* ]] || temporary="$PWD/$temporary"
+temporary="$(cd -P "$temporary" && printf '%s/.' "$PWD")"
+temporary="${temporary%/.}"
+archiver="$0"
+[[ "$archiver" == /* ]] || archiver="$PWD/$archiver"
+archiver="${archiver%/*}/archive-evidence.sh"
 outcomes="${IC_TESTKIT_FAILURE_STEPS:?}"
 bundle="$temporary/ic-testkit-$mode-failure"
 # A previous attempt is evidence, not an output to overwrite.
@@ -38,7 +47,7 @@ for path in "$workspace"/.tools/host-set.* "$workspace"/.tools/ic-set.*; do
 done
 # Never follow links or include Git metadata. Failed archives and all source
 # evidence remain available; the uploader selects only the completed filename.
-TAR_OPTIONS='' bash "$(dirname "$0")/archive-evidence.sh" \
+TAR_OPTIONS='' bash "$archiver" \
     "$bundle/evidence.tar.gz.partial" "${arguments[@]}" >/dev/null
 mv "$bundle/evidence.tar.gz.partial" "$bundle/evidence.tar.gz"
 printf '%s\n' "$bundle/evidence.tar.gz"

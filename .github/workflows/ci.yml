@@ -155,7 +155,7 @@ jobs:
         env:
           IC_TESTKIT_ARCHIVE_PROOF_DIR: ${{ runner.temp }}/ic-testkit-archive-proof
           TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
-        run: /bin/bash scripts/ci/test-failure-evidence.sh
+        run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh
       - name: Upload archive qualification artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -172,7 +172,7 @@ jobs:
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         env:
           TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
-        run: /bin/bash scripts/ci/test-failure-evidence.sh verify "$RUNNER_TEMP/ic-testkit-archive-downloaded/evidence.tar.gz"
+        run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh verify "$RUNNER_TEMP/ic-testkit-archive-downloaded/evidence.tar.gz"
       - name: Check native managed-server lifecycle
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
       - name: Check shared host-tool and bounded Wasm integration

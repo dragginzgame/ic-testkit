@@ -52,8 +52,11 @@ links current usage guidance and historical design records.
 
 Host-only shared APIs are available through the complete `ic_host_artifacts`,
 `ic_host_fs`, `ic_host_process` and `ic_host_tools` re-exports under `ic_testkit`.
-The pending [0.20 migration guide](CHANGELOG.md#0200) maps the split owners and
-the changed `read_wasm` error path. The [0.19 guide](CHANGELOG.md#0190) covers
+The [0.24 migration guide](CHANGELOG.md#0240) covers IC Host 0.7's execution
+failure categories and replacing `artifacts::read_wasm` with
+`ic_host_fs::read::read_file` on an `artifacts::wasm_path`. The
+[0.20 migration guide](CHANGELOG.md#0200) maps the split owners.
+The [0.19 guide](CHANGELOG.md#0190) covers
 explicit tool resolution and verified external-transform arguments.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains

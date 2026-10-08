@@ -190,7 +190,7 @@ cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
 cargo test -p ic-testkit --locked --offline --test server_runner
 POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic" cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
 cargo test -p ic-testkit --locked --offline --lib artifacts::host_tests
-cargo test -p ic-testkit --locked --offline --lib artifacts::wasm::tests
+cargo test -p ic-testkit --locked --offline --test artifact_helpers
 cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
 cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
 cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency
@@ -1508,3 +1508,92 @@ At inspection, released Testkit 0.22.3
 is also queued. Neither those pending runs nor the earlier green Host 0.5.2 and
 Testkit 0.22.2 runs qualify these new paths on native macOS. Native consumer and
 upstream qualification remain outstanding; no full gate or release ran locally.
+
+### 2026-10-08: Shared Tooling 0.1.26 and literal evidence paths
+
+The compatible 0.23.1 draft refreshes the existing 62-file snapshot to committed
+Shared Tooling `75a8a60f49cec11d3f6aecab5c977029c42cc549` (0.1.26), using a clean
+isolated checkout. Sibling dirty documentation and fixture work was preserved.
+This includes the locked tracking-ref type check from later 0.1.25 source and
+reviewed uncommitted-snapshot refresh from 0.1.26. The repository description
+remains consistent with the current toolkit scope. Snapshot integrity and
+focused canonical release-runner/exporter fixtures pass on Linux; the runner
+checks all 19 real-Git tracking scenarios. Logs are retained at
+`/tmp/ic-testkit-0231-{release,snapshot}.log`.
+
+Consumer-owned evidence wrappers now anchor relative operands before physical
+cd and preserve trailing newline bytes with a non-newline PWD suffix. The fixture
+creates workspace/temp roots ending in newlines; CI invokes both creation and
+verification with inherited CDPATH. Evidence selection, outcomes, completed and
+partial archive disposition, link/metadata policy and retention remain unchanged.
+The original CDPATH failure remains at `/tmp/ic-testkit-0230-cdpath-review.log`
+and `/tmp/ic-testkit-evidence-test.DXS3iA`.
+
+Focused Linux archive fixtures pass with Bash 5 and genuine Bash 3.2.57 selected
+for parent and nested shells, both under inherited CDPATH. Logs are retained at
+`/tmp/ic-testkit-0231-{evidence,bash32}.log`. The copied actual collector, archiver
+and verifier also pass from a physical checkout whose name ends in a newline,
+with Bash 3.2 and inherited CDPATH: proof, source digests, logs and exported archive
+are retained under `/tmp/ic-testkit-0231-path-proof.HR8vn8`. This is a local
+export/verification round trip, not a hosted upload/download result. ShellCheck,
+actionlint, snapshot verification, dependency pins and diff checks pass. No Cargo
+job, dependency update, package-version change or broad gate ran.
+
+[Host 0.6.0 CI](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37769906817)
+is now successful at exact released source
+`6f066e727c977e0b7ec8d3d77821df8508b95c64`. The selected Host graph is unchanged.
+Released Testkit 0.23.0
+[tag CI](https://github.com/dragginzgame/ic-testkit/actions/runs/37772507706)
+and [Shared 0.1.26 CI](https://github.com/dragginzgame/shared-tooling/actions/runs/37770856593)
+remain incomplete at inspection. Those runs do not qualify this pending consumer
+batch; native macOS/artifact qualification remains with the configured workflow.
+
+### 2026-10-08: IC Host 0.7 and the 0.24 hard cut
+
+The maintainer selected Host 0.7 and authorized moving the complete pending batch
+from 0.23.1 to **0.24.0**. Both changelog views now carry the evidence-path and
+Shared Tooling changes together with the Host upgrade and API removal. Package
+version metadata remains 0.23.0 for maintainer-owned release preparation. The
+selected lockfile has all four registry Host crates at 0.7.0; explicit
+`cargo fetch --locked --offline` cache preparation passed without resolution.
+
+The scoped surface/duplication review used `audits/module-surface-hardening.md`,
+`audits/flow-convergence-and-duplication.md` and `audits/module-cleanup.md` from
+Shared Tooling `75a8a60f49cec11d3f6aecab5c977029c42cc549`, with this repository's
+AGENTS overlay (SHA-256
+`9bb76e1cb57bb736f95edfc213b207d9fb70ce95b07237344b3b244b679e7fd8`).
+Consumer source is HEAD `59b1c1de924116752282eac48c6531dce159ccc9` plus the
+pending working-tree changes. Scope was the Host re-export boundary, Wasm file
+helpers and owned process execution; retained cache schemas and canister runtime
+were not changed or requalified.
+
+`artifacts::read_wasm` duplicated the composition of Cargo's artifact path and
+Host's bounded file reader. It and its re-export were removed. Benchmark callers
+now compose `wasm_path` with `ic_host_fs::read::read_file` using the same limits.
+The duplicate `compiled_artifact_reads_use_selected_profile_and_explicit_limit`
+test was removed from `artifacts/wasm.rs`; Host owns its file-reader rejection
+tests and the existing artifact-helper tests retain Cargo profile/path coverage.
+No function was moved or renamed and no compatibility alias was added.
+
+The remaining layout helpers retain Testkit's Cargo target/profile policy.
+`PocketIcStartupConfig::run_command` retains arbitrary caller IO, nonzero status
+propagation, no command deadline and owned-server monitoring. Host's
+`communicate_child` requires a deadline and treats unsuccessful exits as execution
+failures. Observed Cargo builds additionally require live byte callbacks and
+heartbeat events, which that helper does not expose. Neither loop is an
+equivalent offload; their existing `OwnedChild` lifecycle owner remains shared.
+No runtime speed-up is claimed from the removed facade.
+
+Focused Linux checks passed with Rust 1.99 and the locked registry graph:
+21 startup tests (one ignored), two shared-tool/cache boundary tests, four
+artifact-helper tests, the binary-only shared-target benchmark rejection test,
+the artifact module doctest and strict all-target Testkit Clippy. Rust 1.88
+library compilation and `make fmt-check` also passed. Logs are retained at
+`/tmp/ic-testkit-0240-{cache,startup,host,helpers,benchmark-read,doc,clippy,msrv,fmt}.log`.
+The benchmark check built a disposable Wasm workspace; the live PocketIC
+performance probe was not run. Full tests and release gates remain maintainer-owned.
+
+[Host 0.7.0 CI](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37773664766)
+passed MSRV, Linux and native macOS Intel/ARM at exact source
+`491fc0e231b9650526f5f57b9ab7b1f62f02218c`. This qualifies the upstream release;
+this pending consumer hard cut still requires its own matching native CI.

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # Canonical ordering and Git effects; consumer targets own metadata and gates.
-# Dependencies: Bash 3.2, GNU Make, Git, date and standard Unix file utilities.
+# Dependencies: Bash 3.2, GNU Make, Git, Perl, date and standard Unix file utilities.
 # Journals live in the repository's Git directory, outside build artifacts.
 usage() {
     echo 'usage: run-release.sh patch|minor|major REMOTE BRANCH' >&2
@@ -270,7 +270,39 @@ refresh_release_tracking() {
     current_upstream="$(git for-each-ref --format='%(upstream:remotename)%09%(upstream:remoteref)%09%(upstream)' -- "refs/heads/$branch")" || return 0
     [[ "$current_upstream" == "$upstream" && "$(git remote get-url --all "$remote")" == "$fetch_destination" ]] || return 0
     assert_destination
-    if ! git update-ref --no-deref -m "release: observed $remote/$branch" "$tracking_ref" "$remote_head" "$tracking_head"; then
+    # An OID comparison alone also accepts a symbolic ref resolving to that OID.
+    # Prepare first, then inspect its type while Git holds the update lock.
+    if ! perl - "$tracking_ref" "$remote_head" "$tracking_head" "release: observed $remote/$branch" <<'PERL'
+use strict;
+use warnings;
+use IPC::Open2;
+my ($ref, $new, $old, $message) = @ARGV;
+$SIG{PIPE} = 'IGNORE';
+my $pid = open2(my $reply, my $request, 'git', 'update-ref', '--no-deref', '-m', $message, '--stdin');
+my $ok = eval {
+    print {$request} "start\nupdate $ref $new $old\nprepare\n" or die "cannot prepare tracking update\n";
+    for my $expected ("start: ok\n", "prepare: ok\n") {
+        my $line = <$reply>;
+        defined($line) && $line eq $expected or die "tracking transaction was not prepared\n";
+    }
+    open my $kind, '-|', 'git', 'symbolic-ref', '--quiet', $ref or die "cannot inspect locked tracking ref: $!\n";
+    { local $/; <$kind>; }
+    close $kind;
+    $? == 256 or die "locked tracking ref is symbolic or could not be inspected\n";
+    print {$request} "commit\n" or die "cannot commit tracking update\n";
+    my $line = <$reply>;
+    defined($line) && $line eq "commit: ok\n" or die "tracking transaction was not committed\n";
+    1;
+};
+my $error = $@;
+# EOF aborts a started transaction that has not committed, releasing its locks.
+close $request;
+close $reply;
+waitpid($pid, 0);
+warn $error unless $ok;
+exit($ok && $? == 0 ? 0 : 1);
+PERL
+    then
         echo 'release delivered; tracking refresh failed or raced; fetch to refresh Git status' >&2
     fi
 }
