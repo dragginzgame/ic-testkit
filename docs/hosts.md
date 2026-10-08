@@ -1784,3 +1784,24 @@ therefore numbered 0.25.0 in both changelogs; package versions remain maintainer
 owned. No new cleanup timing policy is selected here. Shared default pin
 adoption is tracked in
 [shared #76](https://github.com/dragginzgame/shared-tooling/issues/76).
+
+### Pending 0.25.1 live server CLI coverage
+
+At released source `6b6d2cfe7f4c3e7a204a0c18beb6edb8895007b4`, ordinary
+`server_runner` tests run through the full test gate, but the real-server case
+is explicitly ignored and was absent from native workflow selections. The
+pending workflow now selects
+`real_server_runs_a_separate_process_using_environment_startup` in the existing
+PocketIC concurrency job on Linux x86-64, macOS Intel and macOS Apple Silicon.
+It uses the already prepared, receipt-checked `.tools/ic/bin/pocket-ic` and the
+locked dependencies. This tests the actual CLI-owned server, URL propagation to
+a separate worker, instance construction and command completion. It does not
+replace synthetic failure/cancellation/diagnostic checks or concurrency checks.
+
+The exact selected command passes locally on Linux with PocketIC client/server
+16.1.0 and IC Host 0.8.0, with authorized localhost socket access. Offline locked
+cache preparation, prepared IC tool checking, actionlint and whitespace checks
+also pass. Logs: `/tmp/ic-testkit-0251-server-{cache,tools,live,actionlint}.log`.
+This compatible coverage change selects pending 0.25.1 in both changelogs and
+leaves package versions and published notes intact. Native CI has not run on
+these working changes; no macOS result or complete release gate is claimed.

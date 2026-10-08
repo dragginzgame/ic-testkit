@@ -6,6 +6,13 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.25.1]
+
+### Testing
+
+- Exercise real managed-server CLI execution with the pinned PocketIC server
+  on Linux and both supported macOS hosts in native CI.
+
 ## [0.25.0] - 2026-10-08
 
 ### Breaking

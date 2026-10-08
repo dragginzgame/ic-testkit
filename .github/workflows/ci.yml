@@ -241,3 +241,5 @@ jobs:
         run: cargo fetch --locked
       - name: Run PocketIC ownership concurrency tests
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency -- --nocapture
+      - name: Qualify real managed-server CLI execution
+        run: cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
