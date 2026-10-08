@@ -8,6 +8,44 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.23.0]
+
+### Breaking
+
+- Adopt IC Host 0.6 through the public host-crate re-exports. Update
+  `ExecutionError` literals/destructuring for its new `group_error` field.
+- Invalid-port and builder startup errors now retain bounded output and secondary
+  cleanup diagnostics. Update affected variant literals and patterns, including
+  the now-structured `BuilderDisconnected`
+  ([#30](https://github.com/dragginzgame/ic-testkit/issues/30)).
+
+### Fixed
+
+- PocketIC version probes clean up owned wrapper descendants on exit and timeout
+  using Host's group capture; probes must not launch background work intended
+  to survive the check
+  ([host #5](https://github.com/dragginzgame/ic-host-tooling/issues/5)).
+- Preserve startup causes while displaying secondary cleanup failures in CLI
+  errors; owned builder failures also retain server output before cleanup
+  ([#30](https://github.com/dragginzgame/ic-testkit/issues/30)).
+
+### Migration
+
+`PocketIcStartupError::InvalidServerPort` gains `termination_error`.
+`BuilderThreadSpawn`, `BuilderPanicked` and `BuilderDisconnected` carry
+`stdout`, `stderr` and `termination_error`; use `BuilderDisconnected { .. }`
+when matching only the failure kind. Update literals with the new fields and
+use `..` in patterns where diagnostics are not consumed. Bounded output remains
+limited to the first 16 KiB per stream. Borrowed-server builder failures carry
+empty streams and no owned-server termination error.
+
+The original kind/message/source remains primary; cleanup failure is appended
+by `Display`. Managed invalid-port and builder-failure projections preserve the
+actual cleanup evidence. `ExecutionError::group_error` separately reports Host
+process-group signalling failures; direct-child fixtures use `None`. See
+[Host 0.6 notes](https://github.com/dragginzgame/ic-host-tooling/blob/6f066e727c977e0b7ec8d3d77821df8508b95c64/docs/changelog/0.6.md).
+There are no cache/schema changes or retained-data resets.
+
 ## [0.22.3] - 2026-10-08
 
 ### Added

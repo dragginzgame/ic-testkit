@@ -6,6 +6,28 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.23.0]
+
+### Breaking
+
+- Adopt IC Host 0.6 through the public host-crate re-exports. Update
+  `ExecutionError` literals/destructuring for its new `group_error` field.
+- Invalid-port and builder startup errors now retain bounded output and secondary
+  cleanup diagnostics. Update affected variant literals and patterns, including
+  the now-structured `BuilderDisconnected`; see
+  [package migration notes](crates/ic-testkit/CHANGELOG.md#0230)
+  ([#30](https://github.com/dragginzgame/ic-testkit/issues/30)).
+
+### Fixed
+
+- PocketIC version probes clean up owned wrapper descendants on exit and timeout
+  using Host's group capture; probes must not launch background work intended
+  to survive the check
+  ([host #5](https://github.com/dragginzgame/ic-host-tooling/issues/5)).
+- Preserve startup causes while displaying secondary cleanup failures in CLI
+  errors; owned builder failures also retain server output before cleanup
+  ([#30](https://github.com/dragginzgame/ic-testkit/issues/30)).
+
 ## [0.22.3] - 2026-10-08
 
 ### Added

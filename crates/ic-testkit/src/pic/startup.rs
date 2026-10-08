@@ -126,6 +126,7 @@ pub enum PocketIcStartupError {
         value: String,
         stdout: String,
         stderr: String,
+        termination_error: Option<String>,
     },
     /// PocketIC instance creation did not finish before the startup deadline.
     InstanceCreationTimeout {
@@ -135,11 +136,25 @@ pub enum PocketIcStartupError {
         termination_error: Option<String>,
     },
     /// Spawning the bounded builder worker failed.
-    BuilderThreadSpawn { source: io::Error },
+    BuilderThreadSpawn {
+        source: io::Error,
+        stdout: String,
+        stderr: String,
+        termination_error: Option<String>,
+    },
     /// Upstream PocketIC construction panicked before returning an instance.
-    BuilderPanicked { message: String },
+    BuilderPanicked {
+        message: String,
+        stdout: String,
+        stderr: String,
+        termination_error: Option<String>,
+    },
     /// The bounded builder worker ended without returning a result.
-    BuilderDisconnected,
+    BuilderDisconnected {
+        stdout: String,
+        stderr: String,
+        termination_error: Option<String>,
+    },
 }
 
 /// Fallible construction at PocketIC's panicking builder boundary.
@@ -213,7 +228,7 @@ impl PocketIcStartupConfig {
         })?;
         let config = Self::spawn(&binary, timeout);
         config.validate()?;
-        let evidence = ic_host_process::tool::capture_command(
+        let evidence = ic_host_process::tool::capture_group_command(
             Command::new(&binary).arg("--version"),
             ic_host_process::tool::OutputLimits {
                 stdout_bytes: SERVER_OUTPUT_LIMIT,
@@ -565,7 +580,11 @@ fn build_bounded(
             let _ = sender.send(result);
         })
     {
-        return Err(PocketIcStartupError::BuilderThreadSpawn { source });
+        let captured = server.take().map_or_else(
+            CapturedServer::default,
+            ManagedServer::terminate_and_capture,
+        );
+        return Err(captured.builder_thread_error(source));
     }
 
     loop {
@@ -599,16 +618,18 @@ fn build_bounded(
                 return Ok(pocket_ic);
             }
             Ok(Err(message)) => {
-                if let Some(server) = server.take() {
-                    let _ = server.terminate_and_capture();
-                }
-                return Err(PocketIcStartupError::BuilderPanicked { message });
+                let captured = server.take().map_or_else(
+                    CapturedServer::default,
+                    ManagedServer::terminate_and_capture,
+                );
+                return Err(captured.builder_panic_error(message));
             }
             Err(RecvTimeoutError::Disconnected) => {
-                if let Some(server) = server.take() {
-                    let _ = server.terminate_and_capture();
-                }
-                return Err(PocketIcStartupError::BuilderDisconnected);
+                let captured = server.take().map_or_else(
+                    CapturedServer::default,
+                    ManagedServer::terminate_and_capture,
+                );
+                return Err(captured.builder_disconnected_error());
             }
             Err(RecvTimeoutError::Timeout) => {
                 if let Some(managed) = &mut server
@@ -695,12 +716,7 @@ impl ManagedServer {
                 PortFileState::Invalid(value) => {
                     let binary = server.binary.clone();
                     let captured = server.terminate_and_capture();
-                    return Err(PocketIcStartupError::InvalidServerPort {
-                        server_binary: binary,
-                        value,
-                        stdout: captured.stdout,
-                        stderr: captured.stderr,
-                    });
+                    return Err(captured.invalid_port_error(binary, value));
                 }
             }
             thread::sleep(
@@ -810,6 +826,44 @@ struct CapturedServer {
     stdout: String,
     stderr: String,
     termination_error: Option<String>,
+}
+
+impl CapturedServer {
+    fn invalid_port_error(self, server_binary: PathBuf, value: String) -> PocketIcStartupError {
+        PocketIcStartupError::InvalidServerPort {
+            server_binary,
+            value,
+            stdout: self.stdout,
+            stderr: self.stderr,
+            termination_error: self.termination_error,
+        }
+    }
+
+    fn builder_thread_error(self, source: io::Error) -> PocketIcStartupError {
+        PocketIcStartupError::BuilderThreadSpawn {
+            source,
+            stdout: self.stdout,
+            stderr: self.stderr,
+            termination_error: self.termination_error,
+        }
+    }
+
+    fn builder_panic_error(self, message: String) -> PocketIcStartupError {
+        PocketIcStartupError::BuilderPanicked {
+            message,
+            stdout: self.stdout,
+            stderr: self.stderr,
+            termination_error: self.termination_error,
+        }
+    }
+
+    fn builder_disconnected_error(self) -> PocketIcStartupError {
+        PocketIcStartupError::BuilderDisconnected {
+            stdout: self.stdout,
+            stderr: self.stderr,
+            termination_error: self.termination_error,
+        }
+    }
 }
 
 impl From<CapturedServer> for PocketIcManagedServerOutput {
@@ -937,6 +991,35 @@ fn open_regular_startup_file(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
+impl PocketIcStartupError {
+    fn termination_error(&self) -> Option<&str> {
+        match self {
+            Self::CommandRun {
+                termination_error, ..
+            }
+            | Self::ReadinessTimeout {
+                termination_error, ..
+            }
+            | Self::InvalidServerPort {
+                termination_error, ..
+            }
+            | Self::InstanceCreationTimeout {
+                termination_error, ..
+            }
+            | Self::BuilderThreadSpawn {
+                termination_error, ..
+            }
+            | Self::BuilderPanicked {
+                termination_error, ..
+            }
+            | Self::BuilderDisconnected {
+                termination_error, ..
+            } => termination_error.as_deref(),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for PocketIcStartupError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -944,11 +1027,7 @@ impl std::fmt::Display for PocketIcStartupError {
             Self::InvalidEnvironment { variable } => write!(formatter, "invalid selected environment value: {variable}"),
             Self::ServerVersionProbe { source } => write!(formatter, "PocketIC version probe failed: {source}"),
             Self::ServerVersionMismatch { expected, observed } => write!(formatter, "PocketIC version mismatch: expected {expected:?}, observed {:?}", String::from_utf8_lossy(observed)),
-            Self::CommandRun { program, source, termination_error } => {
-                write!(formatter, "command {} failed: {source}", program.display())?;
-                if let Some(error) = termination_error { write!(formatter, "; cleanup also failed: {error}")?; }
-                Ok(())
-            }
+            Self::CommandRun { program, source, .. } => write!(formatter, "command {} failed: {source}", program.display()),
             Self::InvalidConfiguration { message } => formatter.write_str(message),
             Self::InvalidServerUrl {
                 server_url,
@@ -1006,19 +1085,23 @@ impl std::fmt::Display for PocketIcStartupError {
             Self::InstanceCreationTimeout { timeout, .. } => {
                 write!(formatter, "PocketIC instance creation exceeded {timeout:?}")
             }
-            Self::BuilderThreadSpawn { source } => {
+            Self::BuilderThreadSpawn { source, .. } => {
                 write!(
                     formatter,
                     "failed to spawn PocketIC builder worker: {source}"
                 )
             }
-            Self::BuilderPanicked { message } => {
+            Self::BuilderPanicked { message, .. } => {
                 write!(formatter, "PocketIC startup panicked: {message}")
             }
-            Self::BuilderDisconnected => {
+            Self::BuilderDisconnected { .. } => {
                 formatter.write_str("PocketIC builder worker disconnected without a result")
             }
+        }?;
+        if let Some(error) = self.termination_error() {
+            write!(formatter, "; cleanup also failed: {error}")?;
         }
+        Ok(())
     }
 }
 
@@ -1029,7 +1112,7 @@ impl std::error::Error for PocketIcStartupError {
             Self::Io { source, .. }
             | Self::CommandRun { source, .. }
             | Self::ServerSpawn { source, .. }
-            | Self::BuilderThreadSpawn { source } => Some(source),
+            | Self::BuilderThreadSpawn { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -1132,6 +1215,167 @@ mod tests {
             )),
             Err(PocketIcStartupError::InvalidEnvironment { .. })
         ));
+    }
+
+    #[test]
+    fn startup_failure_projections_preserve_cleanup_and_bounded_output() {
+        for cleanup in [None, Some("secondary cleanup")] {
+            let capture = || super::CapturedServer {
+                stdout: "captured stdout".to_owned(),
+                stderr: "captured stderr".to_owned(),
+                termination_error: cleanup.map(str::to_owned),
+            };
+            let errors = [
+                capture().invalid_port_error(PathBuf::from("server"), "bad-port".to_owned()),
+                capture().builder_thread_error(std::io::Error::other("worker source")),
+                capture().builder_panic_error("builder cause".to_owned()),
+                capture().builder_disconnected_error(),
+                PocketIcStartupError::ReadinessTimeout {
+                    server_binary: PathBuf::from("server"),
+                    timeout: Duration::from_secs(1),
+                    stdout: "captured stdout".to_owned(),
+                    stderr: "captured stderr".to_owned(),
+                    termination_error: cleanup.map(str::to_owned),
+                },
+                PocketIcStartupError::InstanceCreationTimeout {
+                    timeout: Duration::from_secs(1),
+                    stdout: "captured stdout".to_owned(),
+                    stderr: "captured stderr".to_owned(),
+                    termination_error: cleanup.map(str::to_owned),
+                },
+            ];
+            let primary = [
+                "bad-port",
+                "worker source",
+                "builder cause",
+                "disconnected",
+                "not ready",
+                "creation exceeded",
+            ];
+            for (error, primary) in errors.into_iter().zip(primary) {
+                let (PocketIcStartupError::InvalidServerPort {
+                    stdout,
+                    stderr,
+                    termination_error,
+                    ..
+                }
+                | PocketIcStartupError::BuilderThreadSpawn {
+                    stdout,
+                    stderr,
+                    termination_error,
+                    ..
+                }
+                | PocketIcStartupError::BuilderPanicked {
+                    stdout,
+                    stderr,
+                    termination_error,
+                    ..
+                }
+                | PocketIcStartupError::BuilderDisconnected {
+                    stdout,
+                    stderr,
+                    termination_error,
+                }
+                | PocketIcStartupError::ReadinessTimeout {
+                    stdout,
+                    stderr,
+                    termination_error,
+                    ..
+                }
+                | PocketIcStartupError::InstanceCreationTimeout {
+                    stdout,
+                    stderr,
+                    termination_error,
+                    ..
+                }) = &error
+                else {
+                    unreachable!()
+                };
+                assert_eq!(stdout, "captured stdout");
+                assert_eq!(stderr, "captured stderr");
+                assert_eq!(termination_error.as_deref(), cleanup);
+                let display = error.to_string();
+                assert!(display.contains(primary));
+                if let Some(cleanup) = cleanup {
+                    assert!(display.ends_with(&format!("; cleanup also failed: {cleanup}")));
+                } else {
+                    assert!(!display.contains("cleanup also failed"));
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_capture_cleans_wrapper_descendants_on_exit_and_timeout() {
+        for timeout in [false, true] {
+            let ending = if timeout {
+                "wait"
+            } else {
+                "printf 'pocket-ic-server 16.0.0\\n'"
+            };
+            let script = TestServerScript::new(
+                "version-group",
+                &format!(
+                    "#!/bin/sh\nsleep 30 >/dev/null 2>&1 &\nprintf '%s' \"$!\" > \"$0.pid\"\n{ending}\n"
+                ),
+            );
+            let result = PocketIcStartupConfig::from_environment(Duration::from_secs(1), |name| {
+                (name == "POCKET_IC_BIN").then(|| script.path().into_os_string())
+            });
+            if timeout {
+                assert!(matches!(
+                    result,
+                    Err(PocketIcStartupError::ServerVersionProbe { .. })
+                ));
+            } else {
+                assert!(result.is_ok());
+            }
+            let pid_file = script.path().with_extension("pid");
+            let pid = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while process_state(pid).is_some_and(|state| state != 'Z') {
+                assert!(
+                    Instant::now() < deadline,
+                    "version wrapper descendant remained alive"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            fs::remove_file(pid_file).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owned_builder_panic_retains_server_output_and_reaps_child() {
+        let script = TestServerScript::new(
+            "builder-panic",
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$0.pid\"\nprintf 'builder stdout'\nprintf 'builder stderr' >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
+        );
+        let error = PocketIcBuilder::new()
+            .try_build(PocketIcStartupConfig::spawn(
+                script.path(),
+                Duration::from_secs(2),
+            ))
+            .err()
+            .unwrap();
+        let PocketIcStartupError::BuilderPanicked {
+            message,
+            stdout,
+            stderr,
+            termination_error,
+        } = error
+        else {
+            panic!("expected builder failure, got {error:?}");
+        };
+        assert_ne!(message, "");
+        assert_eq!(stdout, "builder stdout");
+        assert_eq!(stderr, "builder stderr");
+        assert!(termination_error.is_none());
+        let pid_file = script.path().with_extension("pid");
+        let pid = fs::read_to_string(&pid_file).unwrap().parse().unwrap();
+        assert_eq!(process_state(pid), None);
+        fs::remove_file(pid_file).unwrap();
     }
 
     #[cfg(unix)]

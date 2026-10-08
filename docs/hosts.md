@@ -1464,3 +1464,47 @@ portable artifact upload/download and process qualification. Exact-source
 also passed. Those runs qualify their released sources, not this pending consumer
 batch. Native macOS/process/artifact qualification for these consumer changes
 remains with the configured CI; no broad gate, release or workflow dispatch ran.
+
+### 2026-10-08: IC Host 0.6 and startup cleanup diagnostics
+
+The pending batch selects 0.23.0 because the maintained local dependency update
+from Host 0.5 to 0.6 changes publicly re-exported `ExecutionError` fields, and
+invalid-port/builder startup error variants now retain output/cleanup evidence.
+The initial maintainer-owned Cargo.toml/Cargo.lock edits were preserved without
+another resolution or Testkit package-version change. All four selected registry
+crates are locked at 0.6.0. Explicit locked offline cache preparation passed.
+The consumed process capture sources match committed Host
+`6f066e727c977e0b7ec8d3d77821df8508b95c64` byte-for-byte.
+
+PocketIC version qualification now calls Host's `capture_group_command` instead
+of direct-child capture. The existing startup deadline and output budgets remain
+consumer-owned; wrapper descendants in the newly owned group are stopped on
+natural exit or timeout. No background handoff, discovery, retry or download was
+added. Managed invalid-port and builder failures retain the bounded server
+streams and actual termination error. Display appends secondary cleanup evidence
+without replacing the original startup cause. Borrowed-server failures capture
+no owned-server output or cleanup. This does not add a bounded teardown or
+process-tree confinement guarantee.
+
+Focused Linux qualification passes 21 startup tests (one live test ignored),
+eight runner subprocess tests (two live tests ignored), and the shared-tool
+admission/publication/invalidation test. New cases exercise wrapper descendants
+on exit and timeout, a real synthetic-server builder panic followed by reaping,
+and deterministic error projections from captured output plus simulated cleanup
+failures. Projection tests use the same constructors and Display as production;
+they do not inject a real signalling/reaping syscall failure. Existing process,
+retained-output, invalid-port and cancellation fixtures remain valid. Package
+Clippy for library/tests/runner targets with `-D warnings`, Rust formatting,
+dependency pins and diff checks pass. Initial new-test/formatter lint failures
+remain in `/tmp/ic-testkit-0230-clippy.log`; corrected results are retained in
+`/tmp/ic-testkit-0230-clippy-final.log`. Runtime evidence remains in
+`/tmp/ic-testkit-0230-{startup,runner,host-admission,projections-final}.log`.
+
+At inspection, released Testkit 0.22.3
+`b2a04648c54842c0f9c69c9d6112d4a71944103f` has queued
+[tag](https://github.com/dragginzgame/ic-testkit/actions/runs/37770038013) and
+[branch](https://github.com/dragginzgame/ic-testkit/actions/runs/37770038453) CI.
+[Host 0.6.0 CI](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37769906817)
+is also queued. Neither those pending runs nor the earlier green Host 0.5.2 and
+Testkit 0.22.2 runs qualify these new paths on native macOS. Native consumer and
+upstream qualification remain outstanding; no full gate or release ran locally.

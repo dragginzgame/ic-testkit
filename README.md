@@ -359,7 +359,9 @@ let pocket_ic = PocketIcBuilder::new().with_application_subnet().try_build(confi
 invalid selected value fails; it never falls back to another variable or searches
 a cache. URL mode connects without taking server ownership. Binary mode requires
 a successful, bounded `--version` check matching `LATEST_SERVER_VERSION`; the
-probe and subsequent startup each have the supplied timeout budget.
+probe and subsequent startup each have the supplied timeout budget. The probe
+owns a process group and stops same-group wrapper descendants on completion or
+failure; it is not a background-launch contract.
 
 Install the command with `cargo install --locked ic-testkit`, or run it from this
 checkout with `cargo run --locked -p ic-testkit --bin ic-testkit-server --`:
@@ -1331,9 +1333,13 @@ resolution, execution and Git provenance belong to `ic_host_process`; Candid
 extraction and response decoding belong to `ic_host_tools`. Execution, resolution,
 Candid and provenance are Unix-only.
 Structural Wasm inspection does not replace PocketIC's runtime validation.
-The host-crate re-exports select IC Host 0.5; gzip encoding accepts numeric levels
+The host-crate re-exports select IC Host 0.6; gzip encoding accepts numeric levels
 0–9. When upgrading from 0.21, update Wasm fact literals and exhaustive inspection
 error matches as described in the [0.22 migration guide](crates/ic-testkit/CHANGELOG.md#0220).
+The [0.23 migration guide](crates/ic-testkit/CHANGELOG.md#0230) covers Host's
+new `ExecutionError::group_error` and the expanded PocketIC startup errors.
+Startup errors retain their original cause and append secondary cleanup failures
+when displayed; builder failures also retain bounded server stdout/stderr.
 
 The `transactional_artifact_cache` example uses shared digest/version admission
 and bounded execution for its transformer. Supply a reviewed raw executable
