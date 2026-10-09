@@ -286,9 +286,16 @@ fn build_test_ic(server_binary: &Path) -> Result<PocketIc, ic_testkit::pic::Pock
 monitors it while waiting for its port file and while PocketIC creates the
 instance, and terminates it if the complete deadline expires. A child exit,
 readiness timeout, invalid port, spawn failure, builder panic, and instance
-creation timeout remain distinct `PocketIcStartupError` variants. Captured
+creation timeout remain distinct `PocketIcStartupFailure` cases, accessed through
+`PocketIcStartupError::failure()`. Captured
 server output retains at most the first 16 KiB per stream as lossy UTF-8 and
-appends an omitted-byte marker when truncated. No absolute hard TTL is applied
+appends an omitted-byte marker when truncated. Read it through `error.output()`;
+`error.command_cleanup()` and `error.server_cleanup()` expose separate typed
+Host cleanup reports. Cleanup does not replace the original cause or native
+error source. Consumers must replace matches on the former error enum with
+matches on `error.failure()`. The CLI preserves a failed command's status when
+server teardown also fails and reports failure if a successful command's server
+cannot be cleaned up. No absolute hard TTL is applied
 by default; PocketIC's activity-based soft TTL still bounds orphaned servers.
 Call `with_server_hard_ttl` to opt into an absolute lifetime. After successful
 one-shot construction, an internal reaper owns the child until it exits.
@@ -340,7 +347,7 @@ Managed startup creates a unique private temporary directory but leaves the
 actual `--port-file` path absent for PocketIC to create. Output is retained as
 bounded lossy UTF-8 for the handle lifetime. Startup readers require regular
 files and use nonblocking opens on Unix so a replaced FIFO cannot stall startup
-or output capture. Non-regular port files return `PocketIcStartupError::Io` with
+or output capture. Non-regular port files return `PocketIcStartupFailure::Io` with
 `InvalidData`; unreadable output streams are omitted.
 Keep the handle alive until every instance connected through its URL has been
 dropped. For suites spanning several Cargo or test-runner processes, keep one

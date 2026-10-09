@@ -226,26 +226,20 @@ pub fn main() -> ExitCode {
             config.run_command(&mut command, || INTERRUPTED.load(Ordering::Relaxed) != 0)?,
         )
     })();
+    if let Err(error) = &result {
+        eprintln!("{error}");
+    }
     let signal = INTERRUPTED.load(Ordering::Relaxed);
     if signal != 0 {
         return ExitCode::from(u8::try_from(128 + signal).unwrap_or(1));
     }
     match result {
-        Ok(status) => {
-            use std::os::unix::process::ExitStatusExt as _;
-            ExitCode::from(
-                u8::try_from(
-                    status
-                        .code()
-                        .unwrap_or_else(|| 128 + status.signal().unwrap_or(1)),
-                )
-                .unwrap_or(1),
-            )
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            ExitCode::FAILURE
-        }
+        Ok(status) => command_exit_code(status),
+        Err(error) => error
+            .downcast_ref::<ic_testkit::pic::PocketIcStartupError>()
+            .map_or(ExitCode::FAILURE, |startup| {
+                failure_exit_code(startup.failure())
+            }),
     }
 }
 
@@ -270,5 +264,48 @@ fn report_provisioning(result: Result<PathBuf, Box<dyn std::error::Error>>) -> E
             eprintln!("{error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn command_exit_code(status: std::process::ExitStatus) -> ExitCode {
+    use std::os::unix::process::ExitStatusExt as _;
+    ExitCode::from(
+        u8::try_from(
+            status
+                .code()
+                .unwrap_or_else(|| 128 + status.signal().unwrap_or(1)),
+        )
+        .unwrap_or(1),
+    )
+}
+
+fn failure_exit_code(failure: &ic_testkit::pic::PocketIcStartupFailure) -> ExitCode {
+    if let ic_testkit::pic::PocketIcStartupFailure::ServerCleanup { command_status } = failure
+        && !command_status.success()
+    {
+        command_exit_code(*command_status)
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExitCode, failure_exit_code};
+    use ic_testkit::pic::PocketIcStartupFailure;
+    use std::os::unix::process::ExitStatusExt as _;
+
+    #[test]
+    fn secondary_server_cleanup_preserves_failed_command_status() {
+        for (raw_status, expected) in [(0, 1), (23 << 8, 23), (15, 143)] {
+            let failure = PocketIcStartupFailure::ServerCleanup {
+                command_status: std::process::ExitStatus::from_raw(raw_status),
+            };
+            assert_eq!(failure_exit_code(&failure), ExitCode::from(expected));
+        }
+        assert_eq!(
+            failure_exit_code(&PocketIcStartupFailure::BuilderDisconnected),
+            ExitCode::FAILURE
+        );
     }
 }

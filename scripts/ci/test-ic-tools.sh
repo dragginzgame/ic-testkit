@@ -147,6 +147,39 @@ done
     cd "$fixture"
     bash "$ROOT/scripts/dev/install-ic-tools.sh" --consumer "$consumer" --pins pins.tsv --check > /dev/null 2>&1
 )
+# A text file's final record remains a selected tool without a final newline.
+# Put this host's wasm-opt last so both installation and offline admission must
+# consume it, rather than merely accepting the same complete matrix in awk.
+for host in Linux:x86_64 Darwin:x86_64 Darwin:arm64; do
+    export IC_TOOLS_TEST_OS="${host%:*}" IC_TOOLS_TEST_ARCH="${host#*:}"
+    case "$host" in
+        Linux:*) pin_host=linux-x86_64 ;;
+        Darwin:x86_64) pin_host=darwin-x86_64 ;;
+        Darwin:arm64) pin_host=darwin-arm64 ;;
+    esac
+    selected_pins="$fixture/no-final-newline-$pin_host.tsv"
+    awk -F '\t' -v host="$pin_host" '
+        $1 == "wasm-opt" && $3 == host { final=$0; next }
+        { print }
+        END { printf "%s", final }
+    ' "$pins" > "$selected_pins"
+    consumer="$fixture/no-final-newline $host"
+    mkdir "$consumer"
+    install > "$fixture/no-final-newline-$pin_host.log" 2>&1
+    [[ -x "$consumer/.tools/ic/bin/wasm-opt" ]] || {
+        echo "IC setup omitted the final selected tool for $pin_host" >&2; exit 1;
+    }
+    cmp "$selected_pins" "$consumer/.tools/ic/pins.tsv"
+    install --check > /dev/null 2>&1
+    # Even a receipt matching changed bytes must not bypass its version check.
+    sed 's/wasm-opt version 132/wasm-opt version 133/' "$fixture/payload/wasm-opt" > "$consumer/.tools/ic/bin/wasm-opt"
+    digest="$(shasum -a 256 "$consumer/.tools/ic/bin/wasm-opt")"
+    awk -v hash="${digest%% *}" '$2 == "bin/wasm-opt" { printf "%s  %s\n", hash, $2; next } { print }' \
+        "$consumer/.tools/ic/files.sha256" > "$fixture/changed-receipt"
+    mv "$fixture/changed-receipt" "$consumer/.tools/ic/files.sha256"
+    expect_failure install --check
+    rg -F 'wasm-opt version mismatch' "$fixture/refusal.log" > /dev/null
+done
 export IC_TOOLS_TEST_OS=Linux IC_TOOLS_TEST_ARCH=x86_64
 consumer="$fixture/consumer Linux:x86_64"
 original="$(readlink "$consumer/.tools/ic")"

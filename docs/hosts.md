@@ -2278,3 +2278,90 @@ Shared PocketIC checker files were not selected in this consumer snapshot.
 No broad gate, commit, publication or sibling source edit ran. Native consumer
 CI must qualify this exact adoption after delivery. Remaining downstream
 coordination stays in Testkit #38 and Shared #76, rather than another local list.
+
+### Pending 0.26.1 complete IC pin-row consumption
+
+Reviewed Shared 0.2.1 `06b2e22f6bd213f1a590eb2a8797aee34c42dd69` is exported
+from a clean isolated checkout on released Testkit 0.26.0
+`9ad0d57a5c5c9ece9f03d2edcde1f8b4e84a3dc7`. All 80 selected files verify.
+The installer and verifier now process a populated final TSV record at EOF,
+matching the existing matrix validator. Pin bytes, tool selections and bundle
+receipt semantics remain unchanged; no function, method or type was removed.
+
+Focused substitute-download/archive installer fixtures pass on Linux under
+Bash 5 and genuine Bash 3.2 with inherited CDPATH, covering all three host
+selections without a final newline and refusal of wrong final-tool versions.
+Prepared real tools, declaration pins, formatting and snapshot checks pass
+without installation or dependency resolution. Logs are
+`/tmp/ic-testkit-0261-{shared-export,ic-fixtures,ic-bash32,checks}.log`.
+Upstream 0.2.1 CI run 37918240103 and Testkit's released 0.26.0 runs
+37917989870/37917989313 were queued when inspected. Native macOS acceptance is
+outstanding; substitute host selections and Linux Bash 3.2 are not native proof.
+Both changelogs select compatible 0.26.1; package metadata remains unchanged.
+No full gate, commit, publication, cleanup or sibling source edit ran.
+
+### Pending 0.26.1 Shared 0.2.2 and selected Host 0.9.1
+
+Shared `ee48bb37c98c771e77b92fd891f0757d8c1c8b99` is the clean committed
+80-file export. It retains the IC final-row fix and documents exact-path CI-tool
+publication; the CI installer is not selected or called here, so this adoption
+adds no unused installer or claim of exercising that publication path. Generic
+IC versions/checksums are unchanged. Snapshot, prepared-tool, pin and formatting
+checks pass (`/tmp/ic-testkit-0261-shared-022{,-checks}.log`).
+
+The maintainer's pre-existing dirty lock now selects all four Host crates at
+0.9.1; its SHA-256 `3e5b695d614ba5e051b2dc6327bf4cb9dcf3a96a4626c502aba77ec5417f3f3a`
+is preserved. Released Testkit 0.26.0 already declares Host 0.9 requirements, so
+this introduces no new crate-identity boundary. Reviewed Host release source is
+`4a016053525fa710bc13f3aedbe85a471b78f6ed`. Public APIs are unchanged; Host
+simplifies durable publication and closes captured output descriptors at EOF.
+No Testkit duplication becomes newly removable from these internal changes.
+
+Explicit locked offline cache preparation succeeds. Five Cargo communication,
+21 startup and six provisioning fixtures pass with that graph; one opt-in
+startup test is ignored. Strict selected Clippy and actual Rust 1.88 library/CLI
+checks pass. Logs use `/tmp/ic-testkit-0261-host-{cache,cargo,startup,provision,clippy,msrv}.log`.
+The CLI freshly rebuilt with Host 0.9.1 also verifies the retained official Linux
+PocketIC bundle with `PATH=/nonexistent`, without installation or download
+(`host-cli-build.log` and `host-real-check.log` at the same prefix).
+These are focused Linux consumer checks, not new native Host or Testkit CI proof.
+No function, method or type was removed, package version changed, dependency
+resolved or installation performed in this review/adoption slice.
+
+### Pending 0.27.0 common startup-error hard cut
+
+The maintainer selected 0.27.0 for [#30](https://github.com/dragginzgame/ic-testkit/issues/30).
+The historical common-record candidate was rebased onto released 0.26.0
+`9ad0d57a5c5c9ece9f03d2edcde1f8b4e84a3dc7`, preserving the pending Shared
+0.2.2 and Host 0.9.1 changes above. Earlier 0.26.1 headings describe their
+original qualification; both current changelogs now select 0.27.0. Manifest
+versions and the existing lockfile selection remain unchanged.
+
+`PocketIcStartupError` is now a common record; its cause variants move to
+`PocketIcStartupFailure`. Bounded output and typed command/server cleanup
+reports are projected once, keeping the original cause and error source.
+The CLI preserves a failed command's status when server teardown fails, fails
+a successful command on teardown failure, and prints cancellation diagnostics
+before returning the signal status. Stable 16.x admission, setup/check, idle
+TTL, borrowed-server ownership and retained raw files remain covered.
+
+Focused Linux qualification passes: 23 startup unit tests (one opt-in test
+ignored), seven CLI tests, nine ordinary runner tests (four opt-in tests
+ignored), real managed PocketIC launch/application-instance creation, and all
+nine live concurrency tests. Strict selected Clippy, warning-denied library
+rustdoc and actual Rust 1.88 library/CLI checks pass. Logs use
+`/tmp/ic-testkit-0270-{startup-final,cli-final,runner-final,real-runner,concurrency,clippy-final,rustdoc,msrv}.log`.
+Constructed typed cleanup failures prove projection of both reports, including
+native error codes; they do not simulate actual failing OS kill/wait calls.
+Live tests exercise real ownership and ordinary teardown. Native macOS CI for
+this dirty source remains outstanding; no broad gate or release ran.
+
+Removed from `crates/ic-testkit/src/pic/startup.rs`: private `CapturedServer`,
+its `From<CapturedServer> for PocketIcManagedServerOutput::from` conversion,
+and `CapturedServer::{invalid_port_error,builder_thread_error,builder_panic_error,builder_disconnected_error}`.
+Common output plus `finalize_failure` replaces those duplicate projections.
+Private `PocketIcStartupError::termination_error` is replaced by separate typed
+cleanup accessors. Test `startup_failure_projections_preserve_cleanup_and_bounded_output`
+is replaced by `original_failure_output_and_both_typed_cleanup_reports_survive_projection`.
+The public error enum representation is replaced by the same-named record;
+its cause variants move rather than being silently discarded.

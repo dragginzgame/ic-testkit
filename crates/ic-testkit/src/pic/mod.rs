@@ -71,7 +71,7 @@ pub use standalone_pool::{
 };
 pub use startup::{
     PocketIcBuilderExt, PocketIcManagedServer, PocketIcManagedServerOutput, PocketIcStartupConfig,
-    PocketIcStartupError,
+    PocketIcStartupError, PocketIcStartupFailure,
 };
 pub use time::{PocketIcTimeExt, TickUntilError, tick_until};
 pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};

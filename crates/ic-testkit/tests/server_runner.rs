@@ -278,7 +278,7 @@ fn command_completion_stops_remaining_owned_descendants() {
 
 #[test]
 fn server_exit_returns_diagnostics_and_stops_the_pending_command_group() {
-    use ic_testkit::pic::{PocketIcStartupConfig, PocketIcStartupError};
+    use ic_testkit::pic::{PocketIcStartupConfig, PocketIcStartupFailure};
 
     let fixture = Fixture::new();
     let binary = fixture.0.join("server");
@@ -298,20 +298,18 @@ fn server_exit_returns_diagnostics_and_stops_the_pending_command_group() {
             || started.elapsed() > Duration::from_secs(5),
         )
         .unwrap_err();
-    let PocketIcStartupError::ServerExited {
+    let PocketIcStartupFailure::ServerExited {
         server_binary,
         status,
-        stdout,
-        stderr,
         ..
-    } = error
+    } = error.failure()
     else {
         panic!("expected the owned server exit, got {error:?}");
     };
-    assert_eq!(server_binary, binary);
+    assert_eq!(server_binary, &binary);
     assert_eq!(status.code(), Some(42));
-    assert_eq!(stdout, "server stopped\n");
-    assert_eq!(stderr, "failure detail\n");
+    assert_eq!(error.output().stdout(), "server stopped\n");
+    assert_eq!(error.output().stderr(), "failure detail\n");
     for file in ["server.pid", "server.command.pid", "server.descendant.pid"] {
         wait_until(|| stopped(fixture.pid(file)));
     }
@@ -464,7 +462,8 @@ fn interruption_terminates_the_owned_server_command_and_descendants() {
         .arg(&stdout)
         .arg("--server-stderr")
         .arg(&stderr);
-    let mut runner = Running(command.args(["--", "/bin/sh", "-c", "printf '%s' \"$$\" > \"$COMMAND_PID_FILE\"; sleep 30 & printf '%s' \"$!\" > \"$DESCENDANT_PID_FILE\"; wait"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+    let diagnostic = fixture.0.join("runner-diagnostic");
+    let mut runner = Running(command.args(["--", "/bin/sh", "-c", "printf '%s' \"$$\" > \"$COMMAND_PID_FILE\"; sleep 30 & printf '%s' \"$!\" > \"$DESCENDANT_PID_FILE\"; wait"]).stdout(Stdio::null()).stderr(fs::File::create(&diagnostic).unwrap()).spawn().unwrap());
     wait_until(|| {
         fixture.0.join("descendant.pid").exists()
             && fs::metadata(fixture.0.join("descendant.pid"))
@@ -489,4 +488,7 @@ fn interruption_terminates_the_owned_server_command_and_descendants() {
     wait_until(|| stopped(server) && stopped(child) && stopped(descendant));
     assert!(fs::read(stdout).unwrap().ends_with(b"stdout-end"));
     assert!(fs::read(stderr).unwrap().ends_with(b"stderr-end"));
+    let diagnostic = fs::read_to_string(diagnostic).unwrap();
+    assert!(diagnostic.contains("server stdout:"));
+    assert!(diagnostic.contains("server stderr:"));
 }

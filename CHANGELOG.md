@@ -6,6 +6,27 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.27.0]
+
+### Breaking
+
+- Replace startup-error variant matching with `error.failure()` and
+  `PocketIcStartupFailure`. Read bounded server output through `error.output()`
+  and inspect separate typed command/server cleanup reports. Preserve the
+  original failure and a failed command's exit status when server cleanup also
+  fails ([#30](https://github.com/dragginzgame/ic-testkit/issues/30)).
+
+### Fixed
+
+- Adopt Shared Tooling 0.2.2 so IC setup and offline verification include the
+  final selected tool even when the pin matrix has no final newline
+  ([shared #87](https://github.com/dragginzgame/shared-tooling/issues/87)).
+
+### Changed
+
+- Qualify Host 0.9.1, which releases captured pipes at EOF and simplifies durable
+  publication while preserving the existing APIs and behavior.
+
 ## [0.26.0] - 2026-10-09
 
 ### Breaking

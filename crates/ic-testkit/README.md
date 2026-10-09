@@ -77,6 +77,13 @@ setup, examples, local checks, and release notes.
 The [documentation index](https://github.com/dragginzgame/ic-testkit/blob/main/docs/README.md)
 links current usage guidance and historical design records.
 
+The pending 0.27 startup-error hard cut uses `PocketIcStartupError::failure()`
+and `PocketIcStartupFailure` for cause matching. Read bounded server excerpts
+through `output()`, and inspect typed secondary failures through
+`command_cleanup()` and `server_cleanup()`. The original cause remains primary;
+raw output files remain caller-owned. Replace matches on the old error enum
+with matches on `error.failure()`; no compatibility entry points are retained.
+
 Host-only shared APIs are available through the complete `ic_host_artifacts`,
 `ic_host_fs`, `ic_host_process` and `ic_host_tools` re-exports under `ic_testkit`.
 The [0.24 migration guide](CHANGELOG.md#0240) covers IC Host 0.7's execution

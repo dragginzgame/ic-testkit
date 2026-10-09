@@ -15,7 +15,7 @@ use std::{
 use candid::Principal;
 use ic_testkit::pic::{
     CachedStandaloneCanisterFixturePool, InstallSpec, PocketIc, PocketIcBuilder,
-    PocketIcStartupConfig, PocketIcStartupError, StandaloneCanisterFixture,
+    PocketIcStartupConfig, PocketIcStartupFailure, StandaloneCanisterFixture,
     StandaloneFixturePoolError, StandaloneFixturePoolOutcome, StandaloneFixturePoolRebuildReason,
     StandaloneFixturePoolStage, prelude::*,
 };
@@ -90,11 +90,10 @@ fn builder_extension_returns_a_typed_startup_error() {
                 Duration::from_secs(1),
             ));
 
-    assert!(matches!(
-        result,
-        Err(PocketIcStartupError::ServerSpawn { server_binary, .. })
-            if server_binary == missing_binary
-    ));
+    let error = result.err().unwrap();
+    assert!(
+        matches!(error.failure(), PocketIcStartupFailure::ServerSpawn { server_binary, .. } if server_binary == &missing_binary)
+    );
 }
 
 #[test]
