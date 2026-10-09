@@ -21,6 +21,40 @@ three native hosts. Qualification requires matching successful native jobs,
 with incomplete workflow runs identified separately below. Do not publish or push
 just to qualify tooling.
 
+CI source qualification runs on main pushes and PRs. Standard releases push
+main and its tag atomically; the main run qualifies that exact release SHA,
+without a duplicate tag matrix. All four gate families retain all three hosts.
+Pushed revisions use separate concurrency groups so consecutive releases keep
+their evidence; superseded PR revisions can still be cancelled. No job depends
+on tag-specific metadata, and failure evidence collection remains unchanged.
+A tag-only push does not launch CI. Its source is qualified only by successful
+matching main jobs at the exact tag commit; a PR merge-test SHA or an earlier
+release is insufficient. Tags without that evidence remain unqualified. An
+alternate release branch needs an explicit workflow/support-policy change.
+
+The pending 0.27.1 selection change is locally checked with actionlint and
+structural event cases for PR, main, atomic main/tag, tag-only and topic pushes.
+All job bodies, matrices and concurrency settings match released 0.27.0 after
+removing redundant job-level conditions. Logs are retained at
+`/tmp/ic-testkit-0271-{actionlint,events,gates,tooling}.log`; matching remote
+native acceptance remains required after delivery.
+
+The pending 0.27.1 snapshot now selects Shared 0.2.3
+`ac4549c5ebde497f7db0da5d05d32835112e51de`, exported from an isolated clean
+checkout with the unchanged 80-file selection. Its optional installer-test
+companion guard does not affect this consumer, which does not select that suite;
+the changed selected files are snapshot/host documentation and CI-health task
+guidance. No installer, runtime code, format or tool pin changed. The initial
+export refused the sibling's dirty release metadata without changing consumer
+files; that log remains at `/tmp/ic-testkit-0271-shared-023-export.log`. The clean
+export and focused checks are retained at
+`/tmp/ic-testkit-0271-shared-023-{export-clean,checks}.log`. Native upstream
+acceptance remains outstanding; this documentation adoption does not relabel
+earlier native results or install tools. The previously selected Host 0.9.2
+lock remains intact; its library sources are unchanged from 0.9.1 and the
+focused Rust 1.88 library/CLI check passed at
+`/tmp/ic-testkit-host-092-msrv.log`.
+
 At `v0.16.0` (`5f4a850b6dc3bb5652418f85dd18ed97f63046ce`), the native
 Linux gate and PocketIC concurrency checks passed, but macOS startup and
 filesystem fixtures failed. See the [ARM64 startup failure](https://github.com/dragginzgame/ic-testkit/actions/runs/37317725235/job/111788601271),

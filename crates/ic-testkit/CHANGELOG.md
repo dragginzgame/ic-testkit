@@ -8,6 +8,14 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.27.1]
+
+### Changed
+
+- Run native CI once per release source through main, instead of repeating the
+  heavy matrices for its tag. Preserve all three hosts, gate families and PR
+  checks ([#42](https://github.com/dragginzgame/ic-testkit/issues/42)).
+
 ## [0.27.0] - 2026-10-09
 
 ### Breaking

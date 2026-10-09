@@ -6,6 +6,14 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.27.1]
+
+### Changed
+
+- Run native CI once per release source through main, instead of repeating the
+  heavy matrices for its tag. Preserve all three hosts, gate families and PR
+  checks ([#42](https://github.com/dragginzgame/ic-testkit/issues/42)).
+
 ## [0.27.0] - 2026-10-09
 
 ### Breaking

@@ -77,7 +77,7 @@ setup, examples, local checks, and release notes.
 The [documentation index](https://github.com/dragginzgame/ic-testkit/blob/main/docs/README.md)
 links current usage guidance and historical design records.
 
-The pending 0.27 startup-error hard cut uses `PocketIcStartupError::failure()`
+The 0.27 startup-error contract uses `PocketIcStartupError::failure()`
 and `PocketIcStartupFailure` for cause matching. Read bounded server excerpts
 through `output()`, and inspect typed secondary failures through
 `command_cleanup()` and `server_cleanup()`. The original cause remains primary;
