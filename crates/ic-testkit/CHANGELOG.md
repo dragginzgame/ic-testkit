@@ -10,6 +10,13 @@ repository checkout. The complete historical changelog remains at
 
 ## [0.27.1]
 
+### Fixed
+
+- Build the local server CLI before Make checks and tests use it, so a cleaned
+  build directory no longer causes a missing-executable failure. Server
+  provisioning remains explicit
+  ([#38](https://github.com/dragginzgame/ic-testkit/issues/38)).
+
 ### Changed
 
 - Run native CI once per release source through main, instead of repeating the

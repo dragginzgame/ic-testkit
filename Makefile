@@ -17,13 +17,15 @@ SHARED_TOOLING_ROOT := $(REPO_ROOT)
 include $(REPO_ROOT)make/tools.mk
 
 .PHONY: dependency-pins-check
-.PHONY: install-server server-check
+.PHONY: build-server-cli install-server server-check
 
-install-server:
-	cargo build -p ic-testkit --locked --bin ic-testkit-server
+build-server-cli:
+	cargo build -p ic-testkit --locked --bin ic-testkit-server --target-dir "$(REPO_ROOT)target"
+
+install-server: build-server-cli
 	target/debug/ic-testkit-server setup
 
-server-check:
+server-check: build-server-cli
 	target/debug/ic-testkit-server check
 
 MSRV ?= 1.88.0
@@ -46,7 +48,7 @@ help:
 	@echo ""
 	@echo "  install-tools   Explicitly install pinned jq/yq, ripgrep, cloc and IC executables"
 	@echo "  install-server  Build the owner CLI and explicitly prepare PocketIC"
-	@echo "  server-check    Verify the prepared PocketIC bundle offline"
+	@echo "  server-check    Build the owner CLI and verify the prepared bundle offline"
 	@echo "  tools-check     Verify installed host and IC tools offline"
 	@echo "  cloc            Count this workspace's Rust code"
 	@echo "  dependency-pins-check Check dependency declarations and tracked lockfiles offline"
@@ -88,7 +90,7 @@ version:
 tags:
 	@git tag --sort=-version:refname | head -10
 
-test:
+test: build-server-cli
 	@server="$$(target/debug/ic-testkit-server check)" || exit $$?; \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked && \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
@@ -96,7 +98,7 @@ test:
 build-test-canisters:
 	CARGO_TARGET_DIR=target/pic-wasm cargo build --locked --target wasm32-unknown-unknown -p ic_testkit_perf_probe
 
-test-canisters:
+test-canisters: build-server-cli
 	@server="$$(target/debug/ic-testkit-server check)" || exit $$?; \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
 

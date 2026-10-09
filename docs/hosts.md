@@ -133,7 +133,16 @@ documentation guard for that revision, including Intel macOS. It precedes the
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
   `POCKET_IC_BIN` to the path returned by Testkit's offline check to avoid
   upstream automatic download. Explicit `make install-server` prepares the
-  owner CLI and bundle; `make server-check` only verifies them.
+  owner CLI and bundle. `make server-check` and test targets build the local CLI
+  if needed, then verify the retained bundle offline; they never provision it.
+  The CLI build uses this checkout's `target/` even if an enclosing consumer
+  selects another Cargo target directory.
+  The 0.27.1 missing-CLI repair is qualified with eight substitute-Cargo/CLI
+  Make cases (ordering, shared prerequisites and failure refusal), plus actual
+  locked offline CLI compilation and admission of the retained Linux bundle.
+  Logs are `/tmp/ic-testkit-0271-server-prereq-{fixtures,real}.log`; substitute
+  tests do not constitute a full test gate or native macOS proof. The original
+  failed release-validation logs remain under `target/validation-failures/`.
   Managed startup takes an explicit caller-provided binary and owns its child.
 - The opt-in fixture-reuse benchmark requires the repository's probe canister,
   prepared Cargo caches, and `uname`. Its Linux RSS sampler reads native `/proc`;
