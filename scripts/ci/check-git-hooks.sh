@@ -44,7 +44,7 @@ new_fixture() {
     git read-tree HEAD
     git checkout-index --all
     # Project the reviewed adoption, including files not yet committed locally.
-    for path in Makefile make/tools.mk Cargo.toml crates/ic-testkit/Cargo.toml \
+    for path in Makefile make/tools.mk make/release.mk make/rust-format.mk make/execution.mk Cargo.toml crates/ic-testkit/Cargo.toml \
         crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs ci/tool-versions.env \
         scripts/ci/check-format-tools.sh scripts/ci/check-make-execution.sh .githooks/pre-commit \
         scripts/dev/install-git-hooks.sh; do
@@ -147,9 +147,14 @@ ln -s "$PWD" "$fixture/installer-alias"
 ) > installed.log || fail "aliased installer failed"
 [[ "$(git config --get core.hooksPath)" == .githooks ]] || fail "fixture invariant in $PWD at line $LINENO"
 make --no-print-directory install-hooks >> installed.log
-git config --local core.hooksPath custom-hooks
-expect_failure make --no-print-directory install-hooks
-[[ "$(git config --get core.hooksPath)" == custom-hooks ]] || fail "fixture invariant in $PWD at line $LINENO"
+for selected_hooks in custom-hooks $'custom-hooks\n' $'.githooks\n'; do
+    git config --local core.hooksPath "$selected_hooks"
+    expect_failure make --no-print-directory install-hooks
+    # Preserve path bytes rather than stripping newlines during verification.
+    actual_hooks="$(git config --get core.hooksPath && printf '.')"
+    actual_hooks="${actual_hooks%$'\n.'}"
+    [[ "$actual_hooks" == "$selected_hooks" ]] || fail 'installer changed existing hook selection'
+done
 
 # Setup must not activate a hook whose Rust formatter is unavailable. Substitute
 # Cargo only at the availability boundary, without removing any installed tools.

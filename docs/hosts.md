@@ -1,5 +1,88 @@
 # Host support and qualification
 
+Initial 0.27.2 hook qualification used committed Shared 0.2.5
+`04e07b4bf54e7aeb03eb7804a845cee27b7305df` through a clean isolated export;
+the 80-file selection is unchanged. Hook setup now preserves literal existing
+hook selections ending in newlines. The consumer fixture verifies refusal and
+unchanged bytes for both custom paths and `.githooks` with a trailing newline.
+The upstream focused suite also covers hooks in newline-named checkouts using
+its substitute formatter; this does not qualify all Testkit commands in such
+directories. Both upstream and actual consumer hook fixtures pass on Linux
+under Bash 5 and genuine Bash 3.2; consumer Bash 3.2 also inherits CDPATH.
+Partial staging, unrelated working edits, missing/wrong formatters and lockfile
+preservation remain covered. ShellCheck, snapshot, pin and formatting checks
+pass. Logs use `/tmp/ic-testkit-0272-{shared-export,consumer-hooks,consumer-hooks-bash32,shared-hooks,shared-hooks-bash32,shellcheck,checks}.log`.
+
+That qualification preserved the maintainer-selected Host 0.9.3 lockfile (SHA-256
+`5ab545cbacd036e17fcdde38046007219833caee17aa9fe161f4fd7378f0d11f`). Reviewed
+Host source is `545e7236b91d84e190c80931b784f72cc4fafb11`; library sources
+are unchanged from 0.9.2. Explicit locked offline cache preparation, actual
+Rust 1.88 library/CLI compilation, and a fresh local CLI build plus offline
+admission of the retained official Linux bundle pass. Logs use
+`/tmp/ic-testkit-0272-host-{cache,msrv,server-check}.log`. No tools or server
+were installed, and no dependency resolution or package-version change ran.
+No function, method or type was removed. Native macOS acceptance remains
+outstanding; the dirty upstream Shared 0.2.6 fixture change was excluded.
+No broad CI/release gate, commit or publication ran.
+
+The recipe consolidation initially adopted committed Shared 0.2.6
+`ce13a5314916891fd239d9b199b4a91b04775054` from a clean isolated export,
+adding only `make/release.mk` and `make/rust-format.mk` to the selection (82
+files). Standard release goals, remote/branch defaults, conflicting-goal
+rejection and simple root-workspace formatting have moved from the local
+Makefile into those canonical includes. Consumer validation gates, metadata
+admission, delivery policy, tool pins, explicit installation and `help` default
+remain local. No function, method or type was removed; the seven Make targets
+`release-patch`, `release-minor`, `release-major`, `release-resume`,
+`format-tools-check`, `fmt` and `fmt-check` retain their names and move owners.
+Isolated consumer fixtures explicitly copy the new includes before exercising
+the actual Makefile.
+
+Focused Linux snapshot/pin/format checks, ShellCheck, substitute release
+forwarding/failure/conflict cases, default-goal admission, the actual consumer
+hooks and the shared formatting fixture pass. Both formatting/hook controllers
+also pass under genuine Bash 3.2; consumer hooks inherit CDPATH. The focused
+release guards pass with controlled Git/registry/release effects and offline
+real Cargo metadata. Logs use
+`/tmp/ic-testkit-0272-shared-026-{export,checks,release-commands,default-goal,consumer-hooks,consumer-hooks-bash32,format,format-bash32,shellcheck,release-guards-retry}.log`.
+The first guard run incorrectly forced offline mode across fixtures that test
+other policies; its failed log remains at `release-guards.log` under the same
+prefix. No broad gate or actual release ran.
+
+The subsequently maintainer-selected Host 0.9.4 lock remains unchanged (SHA-256
+`08b29067b556c1f84278d2b4999495c45c8b5a422c7ba2d37662721fcc3492b4`).
+Host source `4e3daebd5df07c6449279535668436024a45c02b` has unchanged library
+sources from 0.9.3. Its focused Rust 1.88 library/CLI check passes
+(`/tmp/ic-testkit-host-094-{cache,msrv}.log`). Native macOS acceptance of this
+consumer adoption remains outstanding. Later dirty upstream execution-guard
+work is excluded rather than silently added to the committed snapshot.
+
+The pending batch now selects committed Shared 0.2.7
+`47d6ae6488b8007323fa7c2e22a6efa11d77ae63`, adding the declared
+`make/execution.mk` companion (83 files). The new guard refuses ignore-errors,
+dry-run, touch and question modes before recipes can run or be skipped. Both
+consumer fixture projections include the guard and its behavioral probe.
+The release checker explicitly binds its tooling root to its disposable
+snapshot, including when the caller exports a different root. The generic
+newline-checkout formatting checker is not selected here; no unused suite was
+added to consume that separate upstream fix.
+
+Sixty direct/inherited unsafe-mode cases using a copy of the actual consumer
+Makefile pass with substitute Cargo/runner effects: all reject before either
+tool runs. Ordinary parallel help with a quoted Make variable remains valid.
+The exact committed shared release and formatting fixtures pass under Bash 5
+and genuine Bash 3.2; the actual consumer hook fixture also passes under both,
+with inherited CDPATH for Bash 3.2. Release isolation passes with an exported
+nonexistent tooling root. Snapshot/pins/format checks, selected ShellCheck and
+the focused controlled-effect release guards pass. Logs use
+`/tmp/ic-testkit-0272-shared-027-{export,checks,release-isolation,consumer-modes,consumer-hooks,consumer-hooks-bash32,format,format-bash32,release,release-bash32,shellcheck-selected,release-guards}.log`.
+The initial lint selection incorrectly named the unselected generic formatting
+checker; that failed attempt remains in `shellcheck.log` under the same prefix.
+No source fix or extra vendoring was required for that selection correction.
+Host 0.9.4 remains selected with the unchanged lock digest above. No function,
+method or type was removed. No broad gate or actual release ran; matching native
+macOS acceptance of this source is still outstanding.
+
 The required native development and operator hosts are Ubuntu 24.04 x86-64
 and macOS 15 on Apple Silicon (ARM64) and Intel (x86-64). The crate's canister
 runtime target remains `wasm32-unknown-unknown`. Windows host workflows are

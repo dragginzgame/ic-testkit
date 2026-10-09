@@ -1,9 +1,9 @@
 .PHONY: \
 	build-test-canisters check check-wasm ci clean \
-	clippy docs-check ensure-clean fmt fmt-check format-tools-check git-hooks-check help \
+	clippy docs-check ensure-clean git-hooks-check help \
 	install-format-tools install-hooks installation-check msrv package publish \
 	publish-dry-run publish-guards-check release-check \
-	release-guards-check release-minor release-patch release-major release-resume \
+	release-guards-check \
 	release-version release-preflight release-verify release-prepare-version \
 	release-prepared-check release-files release-commit-check release-committed-check \
 	release-tagged-check release-push-check \
@@ -15,6 +15,8 @@ HOST_TOOL_VERSIONS ?= $(REPO_ROOT)ci/tool-versions.env
 
 SHARED_TOOLING_ROOT := $(REPO_ROOT)
 include $(REPO_ROOT)make/tools.mk
+include $(REPO_ROOT)make/release.mk
+include $(REPO_ROOT)make/rust-format.mk
 
 .PHONY: dependency-pins-check
 .PHONY: build-server-cli install-server server-check
@@ -30,13 +32,6 @@ server-check: build-server-cli
 
 MSRV ?= 1.88.0
 .DEFAULT_GOAL := help
-RELEASE_REMOTE ?= origin
-RELEASE_BRANCH ?= main
-
-ifneq ($(word 2,$(filter release-patch release-minor release-major release-resume,$(MAKECMDGOALS))),)
-$(error Select exactly one release target)
-endif
-
 CI_TARGETS := shared-tooling-check tools-check dependency-pins-check installation-check publish-guards-check \
 	release-guards-check git-hooks-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
@@ -102,10 +97,6 @@ test-canisters: build-server-cli
 	@server="$$(target/debug/ic-testkit-server check)" || exit $$?; \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
 
-format-tools-check:
-	@. "$(REPO_ROOT)ci/tool-versions.env" && \
-		bash scripts/ci/check-format-tools.sh "$$SHARED_TOOLING_CARGO_SORT_VERSION"
-
 install-format-tools: install-rust-tools
 
 dependency-pins-check:
@@ -113,14 +104,6 @@ dependency-pins-check:
 
 install-hooks: format-tools-check
 	bash scripts/dev/install-git-hooks.sh
-
-fmt: format-tools-check
-	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo sort --workspace
-	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo fmt --all
-
-fmt-check: format-tools-check
-	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo sort --workspace --check
-	CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 cargo fmt --all -- --check
 
 git-hooks-check: format-tools-check
 	bash scripts/ci/check-git-hooks.sh
@@ -170,12 +153,6 @@ release-check:
 
 publish: ensure-clean release-tag-check
 	bash scripts/release/publish-workspace.sh
-
-release-patch release-minor release-major:
-	+@bash scripts/ci/run-release.sh "$(@:release-%=%)" "$(RELEASE_REMOTE)" "$(RELEASE_BRANCH)"
-
-release-resume:
-	+@bash scripts/ci/run-release.sh resume "$(VERSION)" "$(RELEASE_REMOTE)" "$(RELEASE_BRANCH)"
 
 release-version:
 	@bash scripts/ci/read-cargo-workspace-version.sh --stable Cargo.toml

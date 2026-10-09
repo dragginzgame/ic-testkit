@@ -8,6 +8,25 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.27.2]
+
+### Fixed
+
+- Adopt Shared Tooling 0.2.7 so hook setup preserves existing path selections
+  with trailing newlines instead of treating them as the default hook path
+  ([shared #89](https://github.com/dragginzgame/shared-tooling/issues/89)).
+- Refuse Make modes that skip commands or hide failures, and keep isolated
+  release checks bound to their fixture even with an inherited tooling root
+  ([shared #30](https://github.com/dragginzgame/shared-tooling/issues/30),
+  [shared #7](https://github.com/dragginzgame/shared-tooling/issues/7)).
+
+### Changed
+
+- Use shared release and Rust formatting Make definitions, removing duplicate
+  recipes while retaining Testkit's validation, tool pins and release policy
+  ([shared #91](https://github.com/dragginzgame/shared-tooling/issues/91),
+  [shared #92](https://github.com/dragginzgame/shared-tooling/issues/92)).
+
 ## [0.27.1] - 2026-10-09
 
 ### Fixed
