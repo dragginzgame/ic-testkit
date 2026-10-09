@@ -25,7 +25,8 @@ provides:
 - canister install and retry helpers
 - explicit bounded PocketIC startup, caller-owned managed-server handles, and
   structured child/readiness failures
-- a shared environment startup contract and `ic-testkit-server run -- COMMAND`
+- explicit authenticated `ic-testkit-server setup`, offline `check`, and a shared
+  environment startup contract with `ic-testkit-server run -- COMMAND`
   for suites spanning several test processes
 - cached single- and multi-canister PocketIC baseline pools
 - deterministic fake principals
@@ -38,11 +39,35 @@ provides:
 - canister-side `Performance::measure` marker emission
 
 `ic-testkit` does not wrap the PocketIC simulator API, serialize independent
-instances, or own PocketIC's server-binary cache. Tests normally create one
+instances. Its published CLI owns explicit server provisioning and offline
+verification; tests never install through that CLI implicitly. Tests normally create one
 fresh `PocketIc` each and use its inherent methods for simulator operations;
 focused extension traits provide reusable harness behavior. Less common
 upstream types remain available through the complete `ic_testkit::pocket_ic`
 re-export instead of an expanding mirrored list.
+
+```bash
+cargo install --locked ic-testkit
+ic-testkit-server setup
+ic-testkit-server check
+ic-testkit-server run -- cargo test --locked
+```
+
+Setup selects Testkit's reviewed PocketIC 16.1.0 archive for Linux x86-64,
+macOS Intel or macOS Apple Silicon. It authenticates the archive's pinned digest,
+bounds decompression and admits executable bytes/version before publication.
+Setup/check print the absolute executable path; diagnostics go to stderr.
+`--directory DIRECTORY` selects a physical root (default
+`.tools/ic-testkit-server` in the working directory). Checks and run never
+download, update or repair a server. Failed attempts and previous bundles remain
+retained; a changed installation requires a fresh selected root.
+
+Run uses that prepared selection when neither `POCKET_IC_BIN` nor
+`IC_TESTKIT_POCKET_IC_URL` is selected, and exports the executable and managed
+URL to the command. Explicit binary overrides admit stable 16.x servers,
+independently of the Rust client's latest download constant. URL mode borrows an
+existing server. Build inputs should be prepared before entering the managed
+scope: the server's operation-idle lifetime is distinct from `--ttl`'s hard limit.
 
 Most users should read the
 [repository README](https://github.com/dragginzgame/ic-testkit#readme) for
@@ -72,8 +97,11 @@ and a
 that are compiled by the crate's normal all-target checks.
 
 Benchmark aggregate/comparison rows and aggregate errors use `suite()` for their
-label; aggregate rows use `average()` for averages derived from totals and run
-count. Baseline recipes construct reset requirements with
+label; aggregate rows use `average()` for approximate `f64` averages derived from
+totals and run count. Distinct integers above 2^53 can round to the same average
+and report zero percentage change; use exact totals and run counts for exact
+comparisons. Text reports also round displayed averages and percentages to whole
+numbers. Baseline recipes construct reset requirements with
 `ResetRequirements::try_new(cycle_policy, non_snapshot_requirements)`. The pool
 verifies snapshots and cycle policy through `CanisterRestoreReceipt`, while
 `ResetReceipt` covers non-snapshot guarantees. These are source API hard cuts.

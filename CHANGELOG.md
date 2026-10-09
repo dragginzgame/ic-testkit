@@ -6,6 +6,48 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.25.4]
+
+### Changed
+
+- Adopt Shared Tooling 0.1.34 and retire the unused local fleet reporter;
+  run fleet reports centrally in Shared Tooling. Local workspace LOC and tool
+  checks remain available ([#39](https://github.com/dragginzgame/ic-testkit/issues/39),
+  [shared #83](https://github.com/dragginzgame/shared-tooling/issues/83)).
+- Verify prepared PocketIC executables through Host 0.8.7's streaming file
+  admission, avoiding a full executable-sized verification buffer while retaining
+  checksum and redirected-file refusal
+  ([#38](https://github.com/dragginzgame/ic-testkit/issues/38)).
+- Specify approximate floating-point benchmark averages and percentage changes,
+  retaining exact aggregate totals and existing report formats
+  ([#40](https://github.com/dragginzgame/ic-testkit/issues/40)).
+
+### Added
+
+- Add explicit authenticated PocketIC `setup` and offline `check` commands to
+  the published server CLI. Managed `run` can use Testkit's prepared server
+  without consumer version or asset selection
+  ([#38](https://github.com/dragginzgame/ic-testkit/issues/38)).
+
+### Fixed
+
+- Admit compatible stable 16.x server overrides independently of the Rust
+  client's latest downloadable server; provisioning retains an exact reviewed
+  selection ([#34](https://github.com/dragginzgame/ic-testkit/issues/34)).
+
+- Allow native host and PocketIC concurrency CI jobs to complete long builds
+  within GitHub Actions' default job limit, removing the 15/10-minute caps.
+  Individual runtime and server-startup deadlines are unchanged.
+- Preserve CI qualification for each pushed commit while allowing newer PR
+  revisions to replace older review runs
+  ([shared #80](https://github.com/dragginzgame/shared-tooling/issues/80)).
+- Reuse verified IC tool bundles after comment-only or reordered pin edits,
+  adopting Shared Tooling's 0.1.32 changes
+  ([shared #79](https://github.com/dragginzgame/shared-tooling/issues/79)).
+- Use Host's regular-file admission for cache locks while retaining shared
+  record ownership and heartbeat timing; reject redirected lock entries without
+  touching their targets ([#35](https://github.com/dragginzgame/ic-testkit/issues/35)).
+
 ## [0.25.3] - 2026-10-08
 
 ### Changed

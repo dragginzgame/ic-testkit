@@ -182,9 +182,9 @@ impl PocketIcStartupConfig {
     /// explicitly empty or invalid selected value fails rather than falling
     /// back. URL mode never launches a version probe or claims server ownership.
     /// Binary mode resolves the explicit path and checks `--version` against
-    /// [`pocket_ic::LATEST_SERVER_VERSION`] using the shared bounded capture
+    /// Testkit's supported protocol range using the shared bounded capture
     /// engine. This is version qualification, not executable-byte admission;
-    /// prepare and verify the binary with `make install-tools` / `tools-check`.
+    /// prepare and verify the binary with `ic-testkit-server setup` / `check`.
     /// The probe has its own `timeout`; subsequent startup has the same budget.
     pub fn from_env(timeout: Duration) -> Result<Self, PocketIcStartupError> {
         Self::from_environment(timeout, |name| std::env::var_os(name))
@@ -237,8 +237,8 @@ impl PocketIcStartupConfig {
             },
         )
         .map_err(|source| PocketIcStartupError::ServerVersionProbe { source })?;
-        let expected = format!("pocket-ic-server {}", pocket_ic::LATEST_SERVER_VERSION);
-        if std::str::from_utf8(&evidence.stdout).map(str::trim) != Ok(expected.as_str()) {
+        let expected = "pocket-ic-server >=16.0.0,<17.0.0 (stable)".to_owned();
+        if !super::supports_pocket_ic_server(&evidence.stdout) {
             return Err(PocketIcStartupError::ServerVersionMismatch {
                 expected,
                 observed: evidence.stdout,
@@ -1388,7 +1388,11 @@ mod tests {
         let failed = format!("{qualified}; exit 23");
         for (label, body, expected) in [
             ("qualified", qualified.as_str(), 0),
+            ("compatible-16.0", "printf 'pocket-ic-server 16.0.0\\n'", 0),
+            ("compatible-patch", "printf 'pocket-ic-server 16.0.1\\n'", 0),
             ("wrong-version", "printf 'pocket-ic-server 15.0.0\\n'", 1),
+            ("future-major", "printf 'pocket-ic-server 17.0.0\\n'", 1),
+            ("malformed-version", "printf 'pocket-ic-server 16.1\\n'", 1),
             ("failed-version", failed.as_str(), 2),
             ("invalid-utf8", "printf '\\377'", 1),
             ("version-timeout", "exec sleep 30", 2),

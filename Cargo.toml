@@ -20,7 +20,7 @@ candid = { version = "0.10", default-features = false }
 fs2 = "0.4"
 ic-cdk = "0.20.2"
 ic-host-artifacts = { version = "0.8", features = ["archive", "wasm"] }
-ic-host-fs = "0.8.1"
+ic-host-fs = "0.8.7"
 ic-host-process = "0.8"
 ic-host-tools = "0.8"
 ic-testkit = { path = "crates/ic-testkit" }

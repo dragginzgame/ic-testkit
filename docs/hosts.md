@@ -229,7 +229,6 @@ declared native hosts. For LOC tooling after installing its prerequisites:
 
 ```bash
 make cloc
-make cloc-tooling
 ```
 
 The maintainer owns full pre-push, release and publication gates. Agents run
@@ -1910,3 +1909,175 @@ No schedule was activated. Native macOS and full maintainer gates remain
 unqualified by these local checks. Further lock-opening reuse waits for the
 committed and published Host API tracked in
 [Host #27](https://github.com/dragginzgame/ic-host-tooling/issues/27).
+
+### Pending 0.25.4 PocketIC provisioning owner
+
+The published `ic-testkit-server` binary now provides explicit `setup` and
+offline `check` alongside managed `run`. This release selects PocketIC 16.1.0
+using the official asset digests reviewed on 2026-10-09:
+[upstream release](https://github.com/dfinity/pocketic/releases/tag/16.1.0).
+Linux x86-64, macOS Intel and macOS Apple Silicon assets are selected locally;
+unsupported hosts fail before provisioning. Testkit's stable 16.x protocol
+admission is independent of the client's latest downloadable server constant.
+The exact provisioned version and override protocol policy are distinct.
+
+Setup uses system curl's HTTPS-only redirect policy and finite download budgets,
+Host's bounded digest/gzip admission, regular-file locking, durable file
+publication and executable/version admission. There is no Cargo build deadline.
+Whole bundles are admitted under the canonical `pocket-ic` filename in private
+candidates before directory publication. Root namespaces must remain caller-owned
+and free of concurrent untrusted writers; symlinked directory components, final
+archives/binaries and redirected lock files are refused. Cooperating setup calls
+serialize and recheck. No active pointer, new receipt format, migration reader or
+automatic repair is introduced. Retained authenticated archives are the offline
+authority for installed executable bytes; checks create no installation files.
+
+Actual Linux execution downloaded and authenticated the official archive, passed
+offline checking with `PATH=/nonexistent`, and ran a separate worker creating a
+real application-subnet instance through `run` without a caller-selected binary
+or URL. The successful native run is `/tmp/ic-testkit-38-live-run-native.log`.
+The sandboxed run could not bind a loopback socket and remains separate failed
+evidence. An earlier real setup exposed PocketIC's basename requirement; its
+failed candidate and logs are retained. The corrected setup/check logs use
+`/tmp/ic-testkit-38-live-{setup-final,check-final}.*`. Existing shared bundles and
+the maintainer's dependency/CI-timeout edits remain intact.
+
+Focused fixtures use authentic gzip/digest admission and real native file locks
+with substituted downloads and executable scripts. They cover verified reuse,
+changed-byte refusal before execution, failed/interrupted candidates, retained
+previous bundles, redirected paths and concurrent setup. Existing runner
+status/signal/diagnostic tests remain maintained. Native owner provisioning and
+real launch are wired into the Linux and two macOS CI jobs; local Linux results
+do not qualify either Mac host. No full local CI/release gate was run.
+
+The current immutable Shared snapshot still requires PocketIC in its complete
+catalog and receipts. Retirement remains coordinated through
+[Shared #76](https://github.com/dragginzgame/shared-tooling/issues/76) and
+[Testkit #38](https://github.com/dragginzgame/ic-testkit/issues/38); no shared
+snapshot or sibling was patched to simulate that cut. Published-owner consumer
+adoption and native qualification remain required. The separate operation-idle
+lifetime work stays in [#37](https://github.com/dragginzgame/ic-testkit/issues/37).
+No functions, methods or types were removed in this batch, and manifest versions
+remain maintainer-owned.
+
+Focused qualification passes: 5 provisioning fixtures, 9 maintained runner
+fixtures, the protocol-policy fixture, bounded environment-probe admission,
+strict selected Clippy, actual Rust 1.88 binary compilation, warning-denied public
+Rustdoc, formatting, declaration pins, snapshot verification and actionlint.
+Logs use `/tmp/ic-testkit-38-*.log`; initial compile/lint and runtime failures
+remain distinct from final passes. No offline dependency resolution upgrade ran.
+
+### Pending 0.25.4 shared refresh and cache admission
+
+Reviewed Shared commit `635a39a9dd5f8d021fa9c9196b591e00521a7e02`
+(the 0.1.32 batch; its committed VERSION remains 0.1.31) was exported from an
+isolated clean checkout with the canonical helper. All 81 selected files verify;
+the export log is retained under `/tmp/ic-testkit-shared-0132.*/export.log`.
+Dirty sibling dashboard work was excluded. No fleet dashboard, Cargo-install
+qualification workflow or schedule was added to consumer CI.
+
+This evidence describes that intermediate selection. The later 0.1.33 adoption
+and removal of the optional fleet reporter are qualified separately below.
+
+The installer now compares validated tool-selection records while retaining
+the original installed catalog as provenance. Genuine Bash 3.2 fixtures pass
+under inherited CDPATH, including comment/reorder reuse and retained-selection
+validation. Actual prepared Linux tools also pass an offline check with a
+comment-only catalog copy; the active link and installed catalog digest remain
+unchanged. A first copy included a disallowed blank row and was correctly
+refused; that failed attempt remains separate evidence. No download or bundle
+activation occurred during these checks. Logs use
+`/tmp/ic-testkit-0254-{ic-fixtures,real-pin-reuse-final}.log`.
+
+Native CI now groups pushed commits by SHA and cancels superseded runs only for
+PR updates, following the shared source-owner policy. This prevents a newer
+push from cancelling earlier native qualification; it does not turn cancelled
+historical runs into passes. Actionlint passes for the changed consumer workflow.
+
+The cache lock opener is now only a consumer error projection of
+`ic_host_fs::durable::open_regular_lock_file_with_parents`. The declaration
+requires Host fs 0.8.4 so existing locks avoid staging/sync and can be opened
+under non-writable parents; the maintainer-selected lock currently uses 0.8.5.
+Shared retention acquisition, record-clone lifetime, explicit final-owner unlock,
+25 ms observer polling cap and acquisition timing after opening remain local.
+The fs2 dependency remains necessary. Existing v1 lock names/bytes and cache
+layout are unchanged, without a retained-data reset or compatibility reader.
+Trusted parents and namespace stability remain consumer obligations; redirected
+or non-regular final lock entries fail through Host's typed admission.
+
+Linux focused checks pass: 10 cache filesystem tests, the exact-cache heartbeat
+wait, 6 pruning cases, warm retained-Wasm publication and retained-corruption
+refusal/recovery. Selected strict Clippy and actual Rust 1.88 library compilation
+pass with the locked Host 0.8.5 graph. Offline tools, declaration pins, formatting,
+snapshot verification and the isolated metadata fixture pass; logs use
+`/tmp/ic-testkit-0254-*.log`. Two initial overly narrow test filters selected zero
+tests and remain inconclusive logs; the named behavior checks above were then
+executed successfully. Upstream Shared and Host native CI passed their reviewed
+commits, but these local tests do not qualify native consumer macOS. Full local
+CI/release gates remain maintainer-owned. No functions, methods or types were
+removed; the private opener name remains as the narrow error adapter.
+
+### Pending 0.25.4 optional fleet selection and benchmark precision
+
+Shared Tooling `ddd3e1c01ba8aab13a56277e05679e43a8a9d88a` (0.1.33)
+was exported from an isolated clean checkout through the canonical helper.
+The consumer removed the unused `scripts/dev/cloc-tooling.pl` and its manifest
+record under the published optional-selection procedure. The 80 retained files
+verify; local setup, checks, cloc and checksum helpers remain selected. Consumer
+help and README now direct fleet reporting to Shared Tooling. The canonical
+optional target refuses the absent selection with an owner-directed diagnostic,
+without invoking a sibling. Central audit task instructions remain applicable.
+The deleted reporter's private functions were `usage`, `capture`, `read_file`,
+`write_file`, `safe_path`, `is_linked`, `in_scope` and `load_snapshot`; all remain
+owned by Shared Tooling's reporter rather than maintained here.
+
+Offline snapshot/tools/declaration/format checks pass. The clean canonical
+source's tool-command regression passes with substitute installers/reports;
+its selected `make/tools.mk` bytes match this consumer. The local cloc
+prerequisite check passes. Evidence uses
+`/tmp/ic-testkit-0254-{shared-0133-checks,optional-tools,cloc-tools,no-fleet}.log`;
+export evidence is `/tmp/ic-testkit-0254-shared-0133-export.log`.
+
+All 28 benchmark integration tests and strict selected Clippy pass with the
+maintainer-selected locked Host 0.8.6 graph. New native Rust cases cover every
+counter near 2^53 and u128::MAX: distinct exact integer totals can share a finite
+f64 average and yield zero percentage change. Public docs specify this existing
+approximation and text rounding; public fields and report formats are unchanged.
+Logs are `/tmp/ic-testkit-0254-{wide-benchmark,wide-clippy}.log`.
+
+Committed Host 0.8.6 `9f3d9a83def91030056c78e44c9efaa489be7d12`
+adds optional communication deadlines; its CI run 37896909262 passed MSRV,
+Linux and native macOS Intel/ARM. Dirty sibling streaming no-follow hashing
+work was inspected separately and was not adopted. The Cargo communication
+refactor remains held under the maintainer's earlier instruction; no compilation
+elapsed-time or retained-output cap was introduced. Shared 0.1.33 CI run
+37898351268 had passed lint/security and Linux when inspected, with Intel
+running and ARM queued. Local consumer evidence is Linux only; matching native
+consumer macOS and full pre-push gates remain maintainer-owned.
+
+### Pending 0.25.4 streaming executable verification
+
+The snapshot now selects committed Shared Tooling 0.1.34
+`3d33cd250fcae7dbe5cabe44b2abd6b2c91a1822`, exported through an isolated
+clean canonical checkout; all 80 files verify. The newly fixed optional
+PocketIC alignment script is not selected here. No fleet reporter was restored.
+
+PocketIC executable admission now uses Host fs 0.8.7's
+`read::hash_file_no_follow` rather than buffering the executable to compute its
+checksum. The existing 512 MiB bound, checksum authority, rejection before
+version execution, trusted-parent custody and subsequent tool admission remain
+unchanged. Archive authentication/decompression still requires its separate
+buffer. No function or type was removed and no retained format changed.
+The dependency minimum is 0.8.7; the maintainer-selected lock already contained
+that version. Committed Host source is `8edce53c43bb872cd4aaa15659e37f0236adc203`;
+its dirty direct-child ownership work was excluded.
+
+Five provisioning fixtures, strict selected Clippy and actual Rust 1.88 binary
+compilation pass on Linux. A freshly built CLI verifies the existing official
+16.1.0 bundle with PATH=/nonexistent, without downloading or activating tools.
+Logs use `/tmp/ic-testkit-0254-host-087-*`; snapshot/tools/pins/format evidence is
+`/tmp/ic-testkit-0254-shared-0134-checks.log`. Native upstream CI for the reviewed
+Host/Shared commits was queued when inspected; consumer macOS qualification
+remains pending. Full gates were not run. The Cargo communication refactor stays
+paused. Shared #84's compiled release-adapter startup finding does not match
+this consumer's Bash release-version/preflight entry points.

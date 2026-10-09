@@ -10,13 +10,17 @@
 //! simulator operations remain upstream inherent methods.
 //!
 //! [`PocketIcManagedServer`] can explicitly own one exact caller-selected
-//! server child for a serial suite. No type serializes independent instances
-//! or owns PocketIC's server download/cache policy.
+//! server child for a serial suite. No type serializes independent instances or
+//! downloads a server implicitly. Explicit provisioning is owned by the
+//! published `ic-testkit-server setup` / `check` commands.
 
 pub use pocket_ic::{
     CanisterStatusResult, ErrorCode, LATEST_SERVER_VERSION, PocketIc, PocketIcBuilder, RejectCode,
     RejectResponse,
 };
+
+mod server;
+pub use server::{POCKET_IC_SERVER_VERSION, supports_pocket_ic_server};
 
 mod baseline;
 mod baseline_pool;

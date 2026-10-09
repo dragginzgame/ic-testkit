@@ -1,4 +1,4 @@
-//! A command-scoped PocketIC server owner. No installer or binary discovery.
+//! Explicit PocketIC setup, offline admission and command-scoped ownership.
 
 #[cfg(all(unix, not(target_arch = "wasm32")))]
 mod native;

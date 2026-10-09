@@ -338,6 +338,53 @@ fn runner_environment_worker() {
 }
 
 #[test]
+#[ignore = "requires explicit ic-testkit-server setup in .tools/ic-testkit-server"]
+fn provisioned_cli_runs_a_real_instance_without_consumer_server_selection() {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"))
+        .current_dir(workspace)
+        .env_remove("POCKET_IC_BIN")
+        .env_remove("IC_TESTKIT_POCKET_IC_URL")
+        .args(["run", "--ttl", "60", "--"])
+        .arg(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "runner_environment_worker"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn offline_check_and_run_refuse_missing_setup_without_executing_tools() {
+    let fixture = Fixture::new();
+    let missing = fixture.0.join("missing");
+    for action in ["check", "run"] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"));
+        command
+            .env_remove("POCKET_IC_BIN")
+            .env_remove("IC_TESTKIT_POCKET_IC_URL")
+            .env("PATH", &missing)
+            .arg(action)
+            .arg("--directory")
+            .arg(&missing);
+        if action == "run" {
+            command.args(["--", "/bin/sh", "-c", "exit 99"]);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(output.stdout, [] as [u8; 0]);
+        assert!(!missing.exists());
+    }
+}
+
+#[test]
 fn interruption_terminates_the_owned_server_command_and_descendants() {
     let fixture = Fixture::new();
     let mut command = fixture.runner();

@@ -358,7 +358,8 @@ let pocket_ic = PocketIcBuilder::new().with_application_subnet().try_build(confi
 `from_env` prefers `IC_TESTKIT_POCKET_IC_URL`, then `POCKET_IC_BIN`. An empty or
 invalid selected value fails; it never falls back to another variable or searches
 a cache. URL mode connects without taking server ownership. Binary mode requires
-a successful, bounded `--version` check matching `LATEST_SERVER_VERSION`; the
+a successful, bounded `--version` check satisfying Testkit's stable 16.x protocol
+policy (`>=16.0.0,<17.0.0`), independently of `LATEST_SERVER_VERSION`; the
 probe and subsequent startup each have the supplied timeout budget. The probe
 owns a process group and stops same-group wrapper descendants on completion or
 failure; it is not a background-launch contract.
@@ -367,14 +368,41 @@ Install the command with `cargo install --locked ic-testkit`, or run it from thi
 checkout with `cargo run --locked -p ic-testkit --bin ic-testkit-server --`:
 
 ```bash
-make install-tools
-make tools-check
-export POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic"
+ic-testkit-server setup
+ic-testkit-server check
 ic-testkit-server run --ttl 900 -- cargo test --locked -p my-integration-tests
 ```
 
-This checkout selects PocketIC 16.1.0 through its
-[consumer-owned IC tool matrix](docs/hosts.md#pocketic-161-server-selection).
+`setup` explicitly downloads Testkit's reviewed PocketIC 16.1.0 asset over HTTPS,
+verifies its pinned SHA-256 before bounded decoding, and admits the executable's
+exact bytes and version before publishing. `check` verifies the retained archive
+and installed executable offline. Both print only the absolute executable path
+to stdout; diagnostics and retained setup-evidence locations go to stderr.
+Use `--directory DIRECTORY` on setup/check/run to select another physical root;
+the default is `.tools/ic-testkit-server` relative to the working directory.
+Only Linux x86-64, macOS Intel and macOS Apple Silicon have reviewed assets.
+Provisioning requires `curl`; offline checking does not.
+
+`run` without a server environment selection checks that prepared bundle and
+exports both its `POCKET_IC_BIN` and the governed server URL to the command.
+It never installs or updates a server. An explicit `--directory` conflicts with
+an explicit binary/URL environment selection. Low-level binary overrides still
+require protocol admission; borrowed URLs retain their existing topology contract.
+Client dependency updates do not change Testkit's server selection automatically.
+
+Setup serializes cooperating installers, rechecks an existing bundle before any
+download and refuses a changed or redirected installation. Failed/interrupted
+attempts and previous bundles are preserved. Select a fresh root to replace an
+invalid retained installation; no automatic repair, removal or format migration
+occurs. The caller must control the physical root and exclude untrusted namespace
+writers. Parent traversal and symlinked directory components are refused. Checks
+create no installation files; the version probe executes authenticated bytes.
+
+The current shared setup still installs its PocketIC row until the coordinated
+[Shared handoff](https://github.com/dragginzgame/shared-tooling/issues/76) is
+published. Existing shared bundles are preserved; consumer snapshots must not be
+patched to remove that row. The new published CLI is the replacement boundary
+tracked in [#38](https://github.com/dragginzgame/ic-testkit/issues/38).
 
 The runner exports `IC_TESTKIT_POCKET_IC_URL` to the command, retains the managed
 server until completion, inherits terminal IO and preserves the command's exit
@@ -389,6 +417,10 @@ is supplied; supplying it with an external URL is rejected. External URL mode
 borrows the existing server and leaves it running. Library callers can use
 `PocketIcStartupConfig::run_command` with their own cancellation callback;
 library code installs no process-wide signal handlers.
+
+Prepare compilation inputs before entering the managed scope: `--ttl` selects
+the server's hard lifetime, not its operation-idle timeout. The separate idle
+lifetime qualification remains tracked in [#37](https://github.com/dragginzgame/ic-testkit/issues/37).
 
 For complete raw diagnostics after startup failure, command failure or interruption,
 select two new files with `PocketIcStartupConfig::with_server_output_files(stdout,
@@ -1587,6 +1619,10 @@ aggregate. Use `BenchmarkAggregateRow::is_all_suites()` to distinguish them.
 Aggregate and comparison rows, and aggregate errors, expose their authoritative
 label through `suite()`. Read aggregate averages with `average()`; they are
 derived from the row's totals and run count rather than stored separately.
+Totals and run counts remain exact integers. Averages and percentage changes
+use approximate `f64` arithmetic: distinct integers above 2^53 can report the
+same average and zero change. Use totals and run counts for exact comparisons.
+CSV preserves these approximate means; text reports also round to whole numbers.
 These accessors replace the former `suite` and `average` fields.
 
 ## Deterministic principals
@@ -1675,7 +1711,7 @@ See [bootstrap prerequisites](docs/local-setup.md#bootstrap-prerequisites) and
 tools and dependency declarations without downloading or upgrading anything.
 Setup installs tools explicitly; formatting never installs or fetches them.
 The reviewed `make/tools.mk` owns setup, offline checks, `make cloc` for this
-workspace and `make cloc-tooling` for read-only sibling tooling counts. Existing
+workspace. Run fleet tooling reports from Shared Tooling. Existing
 checkouts must rerun explicit setup to prepare the newly selected tools.
 Hook activation and formatting checks reject missing formatter prerequisites.
 `make fmt` sorts every workspace Cargo manifest before formatting all Rust code.

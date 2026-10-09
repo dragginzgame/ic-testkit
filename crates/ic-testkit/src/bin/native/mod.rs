@@ -9,10 +9,19 @@ use std::{
 
 use ic_testkit::pic::PocketIcStartupConfig;
 
+mod provisioning;
+
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
-const USAGE: &str = "usage: ic-testkit-server run [--ttl SECONDS] [--startup-timeout SECONDS] [--server-stdout NEW-FILE --server-stderr NEW-FILE] -- COMMAND [ARG...]";
+const USAGE: &str = "usage: ic-testkit-server setup|check [--directory DIRECTORY]\n       ic-testkit-server run [--directory DIRECTORY] [--ttl SECONDS] [--startup-timeout SECONDS] [--server-stdout NEW-FILE --server-stderr NEW-FILE] -- COMMAND [ARG...]";
+
+enum Arguments {
+    Setup(PathBuf),
+    Check(PathBuf),
+    Run(Box<RunArguments>),
+}
 
 struct RunArguments {
+    directory: Option<PathBuf>,
     timeout: Duration,
     ttl: Option<Duration>,
     output_files: Option<(PathBuf, PathBuf)>,
@@ -58,10 +67,32 @@ impl Drop for Signals {
     }
 }
 
-fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<RunArguments, String> {
-    if arguments.next().as_deref() != Some(std::ffi::OsStr::new("run")) {
+fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, String> {
+    let action = arguments.next().ok_or(USAGE)?;
+    if action == "setup" || action == "check" {
+        let directory = match arguments.next() {
+            None => PathBuf::from(provisioning::DEFAULT_DIRECTORY),
+            Some(flag) if flag == "--directory" => PathBuf::from(
+                arguments
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or(USAGE)?,
+            ),
+            _ => return Err(USAGE.to_owned()),
+        };
+        if arguments.next().is_some() {
+            return Err(USAGE.to_owned());
+        }
+        return Ok(if action == "setup" {
+            Arguments::Setup(directory)
+        } else {
+            Arguments::Check(directory)
+        });
+    }
+    if action != "run" {
         return Err(USAGE.to_owned());
     }
+    let mut directory = None;
     let mut timeout = Duration::from_secs(30);
     let mut ttl = None;
     let mut selected_timeout = false;
@@ -84,12 +115,22 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<RunArguments, 
                     );
                 }
             };
-            return Ok(RunArguments {
+            return Ok(Arguments::Run(Box::new(RunArguments {
+                directory,
                 timeout,
                 ttl,
                 output_files,
                 command,
-            });
+            })));
+        }
+        if argument == "--directory" && directory.is_none() {
+            directory = Some(PathBuf::from(
+                arguments
+                    .next()
+                    .filter(|value| !value.is_empty())
+                    .ok_or(USAGE)?,
+            ));
+            continue;
         }
         if argument == "--server-stdout" || argument == "--server-stderr" {
             let selection = if argument == "--server-stdout" {
@@ -129,24 +170,46 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<RunArguments, 
 }
 
 pub fn main() -> ExitCode {
-    let RunArguments {
-        timeout,
-        ttl,
-        output_files,
-        mut command,
-    } = match parse(std::env::args_os().skip(1)) {
+    let arguments = match parse(std::env::args_os().skip(1)) {
         Ok(arguments) => arguments,
         Err(error) => {
             eprintln!("{error}");
             return ExitCode::from(2);
         }
     };
+    let arguments = match arguments {
+        Arguments::Setup(directory) => return report_provisioning(provisioning::setup(&directory)),
+        Arguments::Check(directory) => return report_provisioning(provisioning::check(&directory)),
+        Arguments::Run(arguments) => arguments,
+    };
+    let RunArguments {
+        directory,
+        timeout,
+        ttl,
+        output_files,
+        mut command,
+    } = *arguments;
     let result = (|| {
         let _signals = Signals::install()?;
-        let mut config = PocketIcStartupConfig::from_env(timeout)?;
+        let environment_selected = std::env::var_os("IC_TESTKIT_POCKET_IC_URL").is_some()
+            || std::env::var_os("POCKET_IC_BIN").is_some();
+        let mut config = if directory.is_some() || !environment_selected {
+            if environment_selected {
+                return Err(
+                    "--directory conflicts with an explicit server URL or POCKET_IC_BIN".into(),
+                );
+            }
+            let binary = provisioning::check(
+                &directory.unwrap_or_else(|| PathBuf::from(provisioning::DEFAULT_DIRECTORY)),
+            )?;
+            command.env("POCKET_IC_BIN", &binary);
+            PocketIcStartupConfig::spawn(binary, timeout)
+        } else {
+            PocketIcStartupConfig::from_env(timeout)?
+        };
         if let Some(ttl) = ttl {
             if config.server_url().is_some() {
-                return Err("--ttl requires an owned server selected by POCKET_IC_BIN".into());
+                return Err("--ttl requires an owned server".into());
             }
             config = config.with_server_hard_ttl(ttl);
         }
@@ -172,6 +235,30 @@ pub fn main() -> ExitCode {
                 )
                 .unwrap_or(1),
             )
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn report_provisioning(result: Result<PathBuf, Box<dyn std::error::Error>>) -> ExitCode {
+    use std::io::Write as _;
+    use std::os::unix::ffi::OsStrExt as _;
+    match result {
+        Ok(path) => {
+            let stdout = std::io::stdout();
+            let mut stdout = stdout.lock();
+            if stdout
+                .write_all(path.as_os_str().as_bytes())
+                .and_then(|()| stdout.write_all(b"\n"))
+                .is_err()
+            {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Err(error) => {
             eprintln!("{error}");

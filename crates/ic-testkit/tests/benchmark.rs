@@ -363,6 +363,49 @@ fn updated_aggregate_totals_and_runs_drive_averages_and_comparisons() {
     );
 }
 
+#[test]
+fn wide_averages_are_approximate_while_aggregate_totals_remain_exact() {
+    for values in [
+        [1_u128 << 53, (1_u128 << 53) + 1],
+        [u128::MAX - 1, u128::MAX],
+    ] {
+        for counter in 0..4 {
+            let spans = boundary_spans(counter, values);
+            let previous = aggregate_benchmark_spans(&spans[..1]).unwrap();
+            let current = aggregate_benchmark_spans(&spans[1..]).unwrap();
+            for (before, after) in previous.rows.iter().zip(&current.rows) {
+                assert_ne!(before.total, after.total);
+                assert_eq!(before.average(), after.average());
+                let mean = after.average();
+                assert!(
+                    [
+                        mean.instructions,
+                        mean.heap_bytes,
+                        mean.memory_bytes,
+                        mean.total_allocation,
+                    ]
+                    .into_iter()
+                    .all(f64::is_finite)
+                );
+            }
+            for row in compare_benchmark_aggregates(&current.rows, &previous.rows).rows {
+                let changes = [
+                    row.instructions_avg_change_percent,
+                    row.heap_bytes_avg_change_percent,
+                    row.memory_bytes_avg_change_percent,
+                    row.total_allocation_avg_change_percent,
+                ];
+                assert_eq!(changes[counter], Some(0.0));
+                for (index, change) in changes.into_iter().enumerate() {
+                    if index != counter {
+                        assert_eq!(change, None);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn boundary_spans(
     counter_index: usize,
     values: [u128; 2],

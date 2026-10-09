@@ -106,7 +106,29 @@ for host in Linux:x86_64 Darwin:x86_64 Darwin:arm64; do
     [[ "$(wc -l < "$fixture/downloads")" == "$before" ]]
     (cd "$fixture"; CDPATH="$fixture" bash "$ROOT/scripts/dev/install-ic-tools.sh" \
         --consumer "${consumer#"$fixture/"}" --pins pins.tsv --check) > /dev/null 2>&1
-    bash "$ROOT/scripts/ci/test-tool-evidence.sh" "$consumer" ic "$pins"
+    # Comments and record order do not change selection or rewrite provenance.
+    original="$(readlink "$consumer/.tools/ic")"
+    cp "$consumer/.tools/ic/files.sha256" "$fixture/original-receipt"
+    for edit in comments reordered; do
+        selected_pins="$fixture/$edit.tsv"
+        if [[ "$edit" == comments ]]; then
+            { printf '# consumer qualification notes\n'; cat "$pins"; } > "$selected_pins"
+        else
+            awk '{ rows[NR]=$0 } END { for (i=NR; i>0; i--) print rows[i] }' "$pins" > "$selected_pins"
+        fi
+        cp "$selected_pins" "$fixture/caller-pins"
+        install --check > /dev/null 2>&1
+        install > /dev/null 2>&1
+        [[ "$(wc -l < "$fixture/downloads")" == "$before" &&
+           "$(readlink "$consumer/.tools/ic")" == "$original" &&
+           ! -e "$consumer/.tools/.ic-tools.lock" ]]
+        cmp "$consumer/.tools/ic/pins.tsv" "$pins"
+        cmp "$consumer/.tools/ic/files.sha256" "$fixture/original-receipt"
+        cmp "$selected_pins" "$fixture/caller-pins"
+    done
+    selected_pins="$pins"
+    # Compaction retains distinct caller and installation provenance too.
+    bash "$ROOT/scripts/ci/test-tool-evidence.sh" "$consumer" ic "$fixture/comments.tsv"
     # A malformed active link must not authenticate its newline-trimmed sibling.
     original="$(readlink "$consumer/.tools/ic")"
     for target in "$original"$'\n' "$original"$'\n\n'; do
@@ -133,6 +155,34 @@ export IC_TOOLS_TEST_OS=Linux IC_TOOLS_TEST_ARCH=x86_64
 consumer="$fixture/consumer Linux:x86_64"
 original="$(readlink "$consumer/.tools/ic")"
 
+# Only equivalent, complete selections may reuse the bundle, before execution.
+before="$(wc -l < "$fixture/downloads")"
+selected_pins="$fixture/changed.tsv"
+for change in version digest other-host host duplicate malformed; do
+    case "$change" in
+        version) awk -F '\t' 'BEGIN { OFS="\t" } $1 == "quill" { $2="0.5.5" } { print }' "$pins" > "$selected_pins" ;;
+        digest|other-host)
+            changed_host=linux-x86_64
+            [[ "$change" != other-host ]] || changed_host=darwin-arm64
+            awk -F '\t' -v host="$changed_host" 'BEGIN { OFS="\t" } $1 == "quill" && $3 == host { $4=sprintf("%064d",0) } { print }' "$pins" > "$selected_pins" ;;
+        host) sed 's/linux-x86_64/linux-arm64/' "$pins" > "$selected_pins" ;;
+        duplicate) { cat "$pins"; head -n 1 "$pins"; } > "$selected_pins" ;;
+        malformed) { cat "$pins"; printf 'not a pin record\n'; } > "$selected_pins" ;;
+    esac
+    : > "$fixture/executions"
+    expect_failure install --check
+    case "$change" in host|duplicate|malformed) expect_failure install ;; esac
+    [[ ! -s "$fixture/executions" && "$(wc -l < "$fixture/downloads")" == "$before" &&
+       "$(readlink "$consumer/.tools/ic")" == "$original" ]]
+done
+# Retained pins are independently admitted, not merely stripped of comments.
+selected_pins="$pins"
+head -n 1 "$pins" >> "$consumer/.tools/ic/pins.tsv"
+: > "$fixture/executions"
+expect_failure install --check
+[[ ! -s "$fixture/executions" && "$(wc -l < "$fixture/downloads")" == "$before" ]]
+cp "$pins" "$consumer/.tools/ic/pins.tsv"
+
 # Wrong digests never execute downloaded content or replace the active bundle.
 selected_pins="$fixture/bad.tsv"
 awk -F '\t' 'BEGIN { OFS="\t" } $1 == "quill" && $3 == "linux-x86_64" { $4=sprintf("%064d",0) } { print }' "$pins" > "$selected_pins"
@@ -158,8 +208,8 @@ install > /dev/null 2>&1
 
 # Receipt traversal failure must not activate a candidate or lose its evidence.
 original="$(readlink "$consumer/.tools/ic")"
-cp "$pins" "$fixture/receipt-pins.tsv"
-printf '# force a new reviewed matrix identity\n' >> "$fixture/receipt-pins.tsv"
+# Change another host's record to require a new candidate with valid Linux assets.
+awk -F '\t' 'BEGIN { OFS="\t" } $1 == "quill" && $3 == "darwin-arm64" { $4=sprintf("%064d",0) } { print }' "$pins" > "$fixture/receipt-pins.tsv"
 selected_pins="$fixture/receipt-pins.tsv"
 cat > "$fixture/bin/find" <<'SCRIPT'
 #!/usr/bin/env bash

@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 on:
   push:
@@ -106,7 +106,6 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
     steps:
       # actions/checkout v6
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -220,7 +219,6 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
     steps:
       # actions/checkout v6
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
@@ -243,5 +241,13 @@ jobs:
         run: cargo fetch --locked
       - name: Run PocketIC ownership concurrency tests
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency -- --nocapture
+      - name: Provision and verify Testkit's selected server explicitly
+        shell: bash
+        run: |
+          cargo build -p ic-testkit --locked --offline --bin ic-testkit-server
+          target/debug/ic-testkit-server setup
+          target/debug/ic-testkit-server check
+      - name: Qualify provisioning and managed launch without consumer pins
+        run: cargo test -p ic-testkit --locked --offline --test server_runner provisioned_cli_runs_a_real_instance_without_consumer_server_selection -- --ignored --exact
       - name: Qualify real managed-server CLI execution
         run: cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact

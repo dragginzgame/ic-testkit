@@ -5,6 +5,12 @@
 //! [`compare_benchmark_aggregates`] plus [`write_benchmark_report_dir`]. Marker
 //! producers can use [`format_marker`] on the host or
 //! [`crate::performance::Performance`] in canister code.
+//!
+//! Totals and run counts remain exact integers. Averages and percentage changes
+//! are approximate `f64` projections: distinct integers above 2^53 can round to
+//! the same value and report a zero change. Use aggregate totals and run counts
+//! for exact comparisons. CSV averages retain this approximation; text reports
+//! additionally round displayed averages and percentages to whole numbers.
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -229,6 +235,8 @@ pub struct BenchmarkAggregateRow {
     scope: AggregateScope,
 }
 
+/// Approximate floating-point means of exact aggregate totals and run counts.
+/// Integer precision can be lost above 2^53; these values are for reporting.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BenchmarkAverages {
     pub instructions: f64,
@@ -286,6 +294,8 @@ impl std::fmt::Display for BenchmarkAggregateError {
 
 impl std::error::Error for BenchmarkAggregateError {}
 
+/// Percentage changes between approximate floating-point averages.
+/// A zero change does not establish equality of exact aggregate totals.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BenchmarkComparisonRow {
     pub span_label: String,
@@ -299,7 +309,7 @@ pub struct BenchmarkComparisonRow {
 }
 
 impl BenchmarkAggregateRow {
-    /// Averages derived from the current totals and run count.
+    /// Approximate `f64` averages derived from exact totals and run count.
     #[must_use]
     pub fn average(&self) -> BenchmarkAverages {
         averages(self.total, self.runs)
@@ -627,6 +637,8 @@ pub fn aggregate_benchmark_spans(
     })
 }
 
+/// Compare approximate averages; integer differences lost to rounding can
+/// produce a zero percentage change. Exact totals remain on the input rows.
 #[must_use]
 pub fn compare_benchmark_aggregates(
     current: &[BenchmarkAggregateRow],

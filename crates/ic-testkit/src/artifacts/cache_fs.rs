@@ -1,6 +1,6 @@
 use fs2::FileExt as _;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, File},
     io::{self, Read as _},
     path::{Path, PathBuf},
     sync::Arc,
@@ -347,19 +347,8 @@ pub(super) fn try_lock_cache_file(path: &Path) -> Result<Option<File>, CacheFsEr
 }
 
 fn open_cache_lock_file(path: &Path) -> Result<File, CacheFsError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| CacheFsError {
-            operation: "create cache lock directory",
-            path: parent.to_owned(),
-            source,
-        })?;
-    }
-    OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(path)
+    ic_host_fs::durable::open_regular_lock_file_with_parents(path)
+        .map_err(io::Error::from)
         .map_err(|source| CacheFsError {
             operation: "open cache lock",
             path: path.to_owned(),
@@ -703,6 +692,61 @@ mod tests {
         fs,
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_lock_admission_preserves_bytes_and_returns_an_unlocked_close_on_exec_file() {
+        use std::os::fd::AsRawFd as _;
+
+        let root = unique_temp_directory("cache-lock-admission");
+        let path = root.join("nested/lock");
+        let file = super::open_cache_lock_file(&path).unwrap();
+        assert!(super::try_lock_cache_file(&path).unwrap().is_some());
+        // SAFETY: inspect descriptor flags on the live file without changing them.
+        let flags = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETFD) };
+        assert!(flags >= 0);
+        assert_ne!(flags & libc::FD_CLOEXEC, 0);
+        drop(file);
+        fs::write(&path, b"retained lock bytes").unwrap();
+        drop(super::lock_cache_file(&path).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), b"retained lock bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_lock_callers_refuse_redirected_final_entries() {
+        use std::os::unix::fs::symlink;
+
+        let root = unique_temp_directory("cache-lock-redirected");
+        let target = root.join("target");
+        fs::write(&target, b"target bytes").unwrap();
+        let redirected = root.join("redirected");
+        symlink(&target, &redirected).unwrap();
+        for result in [
+            super::open_cache_lock_file(&redirected),
+            super::lock_cache_file(&redirected).map(|(file, _)| file),
+            super::lock_cache_file_with_wait_observer(
+                &redirected,
+                Duration::from_millis(5),
+                |_| panic!("redirected lock reached acquisition"),
+            )
+            .map(|(file, _)| file),
+        ] {
+            let error = result.unwrap_err();
+            assert_eq!(error.path, redirected);
+            assert!(matches!(
+                error.source.get_ref().and_then(|cause| cause
+                    .downcast_ref::<ic_host_fs::durable::RegularFileLockError>(
+                )),
+                Some(ic_host_fs::durable::RegularFileLockError::NotRegular)
+            ));
+        }
+        symlink(&target, root.join(super::RETENTION_LOCK_FILE)).unwrap();
+        assert!(super::RetainedCacheEntry::acquire(&root).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"target bytes");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

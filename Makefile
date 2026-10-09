@@ -40,7 +40,6 @@ help:
 	@echo "  install-tools   Explicitly install pinned jq/yq, ripgrep, cloc and IC executables"
 	@echo "  tools-check     Verify installed host and IC tools offline"
 	@echo "  cloc            Count this workspace's Rust code"
-	@echo "  cloc-tooling    Count tooling across sibling checkouts without running their commands"
 	@echo "  dependency-pins-check Check dependency declarations and tracked lockfiles offline"
 	@echo "  install-format-tools Install the pinned manifest formatter during setup"
 	@echo "  install-hooks   Enable the repository-local formatting hook"
