@@ -6,6 +6,23 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.28.0]
+
+### Breaking
+
+- Adopt IC Host 0.10's consolidated durable-write API through the public Host
+  re-exports. Update writer calls and publication-error handling using the
+  [migration guide](crates/ic-testkit/CHANGELOG.md#0280). Testkit write failures
+  preserve publication phase and cleanup evidence; retained cache formats and
+  installations require no reset.
+
+### Fixed
+
+- Adopt Shared Tooling 0.2.8 so Make admission uses the selected snapshot even
+  with an inherited tooling root and accepts recursive Make commands containing
+  extra arguments while still rejecting modes that skip or hide failures
+  ([shared #30](https://github.com/dragginzgame/shared-tooling/issues/30)).
+
 ## [0.27.2] - 2026-10-09
 
 ### Fixed

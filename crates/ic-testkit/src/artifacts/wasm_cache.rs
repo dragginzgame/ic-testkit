@@ -4973,7 +4973,7 @@ fn write_artifact_stamp(
         WasmBuildError::Io {
             operation: "publish Wasm build stamp",
             path: stamp_path,
-            source,
+            source: io::Error::other(source),
         }
     })
 }

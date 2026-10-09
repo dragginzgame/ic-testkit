@@ -769,7 +769,7 @@ impl ArtifactBuildTransaction {
         .map_err(|source| ArtifactCacheError::Io {
             operation: "write artifact cache manifest",
             path: self.staging_directory.join(MANIFEST_FILE),
-            source,
+            source: io::Error::other(source),
         })?;
         let namespace_lock_path = namespace_lock_path(&self.spec);
         let (_namespace_lock, namespace_wait) =

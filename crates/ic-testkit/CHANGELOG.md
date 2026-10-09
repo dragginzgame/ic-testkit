@@ -8,6 +8,42 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.28.0]
+
+### Breaking: IC Host 0.10 durable publication
+
+The public Host re-exports now select 0.10. Replace two-argument
+`ic_host_fs::durable::write_with(path, producer)` with
+`write_with(path, WriteOptions { mode: PublicationMode::Replace,
+permissions: 0o666 }, producer)`. Existing three-argument `write_typed_with`
+calls use the same options and producer with the name `write_with`.
+
+Byte writers now return `NamedWriteError<io::Error>` and regular lock-file
+creation can return `RegularFileLockError::Publication`. Match publication
+phase before deciding whether retry is safe: `Producer` and
+`BeforePublication` retain separate cleanup errors; `AfterPublication` means
+the new output is already visible and requires reconciliation. Preserve the
+whole error instead of extracting only its underlying I/O cause.
+
+Testkit's existing I/O error surfaces wrap the complete publication error
+with `io::Error::other`; downcast the contained error to
+`ic_host_fs::durable::NamedWriteError<io::Error>` to inspect its phase and
+cleanup evidence. Atomic-copy errors retain an additional path-context layer
+in their source chain. Write failure kinds are now `Other` at these publication
+boundaries; source-file open failures retain their native kind. The cache,
+stamp and provisioning formats, permissions and replacement/create-only policy
+are unchanged. No retained-data migration, reinstall or reset is required.
+
+No Testkit function, method or type was removed. The upstream writer removal
+is a Host API hard cut; Testkit adds no compatibility shim.
+
+### Fixed
+
+- Adopt Shared Tooling 0.2.8 so Make admission uses the selected snapshot even
+  with an inherited tooling root and accepts recursive Make commands containing
+  extra arguments while still rejecting modes that skip or hide failures
+  ([shared #30](https://github.com/dragginzgame/shared-tooling/issues/30)).
+
 ## [0.27.2] - 2026-10-09
 
 ### Fixed

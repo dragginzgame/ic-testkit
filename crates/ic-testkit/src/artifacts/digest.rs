@@ -484,9 +484,15 @@ fn hash_path(
 pub(super) fn copy_file_atomic(source: &Path, destination: &Path) -> io::Result<u64> {
     let result = (|| {
         let mut source_file = File::open(source)?;
-        ic_host_fs::durable::write_with(destination, |destination_file| {
-            io::copy(&mut source_file, destination_file)
-        })
+        ic_host_fs::durable::write_with(
+            destination,
+            ic_host_fs::durable::WriteOptions {
+                mode: ic_host_fs::durable::PublicationMode::Replace,
+                permissions: 0o666,
+            },
+            |destination_file| io::copy(&mut source_file, destination_file),
+        )
+        .map_err(io::Error::other)
     })();
     result.map_err(|source_error| {
         io::Error::new(
@@ -737,6 +743,40 @@ mod tests {
         assert!(message.contains(&missing.display().to_string()));
         assert!(message.contains(&destination.display().to_string()));
         fs::remove_dir_all(root).expect("remove streaming-digest test directory");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn atomic_copy_retains_publication_phase_and_original_output_on_failure() {
+        use ic_host_fs::durable::NamedWriteError;
+
+        let root = unique_temp_directory("atomic-copy-publication-errors");
+        let destination = root.join("destination");
+        fs::write(&destination, b"retained").unwrap();
+        // Opening a directory succeeds on Unix, but copying its bytes fails
+        // inside the producer after staging has started.
+        let error = copy_file_atomic(&root, &destination).unwrap_err();
+        let context = error
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<super::AtomicCopyErrorContext>()
+            .unwrap();
+        let publication = context
+            .source
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<NamedWriteError<std::io::Error>>()
+            .unwrap();
+        assert!(matches!(
+            publication,
+            NamedWriteError::Producer {
+                cleanup_error: None,
+                ..
+            }
+        ));
+        assert_eq!(fs::read(&destination).unwrap(), b"retained");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

@@ -1,5 +1,69 @@
 # Host support and qualification
 
+## IC Host 0.10 adoption for pending 0.28.0
+
+The maintainer-selected manifest and lockfile now use published IC Host 0.10.0,
+reviewed source `98562bea26a98993d93b80ed908bea4876c32a91`. The selected lock
+is preserved byte-for-byte (SHA-256
+`e635def66d8c809f068e23ea8cdbf61d2c4a78e64e37e176c4743ba6fb3572ba`).
+Uncommitted upstream 0.10.1 parent-sync changes are excluded. Public Host
+re-exports make this a breaking 0.28.0 batch; both changelogs carry the existing
+Shared 0.2.8 work forward, without changing Testkit's package version.
+
+Atomic copying uses the single explicit-options pathname writer with the
+previous replacement mode and permissions; provisioning uses the same writer
+with its previous create-only executable options. Cache tags, maintenance/use
+markers, transaction manifests and build/input stamps preserve complete Host
+publication errors inside their existing I/O boundaries. Producer and
+before-publication cleanup evidence is retained, as is the distinct visible
+after-publication state. No caller strips the error down to its source or adds
+an automatic retry. Formats stay v1; existing installations and cache bytes
+need no reset. No Testkit function, method or type was removed.
+
+Focused Linux qualification passes with explicitly prepared locked dependencies:
+11 digest/copy tests, 10 cache-filesystem tests, 28 transaction tests, 3 watched
+input stamp tests, 58 Wasm cache tests and 6 provisioning tests. New real-I/O
+regressions verify a producer read failure preserves the original destination
+and staging cleanup, and a refused cache-tag replacement retains its typed
+before-publication error. They do not inject actual failed cleanup or final
+sync syscalls; complete error retention for those phases follows the unchanged
+whole-error wrapping, separately from Host's owner fault tests.
+
+Library/CLI compilation, strict Clippy including test callers, actual Rust 1.88
+library/CLI compilation, fmt-check, snapshot and dependency pins pass. Logs use
+`/tmp/ic-testkit-0280-host-{cache,check,digest,cache-fs,transaction,icp,wasm,
+provisioning,clippy,msrv,tooling}.log`. This adopts no implicit Cargo deadline,
+quota or tool installation. No broad local gate, sibling edit, commit or
+release ran. Host 0.10.0 Linux/MSRV CI passes while its native macOS jobs are
+queued; this pending consumer source has no hosted native result of its own.
+
+## Shared Tooling 0.2.8 adoption for pending 0.27.3
+
+The existing 83-file selection now records committed Shared 0.2.8
+`b2646cde9abbc8861857a4379c683a0c19eba43e`, exported from a clean isolated
+checkout. Make admission resolves its probe beside the selected include and
+uses `MAKE_COMMAND` rather than treating recursive `MAKE` arguments as an
+executable path. Runtime release/formatting policy remains consumer-owned.
+
+Focused Linux checks pass: snapshot, dependency pins and non-mutating formatting;
+the exact upstream release and formatting fixtures under Bash 5 and genuine
+Bash 3.2; actual consumer release forwarding with an inherited nonexistent
+tooling root; 60 direct/inherited unsafe-mode cases on the copied consumer
+Makefile with no runner/formatter effects; and recursive parallel help using
+extra Makefiles, plus help with environment/command-line tooling roots.
+The latter help cases qualify parse-time admission, not runtime recipe-root
+selection. Logs are retained at `/tmp/ic-testkit-0273-{shared-export,checks,
+format,format-bash32,release,release-bash32,consumer-release,consumer-modes,
+consumer-recursive}.log`.
+
+The pre-existing maintainer-selected Host 0.9.5 lockfile is preserved (SHA-256
+`de9fe2beb8beb8ad22d0288ae001c39580ba4f3c0cd86d129b87d8705da6c390`).
+No Host compilation or runtime qualification is claimed by these Make checks.
+No function, method or type was removed. No tools were installed, sibling files
+edited, broad gates run, or release performed. Native macOS acceptance of this
+pending batch remains outstanding; the released 0.27.2 Linux CI result belongs
+to its earlier source, not these edits.
+
 Initial 0.27.2 hook qualification used committed Shared 0.2.5
 `04e07b4bf54e7aeb03eb7804a845cee27b7305df` through a clean isolated export;
 the 80-file selection is unchanged. Hook setup now preserves literal existing

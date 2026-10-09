@@ -296,7 +296,7 @@ pub(super) fn ensure_cache_directory_tag(cache_root: &Path) -> Result<(), CacheF
         CacheFsError {
             operation: "write cache directory tag",
             path,
-            source,
+            source: io::Error::other(source),
         }
     })
 }
@@ -406,7 +406,7 @@ pub(super) fn record_cache_maintenance(
     ic_host_fs::durable::write_bytes(&marker, contents.as_bytes()).map_err(|source| CacheFsError {
         operation: "record cache maintenance time",
         path: marker,
-        source,
+        source: io::Error::other(source),
     })
 }
 
@@ -462,7 +462,7 @@ fn write_system_time(
         |source| CacheFsError {
             operation,
             path: path.to_owned(),
-            source,
+            source: io::Error::other(source),
         },
     )
 }
@@ -928,6 +928,18 @@ mod tests {
         fs::remove_file(&tag).unwrap();
         fs::create_dir(&tag).unwrap();
         let error = super::ensure_cache_directory_tag(&root).unwrap_err();
+        assert!(matches!(
+            error
+                .source
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<ic_host_fs::durable::NamedWriteError<std::io::Error>>()
+                .unwrap(),
+            ic_host_fs::durable::NamedWriteError::BeforePublication {
+                cleanup_error: None,
+                ..
+            }
+        ));
         assert_eq!(error.operation, "write cache directory tag");
         assert!(tag.is_dir());
         fs::remove_dir_all(root).unwrap();

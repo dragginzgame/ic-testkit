@@ -252,7 +252,7 @@ fn install(
     File::open(&archive)?.sync_all()?;
     let digest = Sha256Digest::compute(&bytes);
     let executable = attempt.join("pocket-ic");
-    durable::write_typed_with(
+    durable::write_with(
         &executable,
         durable::WriteOptions {
             mode: durable::PublicationMode::CreateNew,

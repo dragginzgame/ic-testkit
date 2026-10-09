@@ -86,6 +86,8 @@ with matches on `error.failure()`; no compatibility entry points are retained.
 
 Host-only shared APIs are available through the complete `ic_host_artifacts`,
 `ic_host_fs`, `ic_host_process` and `ic_host_tools` re-exports under `ic_testkit`.
+These select IC Host 0.10; the [0.28 migration guide](CHANGELOG.md#0280)
+covers its consolidated durable writer and retained publication-error evidence.
 The [0.24 migration guide](CHANGELOG.md#0240) covers IC Host 0.7's execution
 failure categories and replacing `artifacts::read_wasm` with
 `ic_host_fs::read::read_file` on an `artifacts::wasm_path`. The

@@ -164,7 +164,14 @@ The include preserves the default goal and supplies `release-resume VERSION=X.Y.
 Its adjacent `make/execution.mk` companion rejects Make ignore-errors and
 non-executing modes before recipes run, using the existing execution probe.
 Keep both the Make companion and `scripts/ci/check-make-execution.sh` selected.
-Set `SHARED_TOOLING_ROOT` before including it for a nested reviewed snapshot.
+Admission resolves its probe relative to the selected include, independently of
+`SHARED_TOOLING_ROOT`; a missing companion refuses without consulting another
+snapshot. It probes the running GNU Make executable (`MAKE_COMMAND`), preserving
+the invocation's execution flags. A consumer's recursive `MAKE` command may carry
+arguments such as `-f Makefile -f overrides.mk`; those files and arguments never
+enter the isolated admission probe. Recursive invocations qualify their own modes.
+Set `SHARED_TOOLING_ROOT` for runtime runner routing to a nested reviewed snapshot;
+consumer target-specific overrides still apply to recipes.
 Keep delivery admission and metadata adapters local. Attach existing admission
 prerequisites to the four entrypoints and export cache-preparation selections
 with target-specific variables; do not replace the shared recipes. For example:

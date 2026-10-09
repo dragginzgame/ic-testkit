@@ -79,6 +79,7 @@ impl WatchedInputSnapshot {
             &watched_input_stamp_path(artifact_path),
             self.stamp_contents().as_bytes(),
         )
+        .map_err(io::Error::other)
     }
 
     fn stamp_contents(self) -> String {

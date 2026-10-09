@@ -5,7 +5,10 @@ override _shared_make_execution_checked := yes
 # $(shell) does not reliably export this invocation's computed Make flags.
 # Pass them explicitly, shell-quoted, to the existing behavioral probe. Its
 # isolated Makefile never loads consumer recipes. Keep real caller flags intact.
-ifneq ($(shell MAKEFLAGS='$(subst ','"'"',$(MAKEFLAGS))' MFLAGS='$(subst ','"'"',$(MFLAGS))' MAKEOVERRIDES= GNUMAKEFLAGS= bash '$(subst ','"'"',$(SHARED_TOOLING_ROOT))/scripts/ci/check-make-execution.sh' '$(subst ','"'"',$(MAKE))' >/dev/null 2>&1 && printf admitted),admitted)
+# Resolve the probe beside this selected include, before target-specific runtime
+# roots apply. MAKE_COMMAND identifies this Make executable; MAKE may instead
+# carry recursive arguments/Makefiles, which must never enter the isolated probe.
+ifneq ($(shell MAKEFLAGS='$(subst ','"'"',$(MAKEFLAGS))' MFLAGS='$(subst ','"'"',$(MFLAGS))' MAKEOVERRIDES= GNUMAKEFLAGS= bash '$(subst ','"'"',$(dir $(lastword $(MAKEFILE_LIST)))../scripts/ci/check-make-execution.sh)' '$(subst ','"'"',$(MAKE_COMMAND))' >/dev/null 2>&1 && printf admitted),admitted)
 $(error Shared tooling requires Make recipe execution and failure propagation; remove ignore-errors, dry-run, touch and question modes)
 endif
 endif
