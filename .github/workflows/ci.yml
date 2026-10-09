@@ -72,10 +72,11 @@ jobs:
       - name: Prepare pinned local host and IC tools
         shell: bash
         run: |
-          make install-tools 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
+          make install-tools install-server 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
           echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
           echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
-          echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
+          server="$(target/debug/ic-testkit-server check)"
+          echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Prepare selected dependencies
         run: cargo fetch --locked
       - name: Run complete CI gate
@@ -124,10 +125,11 @@ jobs:
       - name: Prepare pinned local host and IC tools with the system Bash
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         run: |
-          make install-tools 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
+          make install-tools install-server 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
           echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
           echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
-          echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
+          server="$(target/debug/ic-testkit-server check)"
+          echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Select system Bash on macOS
         if: runner.os == 'macOS'
         run: echo /bin >> "$GITHUB_PATH"
@@ -234,19 +236,14 @@ jobs:
       - name: Prepare pinned local host and IC tools
         shell: bash
         run: |
-          make install-tools
+          make install-tools install-server
           make tools-check
-          echo "POCKET_IC_BIN=$GITHUB_WORKSPACE/.tools/ic/bin/pocket-ic" >> "$GITHUB_ENV"
+          server="$(target/debug/ic-testkit-server check)"
+          echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Prepare selected dependencies
         run: cargo fetch --locked
       - name: Run PocketIC ownership concurrency tests
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency -- --nocapture
-      - name: Provision and verify Testkit's selected server explicitly
-        shell: bash
-        run: |
-          cargo build -p ic-testkit --locked --offline --bin ic-testkit-server
-          target/debug/ic-testkit-server setup
-          target/debug/ic-testkit-server check
       - name: Qualify provisioning and managed launch without consumer pins
         run: cargo test -p ic-testkit --locked --offline --test server_runner provisioned_cli_runs_a_real_instance_without_consumer_server_selection -- --ignored --exact
       - name: Qualify real managed-server CLI execution

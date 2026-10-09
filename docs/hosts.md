@@ -81,7 +81,8 @@ documentation guard for that revision, including Intel macOS. It precedes the
 - A SHA-256 implementation: Linux `sha256sum` or macOS `shasum -a 256`.
 - Rustup with the repository's pinned toolchain, `rustfmt`, `clippy`, and the
   `wasm32-unknown-unknown` target. Published MSRV checks use Rust 1.88.
-- `cargo-sort` 2.1.4, prepared explicitly with `make install-format-tools`, for
+- `cargo-sort` 2.1.4, prepared explicitly under `.tools/rust/bin` with
+  `make install-format-tools` (the shared pinned Rust tool bundle), for
   hooks, manifest sorting, and independent CI/release formatting checks.
   Hook setup and formatting checks also require an already prepared `rustfmt`
   component; use `rustup component add rustfmt` during explicit setup.
@@ -96,7 +97,9 @@ documentation guard for that revision, including Intel macOS. It precedes the
 - Perl for the prepared standalone cloc payload and read-only sibling tooling
   report; core modules supply the report's JSON and digest support.
 - Live PocketIC tests require a compatible native PocketIC 16 binary. Set
-  `POCKET_IC_BIN` to its exact local path to avoid upstream automatic download.
+  `POCKET_IC_BIN` to the path returned by Testkit's offline check to avoid
+  upstream automatic download. Explicit `make install-server` prepares the
+  owner CLI and bundle; `make server-check` only verifies them.
   Managed startup takes an explicit caller-provided binary and owns its child.
 - The opt-in fixture-reuse benchmark requires the repository's probe canister,
   prepared Cargo caches, and `uname`. Its Linux RSS sampler reads native `/proc`;
@@ -189,7 +192,8 @@ CDPATH="$PWD" /bin/bash scripts/ci/test-release-runner.sh
 /bin/bash scripts/ci/check-publish-guards.sh
 cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
 cargo test -p ic-testkit --locked --offline --test server_runner
-POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic" cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
+server="$(target/debug/ic-testkit-server check)" || exit
+POCKET_IC_BIN="$server" cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
 cargo test -p ic-testkit --locked --offline --lib artifacts::host_tests
 cargo test -p ic-testkit --locked --offline --test artifact_helpers
 cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
@@ -2134,3 +2138,143 @@ export evidence is `/tmp/ic-testkit-0255-shared-0135-export.log`. No tools were
 installed, product dependencies upgraded or functions/types removed. Upstream
 0.1.35 CI run 37904190217 was queued when inspected; native acceptance remains
 separate from these local Linux checks.
+
+### Pending 0.25.6 streaming bundle checks
+
+The maintainer explicitly authorized this scoped sibling edit from Host Tooling.
+On Testkit base `311c39b9a7f9cc04fec050797c3324842e338328`, bundle checks now
+authenticate the bounded compressed archive and use Host `hash_gzip` to derive
+the executable identity without retaining its decoded payload. Installation and
+checks share one archive-authentication helper; installation still decodes bytes
+for publication. Existing limits, gzip integrity, executable admission and bundle
+policy remain unchanged. No public contract, function or type was removed.
+The compatible pending version is 0.25.6; package metadata is unchanged.
+
+Focused locked/offline Linux checks pass: six provisioning tests, strict CLI
+Clippy, binary build, selected formatting and documentation links. New regression
+coverage proves authentication precedes decoding and rejects malformed,
+truncated, CRC/length-invalid, trailing-data and concatenated-member archives
+before executable admission. The freshly built CLI also checks the existing
+official Linux 16.1.0 bundle with `PATH=/nonexistent`. Test downloads are
+substituted; that final check uses the actual retained official archive/binary.
+No installer, network download, full gate or managed-server launch was run.
+
+The pre-existing dirty lock selects Host 0.8.9 and is byte-for-byte preserved
+(SHA-256 `72c100b25547b7b307244ba93f89989b27fc83740ea935969d4163434195631c`).
+The tested provisioning source digest is
+`cd2286b3808ed0c836d278f7463388d04b53e058d1c153239fd2d08522414491`.
+Logs are retained under `/tmp/testkit-gzip-0256/`. This establishes Linux behavior,
+not a measured RSS/throughput improvement or native macOS qualification.
+Delivery and the wider ownership handoff remain in
+[#38](https://github.com/dragginzgame/ic-testkit/issues/38). No commit or release ran.
+
+### Pending 0.25.6 Cargo communication convergence
+
+For [#36](https://github.com/dragginzgame/ic-testkit/issues/36), observed and
+silent Cargo builds now use Host's communication engine. Observed builds retain
+their owned compiler group; leader completion can trigger descendant cleanup
+before inherited output pipes reach EOF. Silent builds retain inherited
+foreground group membership and noninteractive stdin through `spawn_direct`.
+Testkit still owns event projection, heartbeat cadence and failure rendering.
+Typed communication failures retain Host output and cleanup evidence and are
+classified as Cargo-build failures.
+
+The process dependency minimum is 0.8.8, using the already selected Host 0.8.9
+lockfile without resolving dependencies. Retained stream limits remain
+`usize::MAX` and the deadline is `None`; no compilation time limit or practical
+output quota was added. Package metadata and retained formats are unchanged.
+
+Five focused Linux fixtures pass: descendant-held pipes, concurrent raw-byte
+streams, quiet heartbeats/live output, observer-panic cleanup and failure
+diagnostics with observed output enabled/disabled and silent execution. The
+descendant fixture gates pipe closure on a release file and requires completion
+before releasing it; its watchdog is not a timing benchmark. Strict selected
+Clippy and actual Rust 1.88 library/CLI checks pass. Logs are
+`/tmp/ic-testkit-0256-{cargo-final,clippy-complete,msrv-final}.log`.
+Six provisioning fixtures and a freshly built offline check of the official
+Linux bundle also pass (`provision.log`, `provision-real.log` under the same
+prefix). Native macOS consumer results and delivery remain outstanding; no
+full gate, source commit, release or long production Cargo build was run.
+
+The removed private communication implementation is replaced by Host and
+`communicate_cargo_build`: `run_observed_cargo_build`,
+`capture_observed_cargo_output`, `read_process_output`, `join_output_reader`,
+`CapturedProcessOutput` and `ProcessOutputChunk` in `artifacts/wasm_cache.rs`.
+Their implementation-specific reader tests were removed from
+`artifacts/wasm_cache/tests.rs`: `InterruptedReader`, `InterruptedReader::read`,
+`FailedReader`, `FailedReader::read`,
+`observed_output_reader_retries_interrupted_reads_without_losing_bytes`,
+`observed_output_drains_both_streams_through_a_bounded_queue`,
+`observed_output_reader_stops_when_the_consumer_disconnects` and
+`observed_output_reader_propagates_permanent_errors`. Host owns those reader
+contracts; the consumer fixtures above verify real process/event boundaries.
+
+### Pending 0.25.6 checkout-local formatter adoption
+
+For [#41](https://github.com/dragginzgame/ic-testkit/issues/41), reviewed Shared
+Tooling 0.1.38 `926a20606591214ab29faa236b0b584e4857439e` was exported from a
+clean isolated checkout. All 80 selected files verify. This includes the
+original-checkout tool PATH correction and stricter single-document JSON
+admission in shared installers and the dependency checker. No vendored bytes
+were patched locally.
+
+`make install-format-tools` now delegates to the existing shared Rust bundle
+installer, preparing the three already-pinned tools under `.tools/rust/bin`.
+The global cargo-sort installation recipe is removed. Actual explicit registry
+installation and offline `rust-tools-check` pass. The initial sandbox DNS
+failure is retained in `/tmp/ic-testkit-0256-format-install.log`; the authorized
+network-enabled retry succeeded (`format-install-network.log` at the same
+prefix). Formatting and hooks never install tools. Existing local hook
+activation remains `.githooks`; snapshot adoption did not change Git settings.
+
+Focused Linux checks pass: actual formatting/hook preservation with no checkout
+tool directories inherited in PATH, a trace proving the local formatter was
+used, missing/wrong selected-version refusal before formatting, partial staging,
+unrelated edits, lockfile preservation and installer conflict refusal. These
+consumer fixtures and substitute-Cargo installer fixtures also pass with genuine
+Bash 3.2.57 and inherited CDPATH. Shared hook and dependency admission fixtures,
+ShellCheck, offline formatting, pins, tool and snapshot checks pass. Logs use
+`/tmp/ic-testkit-0256-{formatter-local,hooks-bash32,rust-tools-0138,rust-tools-bash32,pins-0138,canonical-hook,hook-shellcheck}.log`.
+
+Upstream 0.1.37 run 37909074809 has passing Linux/lint jobs but queued native
+macOS Intel/ARM jobs when inspected. The maintainer requested local adoption
+despite that outstanding acceptance; Linux Bash 3.2 is not native macOS
+qualification. Configured consumer portable CI exercises these same fixtures on
+both macOS architectures after delivery. No package version, product source,
+dependency selection, function or type changed in this formatter batch. Full
+gates, commits and release effects remain maintainer-owned.
+
+### Pending 0.26.0 PocketIC ownership hard cut
+
+Shared 0.2.0 `8140e3dd1b44409d682c721889ab702f438c6a17` is now the reviewed
+80-file snapshot. Its documented handoff records passing three-host published
+Testkit 0.25.4 provisioning acceptance (run 37901828971); that evidence is not
+relabeled as qualification of these uncommitted consumer changes.
+
+The shared matrix and installer now own five generic IC tools, without PocketIC.
+The old Make server-path default and all three CI shared-server exports are
+removed. Explicit `make install-server` builds the local CLI and invokes its
+setup; `make server-check` performs offline admission. Make test targets and CI
+use the admitted check-returned path. A missing/invalid owner installation
+refuses before Cargo tests rather than requesting an implicit download. CI
+prepares the owner before any live tests; the later duplicate setup step is
+removed. No fallback installer, server catalog, format reader or compatibility
+bridge was added. This changes maintained setup/test selection, so the complete
+pending batch is 0.26.0; manifest versions remain maintainer-owned.
+
+Explicit Linux setup activated `.tools/ic-set.xJTbQZ` with the five-tool pins.
+Previous `.tools/ic-set.*` directories, pin receipts and failed evidence remain
+intact. The installer publishes a separately admitted bundle rather than
+reinterpreting the old receipt. The retained Testkit PocketIC bundle is unchanged.
+Fresh CLI compilation, explicit owner setup/reuse, offline owner/shared checks,
+six provisioning fixtures, actual managed launch and application-instance
+creation without external server selection all pass. Shared installer fixtures
+pass with Bash 5 and genuine Bash 3.2/CDPATH; formatting, snapshot, declaration
+pins, hook preservation and actionlint pass. Logs use
+`/tmp/ic-testkit-0260-{cache,cli-build,owner-setup,server-check,ic-install,provisioning,real-runner,ic-fixtures,ic-bash32,tooling,actionlint}.log`.
+
+No functions, methods or types were removed in this hard-cut slice; the retired
+Shared PocketIC checker files were not selected in this consumer snapshot.
+No broad gate, commit, publication or sibling source edit ran. Native consumer
+CI must qualify this exact adoption after delivery. Remaining downstream
+coordination stays in Testkit #38 and Shared #76, rather than another local list.

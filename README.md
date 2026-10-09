@@ -398,11 +398,12 @@ occurs. The caller must control the physical root and exclude untrusted namespac
 writers. Parent traversal and symlinked directory components are refused. Checks
 create no installation files; the version probe executes authenticated bytes.
 
-The current shared setup still installs its PocketIC row until the coordinated
-[Shared handoff](https://github.com/dragginzgame/shared-tooling/issues/76) is
-published. Existing shared bundles are preserved; consumer snapshots must not be
-patched to remove that row. The new published CLI is the replacement boundary
-tracked in [#38](https://github.com/dragginzgame/ic-testkit/issues/38).
+Shared Tooling 0.2.0 prepares five generic IC tools; PocketIC is provisioned
+only by Testkit. Run `make install-tools install-server` during explicit setup
+and `make tools-check server-check` for offline verification. Existing shared
+bundles, receipts and failed attempts remain intact; rerun `make install-ic-tools`
+to activate the new five-tool selection. The ownership handoff is tracked in
+[#38](https://github.com/dragginzgame/ic-testkit/issues/38).
 
 The runner exports `IC_TESTKIT_POCKET_IC_URL` to the command, retains the managed
 server until completion, inherits terminal IO and preserves the command's exit
@@ -1689,25 +1690,28 @@ rustup target add wasm32-unknown-unknown
 ```
 
 Developer setup and updates prepare `rustfmt` for the selected toolchain,
-the pinned `cargo-sort` executable, and the reviewed repository-local hook:
+the pinned checkout-local Rust tool bundle, and the reviewed repository-local hook:
 
 ```bash
 rustup component add rustfmt
-make install-tools
+make install-tools install-server
 make install-format-tools install-hooks
-make tools-check dependency-pins-check
+make tools-check rust-tools-check server-check dependency-pins-check
 ```
 
 The selected versions are recorded in `ci/tool-versions.env` and `ci/ic-tools.tsv`
 and used by CI too. `make install-tools` prepares pinned jq/yq, ripgrep with
 PCRE2, cloc and the common
-IC executables under `.tools/host/bin` and `.tools/ic/bin`. Make selects those
-directories and the local PocketIC server; direct Cargo commands should export
-them explicitly:
+IC executables under `.tools/host/bin` and `.tools/ic/bin`.
+`make install-format-tools` delegates to the shared Rust installer, preparing
+`cargo-sort`, `cargo-sort-derives` and `candid-extractor` under `.tools/rust/bin`.
+Make and the formatting hook select these local tool directories; direct Cargo
+commands should export them explicitly:
 
 ```bash
 export PATH="$PWD/.tools/host/bin:$PWD/.tools/ic/bin:$PWD/.tools/rust/bin:$PATH"
-export POCKET_IC_BIN="$PWD/.tools/ic/bin/pocket-ic"
+server="$(target/debug/ic-testkit-server check)" || exit
+export POCKET_IC_BIN="$server"
 ```
 
 See [bootstrap prerequisites](docs/local-setup.md#bootstrap-prerequisites) and

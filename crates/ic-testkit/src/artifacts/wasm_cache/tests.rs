@@ -26,7 +26,7 @@ use crate::artifacts::{
 use std::{
     collections::BTreeSet,
     ffi::OsString,
-    fs, io,
+    fs,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -1562,131 +1562,88 @@ done
 }
 
 #[test]
-fn observed_output_reader_retries_interrupted_reads_without_losing_bytes() {
-    struct InterruptedReader {
-        contents: &'static [u8],
-        attempts: usize,
-    }
-
-    impl io::Read for InterruptedReader {
-        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-            self.attempts += 1;
-            if matches!(self.attempts, 1 | 3) {
-                return Err(io::ErrorKind::Interrupted.into());
+#[cfg(unix)]
+fn observed_cargo_parallel_streams_preserve_raw_bytes() {
+    let root = unique_temp_directory("cargo-parallel-streams");
+    let stdout = (0_u8..=255).cycle().take(256 * 1024).collect::<Vec<_>>();
+    let stderr = b"diagnostic\0\xff\n".repeat(32 * 1024);
+    fs::write(root.join("stdout"), &stdout).unwrap();
+    fs::write(root.join("stderr"), &stderr).unwrap();
+    fs::write(
+        root.join("build"),
+        "set -eu\ncat stdout &\ncat stderr >&2 &\nwait\n",
+    )
+    .unwrap();
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program("/bin/sh");
+    let mut forwarded_stdout = Vec::new();
+    let mut forwarded_stderr = Vec::new();
+    let mut observer = |event| {
+        if let WasmBuildProgressEvent::CargoOutput { stream, bytes } = event {
+            match stream {
+                WasmBuildOutputStream::Stdout => forwarded_stdout.extend(bytes),
+                WasmBuildOutputStream::Stderr => forwarded_stderr.extend(bytes),
             }
-            let limit = buffer.len().min(3);
-            self.contents.read(&mut buffer[..limit])
         }
-    }
-
-    let reader = InterruptedReader {
-        contents: b"failure-stdout",
-        attempts: 0,
     };
-    let (sender, chunks) = mpsc::sync_channel(8);
-    super::read_process_output(reader, WasmBuildOutputStream::Stdout, sender)
-        .expect("interrupted output reads must retry");
-    let captured = super::capture_observed_cargo_output(
-        chunks,
-        &mut ProgressReporter::silent(),
-        std::time::Instant::now(),
+    let mut progress = ProgressReporter::observed(
+        WasmBuildProgressConfig::new()
+            .without_heartbeats()
+            .with_cargo_output(true),
+        &mut observer,
     );
-    assert_eq!(captured.stdout, b"failure-stdout");
-    assert_eq!(captured.stderr, [] as [u8; 0]);
+    run_cargo_build(&spec, &root.join("cargo-target"), &mut progress).unwrap();
+    assert_eq!(forwarded_stdout, stdout);
+    assert_eq!(forwarded_stderr, stderr);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn observed_output_drains_both_streams_through_a_bounded_queue() {
-    let stdout = (0_u8..=255).cycle().take(128 * 1024).collect::<Vec<_>>();
-    let stderr = b"diagnostic\0\xff\n".repeat(16 * 1024);
-    for emit in [true, false] {
-        let mut forwarded_stdout = Vec::new();
-        let mut forwarded_stderr = Vec::new();
-        let captured = thread::scope(|scope| {
-            let (sender, chunks) = mpsc::sync_channel(1);
-            let stdout_sender = sender.clone();
-            let stdout_reader = scope.spawn(|| {
-                super::read_process_output(
-                    stdout.as_slice(),
-                    WasmBuildOutputStream::Stdout,
-                    stdout_sender,
-                )
-            });
-            let stderr_reader = scope.spawn(|| {
-                super::read_process_output(stderr.as_slice(), WasmBuildOutputStream::Stderr, sender)
-            });
+#[cfg(unix)]
+fn observed_cargo_leader_exit_cleans_descendant_held_pipes_without_eof() {
+    let root = unique_temp_directory("cargo-descendant-pipes");
+    let release = root.join("release");
+    fs::write(root.join("build"),
+        "set -eu\n/bin/sh -c 'while [ ! -f release ]; do sleep 0.01; done' &\nprintf leader-exited\nexit 0\n").unwrap();
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program("/bin/sh");
+    let (done, completion) = mpsc::channel();
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut output = Vec::new();
             let mut observer = |event| {
-                if let WasmBuildProgressEvent::CargoOutput { stream, bytes } = event {
-                    match stream {
-                        WasmBuildOutputStream::Stdout => forwarded_stdout.extend(bytes),
-                        WasmBuildOutputStream::Stderr => forwarded_stderr.extend(bytes),
-                    }
+                if let WasmBuildProgressEvent::CargoOutput {
+                    stream: WasmBuildOutputStream::Stdout,
+                    bytes,
+                } = event
+                {
+                    output.extend(bytes);
                 }
             };
             let mut progress = ProgressReporter::observed(
                 WasmBuildProgressConfig::new()
                     .without_heartbeats()
-                    .with_cargo_output(emit),
+                    .with_cargo_output(true),
                 &mut observer,
             );
-            let captured = super::capture_observed_cargo_output(
-                chunks,
-                &mut progress,
-                std::time::Instant::now(),
-            );
-            stdout_reader.join().unwrap().unwrap();
-            stderr_reader.join().unwrap().unwrap();
-            captured
+            run_cargo_build(&spec, &root.join("cargo-target"), &mut progress).unwrap();
+            assert_eq!(output, b"leader-exited");
+            done.send(()).unwrap();
         });
-        assert_eq!(captured.stdout, stdout);
-        assert_eq!(captured.stderr, stderr);
-        assert_eq!(
-            forwarded_stdout.as_slice(),
-            if emit { stdout.as_slice() } else { &[] }
-        );
-        assert_eq!(
-            forwarded_stderr.as_slice(),
-            if emit { stderr.as_slice() } else { &[] }
-        );
-    }
-}
-
-#[test]
-fn observed_output_reader_stops_when_the_consumer_disconnects() {
-    let (sender, chunks) = mpsc::sync_channel(1);
-    let worker = thread::spawn(move || {
-        let mut reader = std::io::Cursor::new(vec![0; 128 * 1024]);
-        super::read_process_output(&mut reader, WasmBuildOutputStream::Stdout, sender)
-            .expect("disconnected consumers release output readers");
-        reader
+        let completed = completion.recv_timeout(Duration::from_secs(5));
+        // Release inherited pipe writers even if the old EOF-first behavior
+        // regresses, allowing the scoped worker to finish before refusal.
+        fs::write(&release, b"release").unwrap();
+        completed.expect("leader cleanup must complete before descendant pipe EOF");
     });
-    chunks.recv().expect("receive output before disconnecting");
-    drop(chunks);
-    let reader = worker.join().expect("join disconnected output reader");
-    assert!(reader.position() < reader.get_ref().len() as u64);
-}
-
-#[test]
-fn observed_output_reader_propagates_permanent_errors() {
-    struct FailedReader;
-
-    impl io::Read for FailedReader {
-        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
-            Err(io::ErrorKind::PermissionDenied.into())
-        }
-    }
-
-    let (sender, _chunks) = mpsc::sync_channel(8);
-    let error = super::read_process_output(FailedReader, WasmBuildOutputStream::Stderr, sender)
-        .expect_err("permanent output errors must propagate");
-    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 #[cfg(unix)]
 fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     let root = unique_temp_directory("observed-cargo-failure");
-    // Each stream exceeds both the pipe buffer and the forwarding queue.
+    // Each stream exceeds the pipe buffer and Host communication chunks.
     let expected_stdout = "failure-stdout".repeat(16 * 1024);
     let expected_stderr = "failure-stderr".repeat(16 * 1024);
     fs::write(root.join("stdout"), &expected_stdout).unwrap();
@@ -1699,16 +1656,19 @@ fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
     .expect("write failing observed Cargo fixture");
     let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
         .with_cargo_program("/bin/sh");
-    for emit in [true, false] {
+    for emit in [Some(true), Some(false), None] {
         let mut events = Vec::new();
         let error = {
             let mut observer = |event| events.push(event);
-            let mut progress = ProgressReporter::observed(
-                WasmBuildProgressConfig::new()
-                    .without_heartbeats()
-                    .with_cargo_output(emit),
-                &mut observer,
-            );
+            let mut progress = match emit {
+                Some(emit) => ProgressReporter::observed(
+                    WasmBuildProgressConfig::new()
+                        .without_heartbeats()
+                        .with_cargo_output(emit),
+                    &mut observer,
+                ),
+                None => ProgressReporter::silent(),
+            };
 
             run_cargo_build(&spec, &root.join("cargo-target"), &mut progress)
                 .expect_err("Cargo fixture must fail")
@@ -1728,19 +1688,22 @@ fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
             ),
             "unexpected Cargo fixture failure: {error:?}"
         );
-        assert!(events.iter().any(|event| matches!(
-            event,
-            WasmBuildProgressEvent::CargoFinished {
-                success: false,
-                code: Some(23),
-                ..
-            }
-        )));
+        assert_eq!(
+            events.iter().any(|event| matches!(
+                event,
+                WasmBuildProgressEvent::CargoFinished {
+                    success: false,
+                    code: Some(23),
+                    ..
+                }
+            )),
+            emit.is_some()
+        );
         assert_eq!(
             events
                 .iter()
                 .any(|event| matches!(event, WasmBuildProgressEvent::CargoOutput { .. })),
-            emit,
+            emit == Some(true),
         );
     }
     fs::remove_dir_all(root).expect("remove failing observed Cargo fixture");

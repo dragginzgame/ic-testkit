@@ -12,12 +12,19 @@
 REPO_ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 IC_TOOL_PINS ?= $(REPO_ROOT)ci/ic-tools.tsv
 HOST_TOOL_VERSIONS ?= $(REPO_ROOT)ci/tool-versions.env
-export POCKET_IC_BIN ?= $(REPO_ROOT).tools/ic/bin/pocket-ic
 
 SHARED_TOOLING_ROOT := $(REPO_ROOT)
 include $(REPO_ROOT)make/tools.mk
 
 .PHONY: dependency-pins-check
+.PHONY: install-server server-check
+
+install-server:
+	cargo build -p ic-testkit --locked --bin ic-testkit-server
+	target/debug/ic-testkit-server setup
+
+server-check:
+	target/debug/ic-testkit-server check
 
 MSRV ?= 1.88.0
 .DEFAULT_GOAL := help
@@ -38,10 +45,12 @@ help:
 	@echo "Available commands:"
 	@echo ""
 	@echo "  install-tools   Explicitly install pinned jq/yq, ripgrep, cloc and IC executables"
+	@echo "  install-server  Build the owner CLI and explicitly prepare PocketIC"
+	@echo "  server-check    Verify the prepared PocketIC bundle offline"
 	@echo "  tools-check     Verify installed host and IC tools offline"
 	@echo "  cloc            Count this workspace's Rust code"
 	@echo "  dependency-pins-check Check dependency declarations and tracked lockfiles offline"
-	@echo "  install-format-tools Install the pinned manifest formatter during setup"
+	@echo "  install-format-tools Install the pinned checkout-local Rust tool bundle"
 	@echo "  install-hooks   Enable the repository-local formatting hook"
 	@echo "  fmt             Sort Cargo manifests and format all workspace Rust code"
 	@echo "  fmt-check       Check manifest sorting and Rust formatting without mutation"
@@ -80,22 +89,22 @@ tags:
 	@git tag --sort=-version:refname | head -10
 
 test:
-	cargo test -p ic-testkit --locked
-	cargo test -p ic-testkit --locked --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
+	@server="$$(target/debug/ic-testkit-server check)" || exit $$?; \
+		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked && \
+		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
 
 build-test-canisters:
 	CARGO_TARGET_DIR=target/pic-wasm cargo build --locked --target wasm32-unknown-unknown -p ic_testkit_perf_probe
 
 test-canisters:
-	cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
+	@server="$$(target/debug/ic-testkit-server check)" || exit $$?; \
+		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
 
 format-tools-check:
 	@. "$(REPO_ROOT)ci/tool-versions.env" && \
 		bash scripts/ci/check-format-tools.sh "$$SHARED_TOOLING_CARGO_SORT_VERSION"
 
-install-format-tools:
-	@. "$(REPO_ROOT)ci/tool-versions.env"; \
-		cargo install cargo-sort --version "$$SHARED_TOOLING_CARGO_SORT_VERSION" --locked
+install-format-tools: install-rust-tools
 
 dependency-pins-check:
 	bash scripts/ci/check-dependency-pins.sh --cargo-inheritance

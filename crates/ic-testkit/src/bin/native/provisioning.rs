@@ -1,7 +1,7 @@
 //! Explicit, release-bound provisioning. Checks and launches never download.
 
 use ic_testkit::{
-    ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, verify_reader},
+    ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, hash_gzip, verify_reader},
     ic_host_fs::{
         durable,
         read::{hash_file_no_follow, read_file_no_follow},
@@ -93,9 +93,14 @@ fn bundle_path(root: &Path, asset: &Asset) -> PathBuf {
     root.join(format!("{}-{}", POCKET_IC_SERVER_VERSION, asset.host))
 }
 
-fn payload(archive: &Path, digest: Sha256Digest) -> Result<Vec<u8>> {
+fn authenticated_archive(archive: &Path, digest: Sha256Digest) -> Result<Vec<u8>> {
     let bytes = read_file_no_follow(archive, ARCHIVE_LIMIT)?;
     verify_reader(bytes.as_slice(), ARCHIVE_LIMIT as u64, digest)?;
+    Ok(bytes)
+}
+
+fn payload(archive: &Path, digest: Sha256Digest) -> Result<Vec<u8>> {
+    let bytes = authenticated_archive(archive, digest)?;
     Ok(decode_gzip(&bytes, ARCHIVE_LIMIT, EXECUTABLE_LIMIT)?)
 }
 
@@ -131,8 +136,8 @@ fn check_bundle(bundle: &Path, asset: &Asset) -> Result<PathBuf> {
     if !fs::symlink_metadata(bundle)?.is_dir() || fs::symlink_metadata(bundle)?.is_symlink() {
         return Err("PocketIC bundle must be a physical directory".into());
     }
-    let bytes = payload(&bundle.join("archive.gz"), asset.digest)?;
-    let digest = Sha256Digest::compute(&bytes);
+    let bytes = authenticated_archive(&bundle.join("archive.gz"), asset.digest)?;
+    let digest = hash_gzip(&bytes, ARCHIVE_LIMIT, EXECUTABLE_LIMIT as u64)?.sha256;
     drop(bytes);
     let executable = bundle.join("pocket-ic");
     admit(&executable, digest)?;
@@ -350,6 +355,56 @@ mod tests {
         fs::rename(&executable, &saved).unwrap();
         symlink(&saved, &executable).unwrap();
         assert!(check_bundle(&bundle_path(&root.0, &asset), &asset).is_err());
+    }
+
+    #[test]
+    fn offline_check_authenticates_before_decoding_and_rejects_invalid_gzip() {
+        use ic_testkit::ic_host_artifacts::artifact::{ArtifactError, GzipError};
+
+        let root = Fixture::new();
+        let (mut asset, original) = archive(POCKET_IC_SERVER_VERSION);
+        let executable = setup_with(&root.0, &asset, |path| {
+            fs::write(path, &original)?;
+            Ok(())
+        })
+        .unwrap();
+        let installed = fs::read(&executable).unwrap();
+        let bundle = bundle_path(&root.0, &asset);
+        let path = bundle.join("archive.gz");
+
+        // Both authentication and decoding would fail; authentication wins.
+        fs::write(&path, b"not gzip").unwrap();
+        let error = check_bundle(&bundle, &asset).unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<ArtifactError>(),
+            Some(ArtifactError::DigestMismatch { .. })
+        ));
+
+        let mut bad_crc = original.clone();
+        let crc = bad_crc.len() - 8;
+        bad_crc[crc] ^= 1;
+        let mut bad_length = original.clone();
+        let length = bad_length.len() - 4;
+        bad_length[length] ^= 1;
+        for bytes in [
+            b"not gzip".to_vec(),
+            original[..original.len() - 1].to_vec(),
+            bad_crc,
+            bad_length,
+            [original.as_slice(), b"trailing"].concat(),
+            [original.as_slice(), original.as_slice()].concat(),
+        ] {
+            fs::write(&path, &bytes).unwrap();
+            asset.digest = Sha256Digest::compute(&bytes);
+            let error = check_bundle(&bundle, &asset).unwrap_err();
+            // Gzip refusal occurs before executable admission/version execution.
+            assert!(error.downcast_ref::<GzipError>().is_some());
+            assert_eq!(fs::read(&executable).unwrap(), installed);
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+        }
+        fs::write(&path, &original).unwrap();
+        asset.digest = Sha256Digest::compute(&original);
+        assert_eq!(check_bundle(&bundle, &asset).unwrap(), executable);
     }
 
     #[test]

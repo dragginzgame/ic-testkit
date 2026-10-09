@@ -26,7 +26,7 @@ different support scopes require an explicitly approved exception.
 | --- | --- | --- |
 | System bootstrap | Bash, Git, GNU Make, curl, CA certificates, tar, gzip, xz, Perl, a SHA-256 implementation and standard Unix utilities | Host package manager; see [bootstrap prerequisites](#bootstrap-prerequisites) |
 | Common host tools | `jq`, Mike Farah `yq`, `rg` with PCRE2, `cloc` | `make install-host-tools`; offline `make host-tools-check`; `.tools/host/bin` |
-| Common IC tools | `quill`, `icp`, `didc`, `ic-wasm`, `pocket-ic`, `wasm-opt` | `make install-ic-tools`; offline `make ic-tools-check`; `.tools/ic/bin` |
+| Common IC tools | `quill`, `icp`, `didc`, `ic-wasm`, `wasm-opt` | `make install-ic-tools`; offline `make ic-tools-check`; `.tools/ic/bin` |
 | Rust repositories | Declared Rust/Cargo toolchain, rustfmt, pinned Cargo tools and required compilation targets | Consumer toolchain setup, [Rust tool setup](#rust-development-tools) and the [formatter prerequisite check](verification-helpers.md#formatter-prerequisites) |
 | Workflow-specific tools | ShellCheck, actionlint, Gitleaks, authenticated `gh`, Node/SDKs and other tools used by that repository | Explicit consumer setup; declare the tools required by each workflow |
 
@@ -126,10 +126,13 @@ set. cloc uses the bootstrap Perl interpreter and needs no Cargo build or system
 package installation. LOC reports select the prepared local host path themselves
 and never install tools during counting.
 
-The [IC set](ic-tools.md) supplies Quill, ICP CLI, didc, ic-wasm, PocketIC and
+The [IC set](ic-tools.md) supplies Quill, ICP CLI, didc, ic-wasm and
 wasm-opt. dfx is excluded. Linux ARM64 supports the host set only; the full IC
 set lacks a matching Quill asset. Native CI qualifies both sets on Linux x86-64
 and both macOS architectures; mapping Linux ARM64 is not native qualification.
+PocketIC consumers additionally use their selected IC Testkit CLI's explicit
+`setup` and offline `check`; follow the
+[ownership handoff](ic-tools.md#pocketic-ownership-handoff).
 
 ## Rust development tools
 
@@ -152,7 +155,9 @@ tools-check: rust-tools-check
 
 The common aggregate does not require a Rust toolchain in non-Rust repositories.
 Shared Make commands include `.tools/rust/bin` on PATH; interactive shells use
-the export at the top of this guide. The helper never prepares or upgrades a
+the export at the top of this guide. The standard formatting hook and its
+adoption check preserve the original checkout's host, IC and Rust tool paths
+while formatting isolated index inputs. The helper never prepares or upgrades a
 toolchain implicitly. Installation may fetch registry dependencies and compile;
 build output stays in `.tools/rust/build`, including on failure. Cargo owns
 installation locking and registry checksum verification. Tools install one at
@@ -195,6 +200,8 @@ The command prints the admitted executable path under
 Use that returned path in the consumer adapter. Each selection is immutable:
 an existing installation must pass physical-path, exact Cargo receipt and local
 byte-digest checks. Changed bytes or receipts fail without repair or execution;
+each receipt must contain exactly one JSON document. Cargo installation failures
+return Cargo's original exit status along with the retained attempt location;
 no invented `--version` probe runs for examples. Checks invoke rustc for the
 selected host but never Cargo or downloads. Digests detect local changes; they
 are not publisher signatures. The consumer still owns compiler compatibility.
@@ -207,7 +214,9 @@ A directory lock rejects concurrent setup for the same selection; retry after
 its owner finishes. An abruptly killed process may leave a lock: inspect that
 owner and retained attempt before explicitly removing the empty lock. The tool
 never guesses that a lock is stale. Redirected output, receipt and lock paths
-refuse. As with the fixed bundle, path admission is not a sandbox against another
+refuse. After Cargo returns, setup rechecks the shared directory ancestors and
+selection slot before admitting or activating the candidate. As with the fixed
+bundle, path admission is not a sandbox against another
 process deliberately replacing paths while setup runs. Installation may fetch
 dependencies; `CARGO_NET_OFFLINE=true` remains authoritative.
 

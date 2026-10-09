@@ -8,6 +8,32 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.26.0]
+
+### Breaking
+
+- Adopt Shared Tooling 0.2.0 and its five-tool IC bundle. Prepare PocketIC
+  separately with `make install-server`; use `make server-check` for offline
+  admission. Test and CI callers obtain the server from Testkit instead of the
+  shared bundle. Rerun explicit IC setup; prior bundles and evidence remain
+  intact ([#38](https://github.com/dragginzgame/ic-testkit/issues/38)).
+
+### Fixed
+
+- Clean up observed Cargo descendants when the compiler leader exits, without
+  waiting first for inherited output pipes to close. Use Host communication for
+  both execution modes while preserving live output, heartbeats, diagnostics and
+  builds without a deadline ([#36](https://github.com/dragginzgame/ic-testkit/issues/36)).
+
+### Changed
+
+- Prepare formatters through Shared Tooling's checkout-local Rust installer and
+  discover prepared tools in isolated formatting hooks without a shell PATH
+  export ([#41](https://github.com/dragginzgame/ic-testkit/issues/41)).
+- Check prepared PocketIC bundles without retaining the decoded executable in
+  memory, preserving archive authentication, gzip integrity and size limits
+  ([#38](https://github.com/dragginzgame/ic-testkit/issues/38)).
+
 ## [0.25.5] - 2026-10-09
 
 ### Changed

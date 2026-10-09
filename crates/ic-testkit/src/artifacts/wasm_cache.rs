@@ -1,6 +1,13 @@
-use ic_host_process::child::OwnedChild;
+use ic_host_process::{
+    child::OwnedChild,
+    tool::{
+        CommunicationLimits, ExecutionFailure, OutputStream, SuccessfulExit, ToolError,
+        communicate_child_with_observer,
+    },
+};
 use serde_json::Value;
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     ffi::{OsStr, OsString},
     fs::{self, File},
@@ -723,7 +730,7 @@ const fn progress_failure_phase(phase: WasmBuildProgressPhase) -> WasmBuildFailu
     }
 }
 
-const fn classify_unobserved_failure(error: &WasmBuildError) -> WasmBuildFailurePhase {
+fn classify_unobserved_failure(error: &WasmBuildError) -> WasmBuildFailurePhase {
     match error {
         WasmBuildError::InvalidSpec { .. } => WasmBuildFailurePhase::Specification,
         WasmBuildError::CommandSpawn { phase, .. }
@@ -744,6 +751,13 @@ const fn classify_unobserved_failure(error: &WasmBuildError) -> WasmBuildFailure
             WasmBuildFailurePhase::ArtifactPublication
         }
         WasmBuildError::FailedBuildCleanup { .. } => WasmBuildFailurePhase::Cleanup,
+        WasmBuildError::Io { source, .. }
+            if source
+                .get_ref()
+                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<ToolError>) =>
+        {
+            WasmBuildFailurePhase::CargoBuild
+        }
         WasmBuildError::Io { .. } => WasmBuildFailurePhase::ExactCacheCoordination,
     }
 }
@@ -4751,179 +4765,111 @@ fn run_cargo_build(
         command.args(["-p", package]);
     }
 
-    if !progress.is_observed() {
-        let output = command
-            .output()
-            .map_err(|source| WasmBuildError::CommandSpawn {
-                phase: WasmBuildPhase::CargoBuild,
-                program: spec.cargo_program.clone(),
-                source,
-            })?;
-        return ensure_command_success(WasmBuildPhase::CargoBuild, output).map(|_| ());
-    }
-
-    run_observed_cargo_build(spec, build_target_dir, command, progress)
+    communicate_cargo_build(spec, build_target_dir, command, progress)
 }
 
-fn run_observed_cargo_build(
+fn communicate_cargo_build(
     spec: &WasmBuildSpec,
     build_target_dir: &Path,
     mut command: Command,
     progress: &mut ProgressReporter<'_>,
 ) -> Result<(), WasmBuildError> {
-    // The observer can unwind at any event. Own the compiler group before
-    // invoking it so cleanup reaches descendants as well as the Cargo leader.
+    // Preserve foreground group membership for silent builds; observed builds
+    // already own a compiler group so observer unwind can stop descendants.
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let started = Instant::now();
-    let mut child =
-        OwnedChild::spawn(&mut command).map_err(|source| WasmBuildError::CommandSpawn {
-            phase: WasmBuildPhase::CargoBuild,
-            program: spec.cargo_program.clone(),
-            source,
-        })?;
+    let observed = progress.is_observed();
+    if !observed {
+        // Match Command::output's noninteractive stdin selection.
+        command.stdin(Stdio::null());
+    }
+    let mut child = if observed {
+        OwnedChild::spawn(&mut command)
+    } else {
+        OwnedChild::spawn_direct(&mut command)
+    }
+    .map_err(|source| WasmBuildError::CommandSpawn {
+        phase: WasmBuildPhase::CargoBuild,
+        program: spec.cargo_program.clone(),
+        source,
+    })?;
     progress.emit(WasmBuildProgressEvent::CargoStarted {
         target_dir: build_target_dir.to_owned(),
     });
-
-    let stdout = child.take_stdout().expect("Cargo stdout must be piped");
-    let stderr = child.take_stderr().expect("Cargo stderr must be piped");
-    // Each reader sends at most 8 KiB per chunk. Bound pending chunks while
-    // retaining both pipe readers so neither stream can block the other.
-    let (sender, chunks) = mpsc::sync_channel(8);
-    let stdout_sender = sender.clone();
-    let stdout_reader = thread::spawn(move || {
-        read_process_output(stdout, WasmBuildOutputStream::Stdout, stdout_sender)
-    });
-    let stderr_reader =
-        thread::spawn(move || read_process_output(stderr, WasmBuildOutputStream::Stderr, sender));
-
-    let captured = capture_observed_cargo_output(chunks, progress, started);
-
-    let status = child.wait().map_err(|source| WasmBuildError::Io {
-        operation: "wait for observed cargo build",
-        path: PathBuf::from(&spec.cargo_program),
-        source,
-    })?;
-    join_output_reader(
-        stdout_reader,
-        "read observed cargo stdout",
-        &spec.cargo_program,
-    )?;
-    join_output_reader(
-        stderr_reader,
-        "read observed cargo stderr",
-        &spec.cargo_program,
-    )?;
-    let elapsed = started.elapsed();
-    progress.emit(WasmBuildProgressEvent::CargoFinished {
-        success: status.success(),
-        code: status.code(),
-        elapsed,
-    });
-
+    let progress = RefCell::new(progress);
+    let result = communicate_child_with_observer(
+        &mut child,
+        None,
+        CommunicationLimits {
+            // Preserve the existing retained-output contract and allow builds
+            // lasting hours. No new byte quota or elapsed-time deadline.
+            stdout_bytes: usize::MAX,
+            stderr_bytes: usize::MAX,
+            timeout: None,
+        },
+        SuccessfulExit::Cleanup,
+        || {
+            progress
+                .borrow_mut()
+                .emit_heartbeat_if_due(WasmBuildProgressPhase::CargoBuild, started.elapsed());
+            false
+        },
+        |stream, bytes| {
+            let mut progress = progress.borrow_mut();
+            if progress.config.emit_cargo_output {
+                progress.emit(WasmBuildProgressEvent::CargoOutput {
+                    stream: match stream {
+                        OutputStream::Stdout => WasmBuildOutputStream::Stdout,
+                        OutputStream::Stderr => WasmBuildOutputStream::Stderr,
+                    },
+                    bytes: bytes.to_vec(),
+                });
+            }
+        },
+    );
+    let status = match &result {
+        Ok(evidence) => evidence.status,
+        Err(error) => error.evidence().and_then(|evidence| evidence.status),
+    };
+    if let Some(status) = status {
+        progress
+            .borrow_mut()
+            .emit(WasmBuildProgressEvent::CargoFinished {
+                success: status.success(),
+                code: status.code(),
+                elapsed: started.elapsed(),
+            });
+    }
+    let evidence = match result {
+        Ok(evidence) => evidence,
+        Err(ToolError::Execution(error))
+            if matches!(error.failure, ExecutionFailure::ExitStatus)
+                && error.group_error.is_none()
+                && error.kill_error.is_none()
+                && error.wait_error.is_none() =>
+        {
+            error.evidence
+        }
+        Err(error) => {
+            return Err(WasmBuildError::Io {
+                operation: "communicate with cargo build",
+                path: PathBuf::from(&spec.cargo_program),
+                // Retain typed Host evidence and secondary cleanup failures.
+                source: io::Error::other(error),
+            });
+        }
+    };
     ensure_command_success(
         WasmBuildPhase::CargoBuild,
         Output {
-            status,
-            stdout: captured.stdout,
-            stderr: captured.stderr,
+            status: evidence
+                .status
+                .expect("completed Cargo communication has a status"),
+            stdout: evidence.stdout,
+            stderr: evidence.stderr,
         },
     )
     .map(|_| ())
-}
-
-struct CapturedProcessOutput {
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
-
-fn capture_observed_cargo_output(
-    chunks: mpsc::Receiver<ProcessOutputChunk>,
-    progress: &mut ProgressReporter<'_>,
-    started: Instant,
-) -> CapturedProcessOutput {
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    loop {
-        let message = match progress.heartbeat_due_in() {
-            Some(wait) => match chunks.recv_timeout(wait) {
-                Ok(chunk) => Some(chunk),
-                Err(RecvTimeoutError::Timeout) => {
-                    progress.emit_heartbeat(WasmBuildProgressPhase::CargoBuild, started.elapsed());
-                    None
-                }
-                Err(RecvTimeoutError::Disconnected) => break,
-            },
-            None => match chunks.recv() {
-                Ok(chunk) => Some(chunk),
-                Err(_) => break,
-            },
-        };
-        let Some(chunk) = message else {
-            continue;
-        };
-        match chunk.stream {
-            WasmBuildOutputStream::Stdout => stdout.extend_from_slice(&chunk.bytes),
-            WasmBuildOutputStream::Stderr => stderr.extend_from_slice(&chunk.bytes),
-        }
-        if progress.config.emit_cargo_output {
-            progress.emit(WasmBuildProgressEvent::CargoOutput {
-                stream: chunk.stream,
-                bytes: chunk.bytes,
-            });
-        }
-    }
-    CapturedProcessOutput { stdout, stderr }
-}
-
-#[derive(Debug)]
-struct ProcessOutputChunk {
-    stream: WasmBuildOutputStream,
-    bytes: Vec<u8>,
-}
-
-fn read_process_output<R: io::Read>(
-    mut reader: R,
-    stream: WasmBuildOutputStream,
-    sender: mpsc::SyncSender<ProcessOutputChunk>,
-) -> io::Result<()> {
-    let mut buffer = [0_u8; 8 * 1024];
-    loop {
-        let count = match reader.read(&mut buffer) {
-            Ok(count) => count,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(error),
-        };
-        if count == 0 {
-            return Ok(());
-        }
-        if sender
-            .send(ProcessOutputChunk {
-                stream,
-                bytes: buffer[..count].to_vec(),
-            })
-            .is_err()
-        {
-            return Ok(());
-        }
-    }
-}
-
-fn join_output_reader(
-    reader: thread::JoinHandle<io::Result<()>>,
-    operation: &'static str,
-    cargo_program: &OsStr,
-) -> Result<(), WasmBuildError> {
-    let result = reader.join().map_err(|_| WasmBuildError::Io {
-        operation,
-        path: PathBuf::from(cargo_program),
-        source: io::Error::other("Cargo output reader panicked"),
-    })?;
-    result.map_err(|source| WasmBuildError::Io {
-        operation,
-        path: PathBuf::from(cargo_program),
-        source,
-    })
 }
 
 fn ensure_command_success(phase: WasmBuildPhase, output: Output) -> Result<Output, WasmBuildError> {
