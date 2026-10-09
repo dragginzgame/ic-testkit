@@ -251,3 +251,13 @@ jobs:
         run: cargo test -p ic-testkit --locked --offline --test server_runner provisioned_cli_runs_a_real_instance_without_consumer_server_selection -- --ignored --exact
       - name: Qualify real managed-server CLI execution
         run: cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
+      - name: Qualify idle lifetime during pre-client work
+        run: cargo test -p ic-testkit --locked --offline --test server_runner managed_idle_ttl_allows_preclient_work_beyond_server_default -- --ignored --exact
+      - name: Retain idle lifetime evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: idle-lifetime-${{ matrix.os }}
+          path: target/idle-lifetime-*
+          retention-days: 14
+          if-no-files-found: warn

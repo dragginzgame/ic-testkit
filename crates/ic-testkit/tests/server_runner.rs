@@ -25,7 +25,7 @@ impl Fixture {
         support::executable::write_executable_script(
             &fixture.0.join("server"),
             format!(
-                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server {}\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf stderr-end >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
+                "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server {}\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\nif [ \"$1\" = --ttl ]; then printf '%s' \"$2\" > \"$IDLE_TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf stderr-end >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
                 ic_testkit::pocket_ic::LATEST_SERVER_VERSION
             ),
         );
@@ -37,7 +37,8 @@ impl Fixture {
             .env_remove("IC_TESTKIT_POCKET_IC_URL")
             .env("POCKET_IC_BIN", self.0.join("server"))
             .env("SERVER_PID_FILE", self.0.join("server.pid"))
-            .env("TTL_FILE", self.0.join("ttl"));
+            .env("TTL_FILE", self.0.join("ttl"))
+            .env("IDLE_TTL_FILE", self.0.join("idle-ttl"));
         command
     }
     fn pid(&self, file: &str) -> u32 {
@@ -81,6 +82,8 @@ fn owned_server_exports_url_passes_ttl_and_preserves_command_exit() {
             "run",
             "--ttl",
             "17",
+            "--idle-ttl",
+            "42",
             "--",
             "/bin/sh",
             "-c",
@@ -96,6 +99,10 @@ fn owned_server_exports_url_passes_ttl_and_preserves_command_exit() {
     );
     assert_eq!(output.stdout, b"http://127.0.0.1:34567/");
     assert_eq!(fs::read_to_string(fixture.0.join("ttl")).unwrap(), "17");
+    assert_eq!(
+        fs::read_to_string(fixture.0.join("idle-ttl")).unwrap(),
+        "42"
+    );
     assert!(stopped(fixture.pid("server.pid")));
 }
 
@@ -153,6 +160,14 @@ fn external_server_precedence_borrows_ownership_and_rejects_owned_ttl() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("--ttl requires an owned server"));
+    let output = fixture
+        .runner()
+        .env("IC_TESTKIT_POCKET_IC_URL", "http://127.0.0.1:45678/")
+        .args(["run", "--idle-ttl", "120", "--", "/bin/sh", "-c", "exit 99"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!fixture.0.join("server.pid").exists());
 }
 
 #[test]
@@ -161,6 +176,8 @@ fn invalid_configuration_and_version_failure_never_run_the_command() {
     let marker = fixture.0.join("command-ran");
     for args in [
         vec!["run", "--ttl", "0", "--", "/bin/sh"],
+        vec!["run", "--idle-ttl", "0", "--", "/bin/sh"],
+        vec!["run", "--idle-ttl", "1", "--idle-ttl", "2", "--", "/bin/sh"],
         vec!["run", "--"],
         vec!["run", "--server-stdout", "out", "--", "/bin/sh"],
         vec![
@@ -325,6 +342,9 @@ fn real_server_runs_a_separate_process_using_environment_startup() {
 #[ignore = "invoked by the real server runner test in a separate process"]
 fn runner_environment_worker() {
     use ic_testkit::pic::{PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig};
+    if std::env::var_os("IC_TESTKIT_TEST_PRECLIENT_DELAY").is_some() {
+        thread::sleep(Duration::from_secs(65));
+    }
     assert!(std::env::var_os("IC_TESTKIT_POCKET_IC_URL").is_some());
     let pic = PocketIcBuilder::new()
         .with_application_subnet()
@@ -353,6 +373,52 @@ fn provisioned_cli_runs_a_real_instance_without_consumer_server_selection() {
         .args(["--ignored", "--exact", "runner_environment_worker"])
         .output()
         .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[ignore = "requires explicit PocketIC setup; exercises 65 seconds of pre-client work"]
+fn managed_idle_ttl_allows_preclient_work_beyond_server_default() {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let evidence = workspace.join("target").join(format!(
+        "idle-lifetime-{}-{}",
+        std::process::id(),
+        SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&evidence).unwrap();
+    eprintln!("Idle lifetime evidence retained at {}", evidence.display());
+    let output = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"))
+        .current_dir(workspace)
+        .env_remove("POCKET_IC_BIN")
+        .env_remove("IC_TESTKIT_POCKET_IC_URL")
+        .env("IC_TESTKIT_TEST_PRECLIENT_DELAY", "1")
+        .args([
+            "run",
+            "--ttl",
+            "180",
+            "--idle-ttl",
+            "120",
+            "--server-stdout",
+        ])
+        .arg(evidence.join("server.stdout"))
+        .arg("--server-stderr")
+        .arg(evidence.join("server.stderr"))
+        .arg("--")
+        .arg(std::env::current_exe().unwrap())
+        .args(["--ignored", "--exact", "runner_environment_worker"])
+        .output()
+        .unwrap();
+    fs::write(evidence.join("command.stdout"), &output.stdout).unwrap();
+    fs::write(evidence.join("command.stderr"), &output.stderr).unwrap();
+    fs::write(evidence.join("status"), output.status.to_string()).unwrap();
     assert!(
         output.status.success(),
         "{}\n{}",

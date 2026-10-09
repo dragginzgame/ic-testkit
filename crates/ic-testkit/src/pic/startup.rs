@@ -34,6 +34,7 @@ pub struct PocketIcStartupConfig {
     source: PocketIcStartupSource,
     timeout: Duration,
     server_hard_ttl: Option<Duration>,
+    server_idle_ttl: Option<Duration>,
     server_output_files: Option<(PathBuf, PathBuf)>,
 }
 
@@ -259,6 +260,7 @@ impl PocketIcStartupConfig {
             },
             timeout,
             server_hard_ttl: None,
+            server_idle_ttl: None,
             server_output_files: None,
         }
     }
@@ -275,6 +277,7 @@ impl PocketIcStartupConfig {
             },
             timeout,
             server_hard_ttl: None,
+            server_idle_ttl: None,
             server_output_files: None,
         }
     }
@@ -284,6 +287,22 @@ impl PocketIcStartupConfig {
     pub const fn with_server_hard_ttl(mut self, hard_ttl: Duration) -> Self {
         self.server_hard_ttl = Some(hard_ttl);
         self
+    }
+
+    /// Set the operation-idle lifetime of a managed server, independently of
+    /// its hard lifetime. Requires spawn mode and at least one whole second.
+    /// Without this selection, PocketIC uses its own idle default.
+    /// Fractional seconds are discarded when constructing the server argument.
+    #[must_use]
+    pub const fn with_server_idle_ttl(mut self, idle_ttl: Duration) -> Self {
+        self.server_idle_ttl = Some(idle_ttl);
+        self
+    }
+
+    /// Explicit managed operation-idle lifetime, or PocketIC's default.
+    #[must_use]
+    pub const fn server_idle_ttl(&self) -> Option<Duration> {
+        self.server_idle_ttl
     }
 
     /// Capture complete raw server streams in two caller-owned new files.
@@ -341,6 +360,8 @@ impl PocketIcStartupConfig {
     /// This requires a configuration created by [`Self::spawn`]. Readiness is
     /// bounded by [`Self::timeout`]. No hard TTL is passed by default; an
     /// explicit [`Self::with_server_hard_ttl`] value is passed to the child.
+    /// [`Self::with_server_idle_ttl`] independently selects the operation-idle
+    /// lifetime; otherwise PocketIC retains its own idle default.
     /// Readiness requires a nonzero decimal port followed by a newline in a
     /// regular UTF-8 file of at most 64 bytes; oversized files fail with bounded
     /// diagnostics. Non-regular port files fail with [`PocketIcStartupError::Io`]
@@ -360,6 +381,7 @@ impl PocketIcStartupConfig {
         let (server, url) = ManagedServer::start(
             server_binary,
             self.server_hard_ttl,
+            self.server_idle_ttl,
             self.server_output_files,
             deadline,
             self.timeout,
@@ -453,6 +475,15 @@ impl PocketIcStartupConfig {
     }
 
     fn validate(&self) -> Result<(), PocketIcStartupError> {
+        if self.server_idle_ttl.is_some()
+            && (self.server_url().is_some()
+                || self.server_idle_ttl.is_some_and(|ttl| ttl.as_secs() == 0))
+        {
+            return Err(PocketIcStartupError::InvalidConfiguration {
+                message: "PocketIC server idle TTL requires spawn mode and at least one second"
+                    .to_owned(),
+            });
+        }
         if self.server_url().is_some() && self.server_output_files.is_some() {
             return Err(PocketIcStartupError::InvalidConfiguration {
                 message: "server output files require a spawn configuration".to_owned(),
@@ -536,6 +567,7 @@ impl PocketIcBuilderExt for PocketIcBuilder {
                 let (server, server_url) = ManagedServer::start(
                     server_binary,
                     config.server_hard_ttl,
+                    config.server_idle_ttl,
                     config.server_output_files,
                     deadline,
                     config.timeout,
@@ -662,6 +694,7 @@ impl ManagedServer {
     fn start(
         binary: PathBuf,
         hard_ttl: Option<Duration>,
+        idle_ttl: Option<Duration>,
         output_files: Option<(PathBuf, PathBuf)>,
         deadline: Instant,
         timeout: Duration,
@@ -673,6 +706,9 @@ impl ManagedServer {
             command
                 .arg("--hard-ttl")
                 .arg(hard_ttl.as_secs().to_string());
+        }
+        if let Some(idle_ttl) = idle_ttl {
+            command.arg("--ttl").arg(idle_ttl.as_secs().to_string());
         }
         command
             .arg("--port-file")
@@ -1591,6 +1627,17 @@ mod tests {
 
     #[test]
     fn startup_config_requires_positive_bounds() {
+        for config in [
+            PocketIcStartupConfig::spawn("pocket-ic", Duration::from_secs(1))
+                .with_server_idle_ttl(Duration::from_millis(1)),
+            PocketIcStartupConfig::connect("http://127.0.0.1:1/", Duration::from_secs(1))
+                .with_server_idle_ttl(Duration::from_secs(120)),
+        ] {
+            assert!(matches!(
+                config.validate(),
+                Err(PocketIcStartupError::InvalidConfiguration { .. })
+            ));
+        }
         let error = PocketIcStartupConfig::connect("http://127.0.0.1:1/", Duration::ZERO)
             .validate()
             .expect_err("zero startup timeout must fail");
@@ -1612,6 +1659,14 @@ mod tests {
     #[test]
     fn managed_server_hard_ttl_is_opt_in() {
         let default = PocketIcStartupConfig::spawn("pocket-ic", Duration::from_secs(1));
+        assert_eq!(default.server_idle_ttl(), None);
+        assert_eq!(
+            default
+                .clone()
+                .with_server_idle_ttl(Duration::from_secs(120))
+                .server_idle_ttl(),
+            Some(Duration::from_secs(120))
+        );
         assert_eq!(default.server_hard_ttl(), None);
 
         let explicit = default.with_server_hard_ttl(Duration::from_secs(17));

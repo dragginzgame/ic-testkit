@@ -12,7 +12,7 @@ use ic_testkit::pic::PocketIcStartupConfig;
 mod provisioning;
 
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
-const USAGE: &str = "usage: ic-testkit-server setup|check [--directory DIRECTORY]\n       ic-testkit-server run [--directory DIRECTORY] [--ttl SECONDS] [--startup-timeout SECONDS] [--server-stdout NEW-FILE --server-stderr NEW-FILE] -- COMMAND [ARG...]";
+const USAGE: &str = "usage: ic-testkit-server setup|check [--directory DIRECTORY]\n       ic-testkit-server run [--directory DIRECTORY] [--ttl SECONDS] [--idle-ttl SECONDS] [--startup-timeout SECONDS] [--server-stdout NEW-FILE --server-stderr NEW-FILE] -- COMMAND [ARG...]";
 
 enum Arguments {
     Setup(PathBuf),
@@ -24,6 +24,7 @@ struct RunArguments {
     directory: Option<PathBuf>,
     timeout: Duration,
     ttl: Option<Duration>,
+    idle_ttl: Option<Duration>,
     output_files: Option<(PathBuf, PathBuf)>,
     command: Command,
 }
@@ -67,17 +68,20 @@ impl Drop for Signals {
     }
 }
 
+fn path_argument(arguments: &mut impl Iterator<Item = OsString>) -> Result<PathBuf, String> {
+    arguments
+        .next()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| USAGE.to_owned())
+}
+
 fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, String> {
     let action = arguments.next().ok_or(USAGE)?;
     if action == "setup" || action == "check" {
         let directory = match arguments.next() {
             None => PathBuf::from(provisioning::DEFAULT_DIRECTORY),
-            Some(flag) if flag == "--directory" => PathBuf::from(
-                arguments
-                    .next()
-                    .filter(|value| !value.is_empty())
-                    .ok_or(USAGE)?,
-            ),
+            Some(flag) if flag == "--directory" => path_argument(&mut arguments)?,
             _ => return Err(USAGE.to_owned()),
         };
         if arguments.next().is_some() {
@@ -95,6 +99,7 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, Str
     let mut directory = None;
     let mut timeout = Duration::from_secs(30);
     let mut ttl = None;
+    let mut idle_ttl = None;
     let mut selected_timeout = false;
     let mut stdout = None;
     let mut stderr = None;
@@ -119,17 +124,13 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, Str
                 directory,
                 timeout,
                 ttl,
+                idle_ttl,
                 output_files,
                 command,
             })));
         }
         if argument == "--directory" && directory.is_none() {
-            directory = Some(PathBuf::from(
-                arguments
-                    .next()
-                    .filter(|value| !value.is_empty())
-                    .ok_or(USAGE)?,
-            ));
+            directory = Some(path_argument(&mut arguments)?);
             continue;
         }
         if argument == "--server-stdout" || argument == "--server-stderr" {
@@ -141,16 +142,15 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, Str
             if selection.is_some() {
                 return Err(USAGE.to_owned());
             }
-            *selection = Some(PathBuf::from(
-                arguments
-                    .next()
-                    .filter(|value| !value.is_empty())
-                    .ok_or(USAGE)?,
-            ));
+            *selection = Some(path_argument(&mut arguments)?);
             continue;
         }
         let is_ttl = argument == "--ttl";
-        if !(is_ttl && ttl.is_none() || argument == "--startup-timeout" && !selected_timeout) {
+        let is_idle_ttl = argument == "--idle-ttl";
+        if !(is_ttl && ttl.is_none()
+            || is_idle_ttl && idle_ttl.is_none()
+            || argument == "--startup-timeout" && !selected_timeout)
+        {
             return Err(USAGE.to_owned());
         }
         let seconds = arguments
@@ -161,6 +161,8 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, Str
             .ok_or("timeouts must be positive whole seconds")?;
         if is_ttl {
             ttl = Some(Duration::from_secs(seconds));
+        } else if is_idle_ttl {
+            idle_ttl = Some(Duration::from_secs(seconds));
         } else {
             timeout = Duration::from_secs(seconds);
             selected_timeout = true;
@@ -186,6 +188,7 @@ pub fn main() -> ExitCode {
         directory,
         timeout,
         ttl,
+        idle_ttl,
         output_files,
         mut command,
     } = *arguments;
@@ -212,6 +215,9 @@ pub fn main() -> ExitCode {
                 return Err("--ttl requires an owned server".into());
             }
             config = config.with_server_hard_ttl(ttl);
+        }
+        if let Some(idle_ttl) = idle_ttl {
+            config = config.with_server_idle_ttl(idle_ttl);
         }
         if let Some((stdout, stderr)) = output_files {
             config = config.with_server_output_files(stdout, stderr);

@@ -418,9 +418,13 @@ borrows the existing server and leaves it running. Library callers can use
 `PocketIcStartupConfig::run_command` with their own cancellation callback;
 library code installs no process-wide signal handlers.
 
-Prepare compilation inputs before entering the managed scope: `--ttl` selects
-the server's hard lifetime, not its operation-idle timeout. The separate idle
-lifetime qualification remains tracked in [#37](https://github.com/dragginzgame/ic-testkit/issues/37).
+`--idle-ttl SECONDS` separately selects the owned server's operation-idle
+lifetime, allowing compilation or other work before the command's first client
+request. Without this option, PocketIC keeps its own idle default (60 seconds
+in the prepared 16.1.0 server). For example, `run --idle-ttl 10800 -- COMMAND`
+allows up to three idle hours without imposing a hard lifetime. Both TTL options
+require positive whole seconds and owned-server mode. Library callers use
+`with_server_idle_ttl`; `--ttl` continues to select the independent hard lifetime.
 
 For complete raw diagnostics after startup failure, command failure or interruption,
 select two new files with `PocketIcStartupConfig::with_server_output_files(stdout,

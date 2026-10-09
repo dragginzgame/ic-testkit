@@ -8,6 +8,21 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.25.5]
+
+### Changed
+
+- Adopt Shared Tooling 0.1.35's Cargo binary/example installer, with offline
+  receipt and byte checks and retained failed installations
+  ([shared #65](https://github.com/dragginzgame/shared-tooling/issues/65)).
+
+### Added
+
+- Select managed PocketIC operation-idle lifetime through `run --idle-ttl`
+  or `PocketIcStartupConfig::with_server_idle_ttl`, allowing long pre-client
+  work independently of the hard lifetime while retaining existing defaults
+  ([#37](https://github.com/dragginzgame/ic-testkit/issues/37)).
+
 ## [0.25.4] - 2026-10-09
 
 ### Changed

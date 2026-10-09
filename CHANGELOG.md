@@ -6,6 +6,21 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.25.5]
+
+### Changed
+
+- Adopt Shared Tooling 0.1.35's Cargo binary/example installer, with offline
+  receipt and byte checks and retained failed installations
+  ([shared #65](https://github.com/dragginzgame/shared-tooling/issues/65)).
+
+### Added
+
+- Select managed PocketIC operation-idle lifetime through `run --idle-ttl`
+  or `PocketIcStartupConfig::with_server_idle_ttl`, allowing long pre-client
+  work independently of the hard lifetime while retaining existing defaults
+  ([#37](https://github.com/dragginzgame/ic-testkit/issues/37)).
+
 ## [0.25.4] - 2026-10-09
 
 ### Changed

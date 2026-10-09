@@ -66,8 +66,10 @@ Run uses that prepared selection when neither `POCKET_IC_BIN` nor
 `IC_TESTKIT_POCKET_IC_URL` is selected, and exports the executable and managed
 URL to the command. Explicit binary overrides admit stable 16.x servers,
 independently of the Rust client's latest download constant. URL mode borrows an
-existing server. Build inputs should be prepared before entering the managed
-scope: the server's operation-idle lifetime is distinct from `--ttl`'s hard limit.
+existing server. For long pre-client work, select `run --idle-ttl SECONDS -- COMMAND`
+or `PocketIcStartupConfig::with_server_idle_ttl`. This selects operation-idle
+lifetime independently of `--ttl`'s hard limit; omitted idle selection retains
+PocketIC's default. Both options require owned-server mode and positive seconds.
 
 Most users should read the
 [repository README](https://github.com/dragginzgame/ic-testkit#readme) for

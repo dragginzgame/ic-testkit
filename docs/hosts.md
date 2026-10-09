@@ -2081,3 +2081,56 @@ Host/Shared commits was queued when inspected; consumer macOS qualification
 remains pending. Full gates were not run. The Cargo communication refactor stays
 paused. Shared #84's compiled release-adapter startup finding does not match
 this consumer's Bash release-version/preflight entry points.
+
+### Pending 0.25.5 managed operation-idle lifetime
+
+For #37, the CLI's `--idle-ttl SECONDS` and
+`PocketIcStartupConfig::with_server_idle_ttl` select PocketIC's operation-idle
+lifetime separately from its launch-relative hard TTL. Omitted idle selection
+retains the server default; positive whole seconds and spawn mode are required.
+The selected server's actual `--help` confirms a 60-second idle default and
+independent `--hard-ttl`. No Cargo duration/output limit, dependency selection,
+package version or retained format changed. No functions or types were removed.
+
+On Linux, the final CLI ran a worker that waited 65 seconds before constructing
+an application-subnet instance, with idle TTL 120 and hard TTL 180 seconds.
+The worker and runner succeeded; complete streams/status remain under
+`target/idle-lifetime-301766-0/`, and the invocation log is
+`/tmp/ic-testkit-0255-idle-live-final.log`. An earlier successful run remains in
+`target/idle-lifetime-123070-0/`; it predates the path-parser factoring.
+Nine ordinary runner fixtures pass, including independent flag forwarding,
+invalid/duplicate idle values, external-server refusal, exit status, signal and
+cleanup behavior. Focused library checks verify positive bounds and opt-in
+configuration. Strict selected Clippy, actual Rust 1.88 binary compilation,
+format/declaration checks and actionlint pass. Logs use
+`/tmp/ic-testkit-0255-*`; the initial parser-length Clippy failure is retained
+separately from `idle-clippy-clean.log`.
+
+The real idle test and evidence upload are added to native Linux/macOS Intel/ARM
+CI; no native macOS result exists for these uncommitted changes. The released
+0.25.4 source `085756dd0e0e2304de7e4a0b6b887201918646b6` passed its Linux
+checks/portable/concurrency/MSRV jobs when inspected, with macOS queued/running
+(runs 37901828926 and 37901828971). Shared's adopted revision is unchanged;
+new committed Host 0.8.8 was reviewed but not adopted for this separate fix.
+Full local CI and release gates remain maintainer-owned.
+
+### Pending 0.25.5 Shared Tooling 0.1.35
+
+Reviewed `be550afa57fe9e16872e5110b5cd69c24b4fa9e8` was exported through
+a clean isolated canonical checkout; all 80 selected files verify. The snapshot
+adds shared registry binary/example installation and the clarified distinction
+between authorized dependency preparation and offline validation. Our Bash
+release preflight already fetches the selected coherent manifest with `--locked`,
+honours explicit offline settings, and selects saved metadata before fetching;
+no release adapter change or release operation was needed.
+
+The adopted Rust installer fixtures pass with substitute Cargo under Bash 5
+and genuine Bash 3.2 with inherited CDPATH, covering both the established tool
+bundle and the new selected-target mode. They qualify consumer snapshot
+integration, not real registry installation or native macOS execution. Offline
+snapshot/tools/declaration/format checks pass. Logs are
+`/tmp/ic-testkit-0255-{rust-tools-0135,rust-tools-0135-bash32,shared-0135-checks}.log`;
+export evidence is `/tmp/ic-testkit-0255-shared-0135-export.log`. No tools were
+installed, product dependencies upgraded or functions/types removed. Upstream
+0.1.35 CI run 37904190217 was queued when inspected; native acceptance remains
+separate from these local Linux checks.

@@ -341,6 +341,11 @@ The include provides `install-rust-tools` and `rust-tools-check`; Rust consumers
 attach these to their aggregate commands as shown in
 [Rust setup](local-setup.md#rust-development-tools). Retire their duplicate
 Cargo-tool install recipes and version constants after qualified adoption.
+Consumer-selected registry binaries/examples use this same installer and its
+`scripts/ci/verify-file-checksum.sh` companion, with prepared host tools and an
+explicit local selection; see [Cargo tool setup](local-setup.md#consumer-selected-cargo-tools).
+Retire synthetic Cargo resolvers only after qualifying the selected package and
+profile. Source-checkout builds and application executable overrides stay local.
 
 Defaults use scripts and pins at the checkout root. For a snapshot stored below
 that root, set `SHARED_TOOLING_ROOT` to its reviewed local directory before the

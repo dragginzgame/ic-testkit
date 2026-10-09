@@ -172,10 +172,54 @@ successfully. They do not authenticate installed bytes or replace product/native
 host qualification. A matching set is reused without invoking Cargo. Formatting
 still requires rustfmt and the [formatter check](verification-helpers.md#formatter-prerequisites).
 
+### Consumer-selected Cargo tools
+
+The same installer also accepts an exact crates.io package, one binary or example
+target, and an explicit `debug` or `release` profile. Prepare the shared host tools
+(including jq and Perl) and the consumer-selected Rust toolchain first:
+
+```bash
+bash scripts/dev/install-rust-tools.sh --consumer "$PWD" \
+  --package ic-blob-storage --version 0.15.1 --example prepare_upload --profile debug
+# Repeat the same selection with --check for an offline, non-building check.
+```
+
+This example is a caller selection, not a new fleet-wide package pin. Consumers
+own package versions, profiles, compiler selection, explicit executable overrides
+and product qualification. Use `--bin NAME` for a published binary. This mode
+does not install the formatter bundle or read its versions catalog; `make
+install-rust-tools` continues to install that existing three-tool bundle.
+
+The command prints the admitted executable path under
+`.tools/rust/<package>-<version>-<kind>-<target>-<profile>/installed/bin/`.
+Use that returned path in the consumer adapter. Each selection is immutable:
+an existing installation must pass physical-path, exact Cargo receipt and local
+byte-digest checks. Changed bytes or receipts fail without repair or execution;
+no invented `--version` probe runs for examples. Checks invoke rustc for the
+selected host but never Cargo or downloads. Digests detect local changes; they
+are not publisher signatures. The consumer still owns compiler compatibility.
+
+Setup compiles through the same locked Cargo installation command into a fresh
+attempt directory under `.tools/rust/build`, the existing CI evidence route.
+Only an admitted candidate is renamed into place. Failed
+attempts retain logs/builds, and earlier version selections remain untouched.
+A directory lock rejects concurrent setup for the same selection; retry after
+its owner finishes. An abruptly killed process may leave a lock: inspect that
+owner and retained attempt before explicitly removing the empty lock. The tool
+never guesses that a lock is stale. Redirected output, receipt and lock paths
+refuse. As with the fixed bundle, path admission is not a sandbox against another
+process deliberately replacing paths while setup runs. Installation may fetch
+dependencies; `CARGO_NET_OFFLINE=true` remains authoritative.
+
+Consumers adopt this mode from a reviewed snapshot, qualify their selected
+package/profile on their native hosts, then remove superseded resolver/build
+helpers. Local Canic source snapshots and application evidence remain outside
+this registry installer. The three-host assessment below exercises the shared
+production mode; its earlier Cargo-only results do not qualify this extension.
+
 ## Cargo installation assessment
 
-Before extending the fixed Rust tool set to consumer-selected binaries/examples,
-run `scripts/ci/qualify-cargo-install.sh` in Shared Tooling to exercise Cargo's
+Run `scripts/ci/qualify-cargo-install.sh` in Shared Tooling to exercise Cargo's
 native installation contract in a new disposable evidence directory:
 
 ```bash
@@ -192,7 +236,9 @@ refused before tool probes. It never cleans or changes an existing installation.
 The fixture selects published `ic-blob-storage 0.15.1`'s
 `prepare_upload` example and the existing reviewed cargo-sort version. Those are
 assessment inputs, not defaults for consumer applications. Both use the debug
-profile; no product MSRV or Canic CLI selection is qualified by this fixture.
+profile for the direct Cargo assessment. The production installer is then
+exercised with the debug example and release binary, including offline reuse and
+changed-byte refusal. No product MSRV or Canic CLI selection is qualified by this fixture.
 
 It checks Cargo receipt package/registry/version/target/profile identity, offline
 reuse, missing-target refusal, concurrent offline installation and preservation
