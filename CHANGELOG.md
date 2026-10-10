@@ -6,6 +6,25 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.32.2]
+
+### Changed
+
+- Adopt Shared Tooling 0.3.4 and its common Binaryen 133 tool pin. Run
+  `make install-ic-tools` explicitly to prepare the new selection; earlier tool
+  bundles remain retained. Product optimizer policies still require their own
+  Wasm qualification
+  ([shared #102](https://github.com/dragginzgame/shared-tooling/issues/102)).
+- Select Host 0.12.3 for all four Host crates; their Rust source and public APIs
+  are unchanged from 0.12.2.
+
+### Fixed
+
+- Adopt Shared Tooling 0.3.3: reject malformed validation nesting depth before
+  target dispatch, and fail premature runner exits while retaining available
+  source/log evidence. Completed target failures preserve their original status
+  ([shared #104](https://github.com/dragginzgame/shared-tooling/issues/104)).
+
 ## [0.32.1] - 2026-10-10
 
 ### Fixed

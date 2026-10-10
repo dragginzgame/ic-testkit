@@ -1,5 +1,84 @@
 # Host support and qualification
 
+## Shared 0.3.4 and Host 0.12.3 for pending 0.32.2
+
+The pending batch now selects canonical Shared 0.3.4
+`169d77b8440568c5200eede971625126181f7bb2`, retaining the 85-file roster and
+unchanged Shared 0.3.3 runner repairs qualified below. The new selected changes
+are the Binaryen 133 common pins and their setup/host guidance. No producer-only
+Node qualification infrastructure is added to Testkit. All four incoming Host
+lock selections are 0.12.3, reviewed against
+`aec863191b3c96ef879e59af701cbe1451595f25`; Host Rust source is unchanged from
+0.12.2. The incoming lock remains byte-for-byte unchanged with SHA-256
+`231311b75e16093315dc2bc09ddd995f376140faaa76a81e078b0332aac7be32`.
+Locked fetch explicitly prepares that graph; locked offline all-target compilation
+passes in this workspace's `target/`. Package metadata remains 0.32.1.
+
+Actual Linux `make install-ic-tools` prepares the authenticated five-tool bundle
+with Binaryen 133. Offline admission and repeated setup pass without reselection.
+The earlier Binaryen 132 bundle `ic-set.xJTbQZ` remains retained: its payload
+receipt verifies and its wasm-opt SHA-256 remains the pre-setup value
+`1014958e6f20d412f1542320b43970214b0fb1ed780595e8f7c0d8761ed53725`.
+Selected installer fixtures pass under Bash 5 and genuine Bash 3.2 with nested
+Bash invocations using the same shell. Snapshot, pins and formatting checks pass.
+
+The unmodified committed upstream Wasm qualifier also passes on Linux in the
+isolated Shared clone, using a private copy of the prepared bundle with matching
+wasm-opt SHA-256
+`8f25e9fd5db0fc5f210003aaa432922feb2e52d309e430def2f929e34da9466b`.
+Node 24.21.0 executes reference and `-O3`, `-Os`, `-Oz` outputs, checking integer
+boundaries, imports/exports and an IC-style reply. This synthetic common-tool
+smoke does not qualify a product canister deployment. Testkit owns no production
+optimizer policy; downstream projects must qualify their own optimized Wasm.
+
+Logs are `/tmp/ic-testkit-0322-shared034-{export,install,tools-check,reuse,
+retained,ic,ic-bash32,wasm,tooling}.log` and
+`/tmp/ic-testkit-0322-host0123-{fetch,check}.log`. Synthetic Wasm inputs, outputs
+and source/tool identity remain in
+`/tmp/ic-testkit-0322-shared034-wasm-evidence/`. No sibling edit, broad consumer
+gate, release or CI rerun occurred. At inspection exact-source
+[Shared 0.3.4](https://github.com/dragginzgame/shared-tooling/actions/runs/38054347275),
+[Host 0.12.3](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38054067633)
+and [released Testkit 0.32.1](https://github.com/dragginzgame/ic-testkit/actions/runs/38053227144)
+CI remain queued. Native macOS and full consumer acceptance remain outstanding;
+[shared #102](https://github.com/dragginzgame/shared-tooling/issues/102) owns the
+common Binaryen adoption feedback.
+
+## Shared 0.3.3 for pending 0.32.2
+
+Based on released Testkit 0.32.1 `ff5da12c27bf0835586892ada8e443117229290b`,
+the isolated canonical export selects Shared 0.3.3
+`d63f0cfaba8ab2961d6012064adbf051c1898bc1`, retaining the 85-file roster.
+Only the selected validation runner and snapshot record change. Later dirty
+upstream wasm-opt/tool-pin work is excluded. Package version and dependency
+graph remain unchanged; incoming lock SHA-256 is
+`67a8ed3416cc3c5a186a85cecb127b51a81e42fa9cef54633a0545e2406f262f`.
+The runner refuses malformed nesting depth before target logs/dispatch and
+requires explicit source-wrapper/body completion, preserving available evidence
+after premature exits and the original status after completed target failures.
+
+Focused Linux qualification passes: the committed upstream runner fixture
+projected onto exact selected consumer runner/guard bytes under Bash 5 and genuine
+Bash 3.2. A PATH shim selects Bash 3.2 for nested Bash invocations too. Cases cover
+canonical depth/increment controls, malformed/overflow/arithmetic-shaped values,
+24 fault-injected exits across wrapper/body/summary boundaries and both shells,
+unsafe Make modes, nested context/jobserver routing, source mutation, fail-fast,
+timings and retained combined failure evidence. Fixture targets use controlled
+effects; no complete consumer validation gate is dispatched. The actual owning
+runner also dispatches harmless `help` and refuses depth `1/0` with status 2
+before creating target logs under both shells. ShellCheck, snapshot, pins,
+formatting and diff checks pass.
+
+Logs use `/tmp/ic-testkit-0322-{export,runner,runner-bash32,consumer,
+consumer-invalid,consumer-bash32,consumer-invalid-bash32,shellcheck,tooling}.log`.
+Actual help-run logs are retained beneath `/tmp/ic-testkit-0322-help-logs` and
+`/tmp/ic-testkit-0322-help-bash32-logs`. No Cargo compilation, broad local gate,
+tool/server setup, sibling edit, release or CI rerun occurred. At inspection
+[released Testkit 0.32.1](https://github.com/dragginzgame/ic-testkit/actions/runs/38053227144)
+and [Shared 0.3.3](https://github.com/dragginzgame/shared-tooling/actions/runs/38052409053)
+CI remained queued. These focused passes do not qualify native/full delivery
+of this pending consumer source.
+
 ## Shared 0.3.2 for pending 0.32.1
 
 Based on released Testkit 0.32.0 `1502f667bc6b7f54067dd57d1841cd0a150110a7`,

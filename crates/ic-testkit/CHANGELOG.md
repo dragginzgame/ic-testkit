@@ -8,6 +8,30 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.32.2]
+
+### Changed: common IC tools and Host selection
+
+Shared Tooling 0.3.4 selects Binaryen 133 for the common development toolset.
+Prepare it explicitly with `make install-ic-tools`; offline checks do not install
+or replace tools, and earlier bundles remain retained. Testkit does not select a
+production optimizer policy. Consumers must qualify their own optimized Wasm
+before changing that policy
+([shared #102](https://github.com/dragginzgame/shared-tooling/issues/102)).
+All four Host crates select 0.12.3; their Rust source and public APIs are unchanged
+from 0.12.2, so no API migration or retained-artifact reset is required.
+
+### Fixed: validation runner admission and completion
+
+Shared Tooling 0.3.3 rejects malformed inherited `VALIDATION_RUNNER_DEPTH` before
+creating target logs or dispatching validation. Values must be canonical
+non-negative decimal integers of at most 18 digits; unset or empty selects zero.
+Premature runner exits, including Bash 3.2 expansion errors and early zero exits,
+fail and preserve available runner-source/log evidence. Completed target failures
+retain their original status; fail-fast routing and saved failure evidence are
+unchanged ([shared #104](https://github.com/dragginzgame/shared-tooling/issues/104)).
+No Rust API, installation reset or persisted-format change is required.
+
 ## [0.32.1] - 2026-10-10
 
 ### Fixed: portable tooling and qualification evidence
