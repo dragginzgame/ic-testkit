@@ -34,6 +34,12 @@ for name in "${names[@]}"; do
         arguments+=("$temporary" "$name")
     fi
 done
+# Shared formatter failures retain exact logs under the workflow temp root.
+for formatting_log in "$temporary"/formatting.*; do
+    if [[ -e "$formatting_log" || -L "$formatting_log" ]]; then
+        arguments+=("$temporary" "${formatting_log##*/}")
+    fi
+done
 # Do not traverse an intermediate link into unrelated filesystem contents.
 for parent in target .tools; do
     [[ ! -L "$workspace/$parent" ]] || { echo "linked evidence parent: $parent" >&2; exit 1; }

@@ -1,5 +1,69 @@
 # Host support and qualification
 
+## IC Host 0.10.1 selected-graph qualification for pending 0.28.1
+
+The maintainer's selected lock already uses all four Host crates at 0.10.1;
+no dependency resolution or manifest change ran. Reviewed published source is
+`c7bdc3d4e1c658957202eebd76bff2c51e22f645`. Its filesystem owner now completes
+both syncs for a formerly missing parent even when another writer wins mkdir.
+Existing APIs, publication phases, modes, permissions and v1 formats remain
+unchanged. Testkit's adapters need no further source changes.
+
+With explicitly prepared locked dependencies, focused Linux qualification
+passes: 11 digest/copy tests, 10 cache-filesystem tests, 28 transaction tests
+and 6 provisioning tests; actual Rust 1.88 library/CLI compilation; fresh
+owner CLI build; and offline admission of the retained official Linux 16.1.0
+bundle with PATH=/nonexistent. These are consumer integration checks; the
+deterministic competing-parent/sync-failure tests remain with Host's owner.
+Logs use `/tmp/ic-testkit-0281-host-{cache,digest,cache-fs,transaction,
+provisioning,msrv,cli,server-check}.log`.
+
+The incoming lock remains unchanged (SHA-256
+`80649a8da3e0fec49e325a1651cf69b07b86d0dfc767b055e59b63f97f19ac9f`).
+No server setup/download, tool installation, retained-data reset, function,
+method or type deletion, sibling edit, package-version change, broad gate or
+release ran. Host's exact-source CI
+[37964131536](https://github.com/dragginzgame/ic-host-tooling/actions/runs/37964131536)
+passes; this pending consumer graph still needs its own hosted native results.
+
+## Shared Tooling 0.2.10 adoption for pending 0.28.1
+
+The reviewed snapshot selects committed Shared 0.2.10
+`43a0dc46cdc3c77e70a68e192561642ed50a3e0f`, exported from a clean isolated
+checkout. Its 84-file selection adds only the declared formatter reporter
+companion. Snapshot v1 now records the source package version alongside its
+revision and file digests. Fleet dashboards remain upstream-owned and are not
+added to Testkit's CI or source selection.
+
+The existing shared Rust formatter recipes emit one success line or a short
+failure summary with a retained log. Both consumer fixture projections carry
+the new reporter. Testkit's failure collector archives formatter logs for
+checks and portable jobs, preserving the existing evidence roots, modes and
+non-followed links. The workflow's exact-ID artifact readback now declares
+read-only Actions permission, uses the workflow token, and binds repository
+and run explicitly. Existing payload/digest verification stays in place.
+
+Focused Linux qualification passes: snapshot/pins/actual fmt-check; committed
+upstream snapshot distribution and registry observation fixtures; formatting,
+actual consumer hooks and consumer evidence archive fixtures under Bash 5 and
+genuine Bash 3.2; selected ShellCheck; pinned actionlint; and controlled-effect
+release guards with offline real Cargo metadata. The registry fixture uses
+substitute curl, including its new metadata contract; Testkit's publish policy
+continues using presence-only observation. No live registry upload or
+authenticated artifact download was triggered by these local checks.
+
+Logs use `/tmp/ic-testkit-0281-{shared-export,snapshot,registry,registry-bash32,
+format,format-bash32,hooks,hooks-bash32,evidence,evidence-bash32,checks,
+workflow-prepared,shellcheck,cache,release-guards}.log`. The initial workflow
+lint used a nonexistent local path; that failed attempt remains in
+`/tmp/ic-testkit-0281-workflow.log`, separate from the passing prepared-tool run.
+The maintainer's incoming Cargo.lock selection remains untouched by this
+tooling adoption; locked cache preparation does not resolve upgrades.
+No function, method or type was removed, package version changed, tool installed,
+sibling file edited, broad gate run, or release performed. The pending source
+has no native macOS/hosted readback result; released 0.28.0's successful full CI
+belongs to its own source and does not qualify these changes.
+
 ## IC Host 0.10 adoption for pending 0.28.0
 
 The maintainer-selected manifest and lockfile now use published IC Host 0.10.0,

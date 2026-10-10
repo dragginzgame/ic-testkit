@@ -21,6 +21,7 @@ verify_archive() {
     [[ ! -e "$fixture/unpacked/ic-testkit-portable-fixtures/.git" ]]
     [[ ! -e "$fixture/unpacked/outside" && ! -e "$fixture/unpacked/unrelated" ]]
     [[ "$(cat "$fixture/unpacked/ic-testkit-tools-install.log")" == failed ]]
+    [[ "$(cat "$fixture/unpacked/formatting.fixture")" == 'formatter diagnostic' ]]
     [[ "$(cat "$fixture/unpacked/target/validation-failures/latest.log")" == diagnostic ]]
     [[ "$(cat "$fixture/unpacked/ic-testkit-archive-proof/evidence.tar.gz")" == 'qualification source' ]]
     [[ "$(cat "$fixture/unpacked/ic-testkit-archive-downloaded/evidence.tar.gz")" == 'qualification download' ]]
@@ -56,6 +57,7 @@ printf outside > "$RUNNER_TEMP/outside"
 printf unrelated > "$GITHUB_WORKSPACE/unrelated"
 ln -s ../outside "$RUNNER_TEMP/ic-testkit-portable-fixtures/link"
 printf failed > "$RUNNER_TEMP/ic-testkit-tools-install.log"
+printf 'formatter diagnostic' > "$RUNNER_TEMP/formatting.fixture"
 printf validation > "$RUNNER_TEMP/ic-testkit-validation.log"
 printf diagnostic > "$GITHUB_WORKSPACE/target/validation-failures/latest.log"
 mkdir "$RUNNER_TEMP/ic-testkit-archive-proof" "$RUNNER_TEMP/ic-testkit-archive-downloaded"
@@ -67,6 +69,7 @@ checks="$(bash "$collector" checks)"
 mkdir "$fixture/checks"
 tar -xzf "$checks" -C "$fixture/checks"
 [[ "$(cat "$fixture/checks/ic-testkit-validation.log")" == validation ]]
+[[ "$(cat "$fixture/checks/formatting.fixture")" == 'formatter diagnostic' ]]
 [[ ! -e "$fixture/checks/ic-testkit-portable-fixtures" ]]
 [[ ! -e "$fixture/checks/ic-testkit-archive-proof" && ! -e "$fixture/checks/ic-testkit-archive-downloaded" ]]
 # Do not overwrite a previous attempt or follow intermediate directory links.

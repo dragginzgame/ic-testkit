@@ -8,6 +8,23 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.28.1]
+
+### Changed
+
+- Adopt Shared Tooling 0.2.10 for recorded snapshot versions and concise
+  formatting output, retaining failed formatter diagnostics in CI artifacts
+  ([shared #92](https://github.com/dragginzgame/shared-tooling/issues/92)).
+
+### Fixed
+
+- Use IC Host 0.10.1's parent-directory sync fix so durable publication completes
+  directory syncing even when a competing writer creates the parent first
+  ([host #43](https://github.com/dragginzgame/ic-host-tooling/issues/43)).
+- Bind authenticated CI artifact readback to the current repository and run,
+  preserving exact artifact IDs and payload verification
+  ([shared #93](https://github.com/dragginzgame/shared-tooling/issues/93)).
+
 ## [0.28.0] - 2026-10-09
 
 ### Breaking: IC Host 0.10 durable publication
