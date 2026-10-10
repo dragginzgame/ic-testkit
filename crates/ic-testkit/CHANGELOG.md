@@ -8,6 +8,25 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.32.0]
+
+### Breaking: Host crate identity
+
+All four public Host re-exports now select 0.12.1. Update direct Host dependencies
+to the 0.12 line when passing their types into Testkit or handling its Host
+errors. The Host Rust source is unchanged from 0.11; no caller-method migration,
+retained artifact reset or Cargo build deadline is introduced.
+
+### Fixed: tool setup admission
+
+Shared Tooling 0.3.1 checks complete-set platform/catalog support and the selected
+Rust/Cargo toolchain before aggregate setup downloads anything, with automatic
+Rustup installation disabled. Prepare the declared toolchain explicitly, then
+run `make install-tools`. Missing, changed or invalid host-tool checks identify
+the selected tool, expected version, path and repair command. Offline admission
+and retained installation/evidence policy are unchanged
+([shared #101](https://github.com/dragginzgame/shared-tooling/issues/101)).
+
 ## [0.31.0] - 2026-10-10
 
 ### Breaking: complete tool setup and offline admission

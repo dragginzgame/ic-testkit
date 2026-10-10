@@ -273,8 +273,10 @@ set -euo pipefail
 name="${0##*/}"; name="${name#install-}"; name="${name%-tools.sh}"
 mode=setup
 [[ "${*: -1}" != --check ]] || mode=check
+[[ "${*: -1}" != --preflight ]] || mode=preflight
 printf '%s:%s\n' "$name" "$mode" >> "$TOOL_TRACE"
 [[ "${TOOL_FAIL:-}" != "$name:$mode" ]] || exit 23
+[[ "$mode" != preflight ]] || exit 0
 if [[ "$mode" == setup ]]; then : > "$TOOL_ROOT/$name-ready"
 else [[ -f "$TOOL_ROOT/$name-ready" ]]; fi
 STUB
@@ -306,7 +308,7 @@ STUB
   [[ "$status" == 2 && "$(cat "$TOOL_TRACE")" == host:check ]] || fail 'missing common tool check installed or continued'
   : > "$TOOL_TRACE"
   "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" install-tools > "$TOOL_ROOT/install.log" 2>&1
-  printf '%s\n' host:setup ic:setup rust:setup cargo:build server:setup > "$TOOL_ROOT/expected"
+  printf '%s\n' ic:preflight rust:preflight host:setup ic:setup rust:setup cargo:build server:setup > "$TOOL_ROOT/expected"
   cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'complete setup ordering changed'
   cp "$TOOL_ROOT/server-bytes" "$TOOL_ROOT/retained-server"
   : > "$TOOL_TRACE"
@@ -317,10 +319,20 @@ STUB
   : > "$TOOL_TRACE"
   status=0
   TOOL_FAIL=rust:setup "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" install-tools > "$TOOL_ROOT/failed.log" 2>&1 || status=$?
-  printf '%s\n' host:setup ic:setup rust:setup > "$TOOL_ROOT/expected"
+  printf '%s\n' ic:preflight rust:preflight host:setup ic:setup rust:setup > "$TOOL_ROOT/expected"
   [[ "$status" == 2 ]] || fail 'setup failure status lost'
   cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'failed common setup dispatched product'
   cmp "$TOOL_ROOT/server-bytes" "$TOOL_ROOT/retained-server"
+  for prerequisite in ic rust; do
+    : > "$TOOL_TRACE"
+    status=0
+    TOOL_FAIL="$prerequisite:preflight" "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" install-tools > "$TOOL_ROOT/preflight-$prerequisite.log" 2>&1 || status=$?
+    printf '%s\n' ic:preflight > "$TOOL_ROOT/expected"
+    [[ "$prerequisite" != rust ]] || printf '%s\n' rust:preflight >> "$TOOL_ROOT/expected"
+    [[ "$status" == 2 ]] || fail 'preflight failure status lost'
+    cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'preflight failure dispatched setup'
+    cmp "$TOOL_ROOT/server-bytes" "$TOOL_ROOT/retained-server"
+  done
   rm "$TOOL_ROOT/target/debug/ic-testkit-server"
   : > "$TOOL_TRACE"
   status=0

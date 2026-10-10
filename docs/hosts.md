@@ -1,5 +1,44 @@
 # Host support and qualification
 
+## Shared 0.3.1 and Host 0.12.1 for pending 0.32.0
+
+Based on released Testkit 0.31.0 `f1ae9e6d3b0f3f20ec1e1f1b49c8b1dea3155e0a`,
+the isolated canonical export selects Shared 0.3.1
+`fa452afaa5012866eb1c20820dfa8038c106e7ec`, preserving the 84-file roster and
+consumer pin catalogs. The incoming manifest requirements already select Host
+0.12, and its lock already selects all four published 0.12.1 crates; both are
+preserved. Reviewed Host source is `e5ecfa06c14d144cfeb85ea89d65906b1bf81636`.
+Its Rust source is unchanged from 0.11; the public reexport dependency identity
+change requires the 0.32 minor boundary. Manifest package version stays 0.31.0.
+Lock SHA-256 is
+`56e6a6e9a69fc1ca67ad2f2d0d9c1f18b5c567003baacf5743509bdfb8a88c7d`.
+Later uncommitted sibling work is excluded.
+
+Focused Linux qualification passes: locked all-target compilation, Rust 1.88
+library/CLI compilation, and all seven CLI provisioning tests. Shared host, IC
+and Rust installer fixtures, projected committed aggregate/preflight fixtures,
+and actual consumer release guards pass under Bash 5 and genuine Bash 3.2.
+The consumer's parallel-Make fixture now covers both preflight failure stops
+before setup/product dispatch and unchanged retained server bytes. Projected
+upstream fixtures use the exact selected installers/include/catalogs and prove
+cold and retained-state preflight, missing/unavailable toolchain refusal and
+unsupported-platform refusal. Installer effects remain substituted; these are
+not real native installation or multi-hour Cargo build measurements.
+
+Logs use `/tmp/ic-testkit-0320-{export,fetch,cargo-final,msrv,cli,host,host-bash32,
+ic,ic-bash32,rust,rust-bash32,commands,commands-bash32,guards-final,guards-bash32,
+shellcheck,tooling}.log`. Initial Cargo network-sandbox failure remains in
+`cargo.log`; the consequent uncached offline metadata refusal remains in
+`guards.log` and its retained fixture. Explicit locked fetch prepared the selected
+cache before rerunning. Existing jobserver warnings remain a separate upstream
+concern under [Shared #99](https://github.com/dragginzgame/shared-tooling/issues/99).
+No real tool/server setup, broad gate, sibling edit, release or CI rerun occurred.
+At inspection, exact released-source runs were queued for
+[Shared](https://github.com/dragginzgame/shared-tooling/actions/runs/38049622600),
+[Host](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38050076519)
+and [Testkit 0.31](https://github.com/dragginzgame/ic-testkit/actions/runs/38045250725).
+Native/full qualification of this pending consumer source remains outstanding.
+
 ## Shared Tooling 0.3.0 for pending 0.31.0
 
 Based on released Testkit 0.30.0 `6ac161b8ed689012bf8b0ce926946f94ea9f407d`,

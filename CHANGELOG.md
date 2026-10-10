@@ -6,6 +6,21 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.32.0]
+
+### Breaking
+
+- Select Host 0.12.1 for all four publicly re-exported Host crates. Downstream
+  code exchanging Host types with Testkit must select the 0.12 line too; Rust
+  APIs and retained artifact formats are otherwise unchanged.
+
+### Fixed
+
+- Adopt Shared Tooling 0.3.1: refuse unsupported complete-toolset platforms and
+  unavailable Rust/Cargo toolchains before setup downloads, and identify exact
+  host-tool check failures with repair instructions
+  ([shared #101](https://github.com/dragginzgame/shared-tooling/issues/101)).
+
 ## [0.31.0] - 2026-10-10
 
 ### Breaking
