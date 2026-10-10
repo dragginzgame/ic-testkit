@@ -8,7 +8,7 @@ PocketIC-oriented test utilities for Internet Computer canister tests.
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.28"
+ic-testkit = "0.29"
 ```
 
 The published MSRV is Rust 1.88, and the selected PocketIC line is 16.
