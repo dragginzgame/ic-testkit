@@ -6,6 +6,36 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.33.1]
+
+### Fixed
+
+- Adopt Shared Tooling 0.3.7: stop pre-commit formatting on failed Git tree
+  observations, preserving the original status, working files and staging
+  ([shared #106](https://github.com/dragginzgame/shared-tooling/issues/106)).
+
+- Select Host 0.12.6 so durable publication rejects NUL-containing paths before
+  creating parent directories
+  ([host #54](https://github.com/dragginzgame/ic-host-tooling/issues/54)).
+
+- Make portable fixture assertions and selected Cargo-tool admission fail
+  explicitly under Bash 3.2, retaining failed evidence instead of continuing
+  after a rejected assertion
+  ([shared #107](https://github.com/dragginzgame/shared-tooling/issues/107)).
+
+### Added
+
+- Select published Cargo executables from an explicit consumer lockfile during
+  setup or offline admission, without resolving dependencies. Selection drift
+  retains installation evidence
+  ([shared #96](https://github.com/dragginzgame/shared-tooling/issues/96)).
+
+### Changed
+
+- Keep only the newest CI run per workflow and branch or PR, cancelling older
+  queued and running checks while retaining the existing host matrix and gates
+  ([Shared #108](https://github.com/dragginzgame/shared-tooling/issues/108)).
+
 ## [0.33.0] - 2026-10-10
 
 ### Changed

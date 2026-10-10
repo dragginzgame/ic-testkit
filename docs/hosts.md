@@ -1,5 +1,74 @@
 # Host support and qualification
 
+## Host 0.12.5 for pending 0.33.1
+
+On released Testkit 0.33.0 `22d07d2c0a186ffe7dfa48d51ddc243a56c07dda`,
+the maintainer's incoming lock selects all four Host 0.12.5 crates. Reviewed
+Host source is `85f051c60b2a6f37717c4274b1e31caf5b9d3453`. Its runtime delta
+rejects NUL publication paths before creating parents; the other three crates'
+Rust source and public APIs are unchanged. Testkit already delegates durable
+publication to Host, so no local path-admission shim is needed. The incoming lock
+is preserved byte-for-byte with SHA-256
+`c510fef5d316a76759c92c938610ec97ec32a364e42fb95d54f1c222bca3af2e`;
+explicit locked fetch prepares it without resolution changes. Package metadata
+remains 0.33.0.
+
+Focused Linux qualification passes: all twelve digest/copy cases and 28 artifact
+transaction cases, then the expanded atomic-copy rejection case covering NUL in
+a filename and parent component alongside directory-required suffixes. It
+verifies retained source/destination context, Host's before-publication
+`InvalidInput` cause without cleanup errors, unchanged original output and no
+new parent/staging entries. Locked all-target compilation, Rust 1.88 library/CLI
+compilation and strict Clippy including test callers pass. The final expanded
+case also compiles on the current toolchain after the earlier MSRV check;
+fresh MSRV execution of that test is not claimed. Formatting and declaration
+pin checks pass. Logs are
+`/tmp/ic-testkit-0331-host0125-{fetch,digest,transaction,check,msrv,invalid-path,
+clippy,tooling}.log`.
+
+[Host 0.12.5 CI](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38061390080)
+remains queued at inspection. No broad consumer gate, sibling edit, tool setup,
+release or CI rerun occurred. Native macOS and delivered-source acceptance are
+separate; consumer feedback is recorded under
+[host #54](https://github.com/dragginzgame/ic-host-tooling/issues/54).
+
+## Shared 0.3.6 for pending 0.33.1
+
+Based on released Testkit 0.33.0 `22d07d2c0a186ffe7dfa48d51ddc243a56c07dda`,
+an isolated clean canonical export adopts Shared 0.3.6
+`0604bfd730ec7ec288cd2cfdad217a0d42bf256b` with the unchanged 85-file roster.
+The selected hook admits failed Git observations before comparing tree IDs;
+the selected Rust installer and its fixture add explicit lockfile selection.
+Producer-only hook/checker/runner fixtures are not added to Testkit's roster.
+The adopted baseline remains unchanged. Package metadata, lock and executable
+pins stay unchanged; lock SHA-256 is
+`dd1913627a5d0428337eef61da6cc8783febd6f6b4d7c289e5a3904034789963`.
+
+Focused Linux checks pass under Bash 5 and genuine Bash 3.2, including nested
+Bash selection through a PATH shim: the selected Rust installer fixture, the
+committed upstream hook suite against identical selected hook bytes, and the
+actual consumer hook qualifier against Testkit's formatting targets. Producer
+hook cases inject failures at all three real Git tree observations, printing
+the matching ID then returning 23; status, staging and working bytes remain
+preserved, with later dispatch refused. Consumer cases verify actual formatter
+discovery, repeated formatting, partial-staging refusal, missing/wrong formatter
+admission, installation selection and lock preservation. Cargo installation in
+the Rust fixture is substituted; lock ambiguity/source/version rejection,
+offline reuse, changed selection and retained failures exercise the real helper.
+No actual executable setup or Cargo compilation is performed. ShellCheck,
+snapshot, declaration pins, formatting and offline Rust-tool admission pass.
+
+Logs are `/tmp/ic-testkit-0331-{export,rust,rust-bash32,shared-hooks,
+shared-hooks-bash32,hooks,hooks-bash32,shellcheck,tooling}.log`.
+No broad consumer gate, sibling edit, installation, release or CI rerun occurred.
+At inspection exact-source
+[released Testkit 0.33.0](https://github.com/dragginzgame/ic-testkit/actions/runs/38060751752)
+and [Shared 0.3.6](https://github.com/dragginzgame/shared-tooling/actions/runs/38061078001)
+CI remain queued. Linux Bash 3.2 is not native macOS qualification. Adoption
+feedback remains under
+[shared #106](https://github.com/dragginzgame/shared-tooling/issues/106) and
+[shared #96](https://github.com/dragginzgame/shared-tooling/issues/96).
+
 ## Incoming Host 0.12.4 selection for pending 0.33.0
 
 The maintainer's incoming lock selects all four Host 0.12.4 crates, reviewed

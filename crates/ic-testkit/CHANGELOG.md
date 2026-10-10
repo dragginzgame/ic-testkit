@@ -8,6 +8,48 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.33.1]
+
+### Fixed: formatting-hook observation failures
+
+Shared Tooling 0.3.7 admits the status of each Git index-tree observation before
+comparing its output. A failed observation stops formatting or publication of
+formatted files even when Git prints the expected tree ID; the error status and
+original working/index bytes are preserved
+([shared #106](https://github.com/dragginzgame/shared-tooling/issues/106)).
+
+### Fixed: malformed durable-publication paths
+
+All four Host crates select 0.12.6; 0.12.6 adds CI tooling changes only over
+0.12.5. Durable writes reject NUL-containing filenames
+and parent components before creating directories; Testkit's atomic artifact
+copy retains the original `InvalidInput` publication cause and existing output.
+Public Host signatures and retained artifact formats are unchanged
+([host #54](https://github.com/dragginzgame/ic-host-tooling/issues/54)).
+
+### Fixed: portable assertion failures
+
+Mandatory portable fixture comparisons fail explicitly on Bash 3.2. Selected
+Cargo executable installation also refuses an absent host identity or a
+non-executable candidate before activation, preserving failure evidence
+([shared #107](https://github.com/dragginzgame/shared-tooling/issues/107)).
+
+### Added: locked Cargo executable selection
+
+The shared Rust tool installer accepts `--lockfile FILE` instead of an explicit
+`--version` for a selected published Cargo executable. Setup and offline admission
+share exact package/source/version selection; failed or changed selections retain
+build evidence. Testkit continues building its own owner CLI from source, without
+installing its published CLI into its own workflow
+([shared #96](https://github.com/dragginzgame/shared-tooling/issues/96)).
+No Rust API, retained-format or installation-reset changes are required.
+
+### Changed: CI cancellation
+
+- Keep only the newest CI run per workflow and branch or PR, cancelling older
+  queued and running checks while retaining the existing host matrix and gates
+  ([Shared #108](https://github.com/dragginzgame/shared-tooling/issues/108)).
+
 ## [0.33.0] - 2026-10-10
 
 ### Changed
