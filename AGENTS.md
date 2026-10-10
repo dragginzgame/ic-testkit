@@ -33,7 +33,7 @@ Use `make shared-tooling-check` after snapshot changes and the focused commands
 listed in that matrix after portable tooling changes. Full CI and release gates
 remain maintainer-owned unless explicitly requested.
 
-Developer setup uses `make install-tools`, then `make install-format-tools install-hooks`.
+Developer setup prepares the Rust toolchain, uses `make install-tools`, then `make install-hooks`.
 `make tools-check` and `make dependency-pins-check` verify prepared selections
 offline; they never install tools. Shared audit methods live in `audits/`;
 product boundaries and focused qualification remain in this overlay and the

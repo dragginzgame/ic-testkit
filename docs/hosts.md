@@ -1,5 +1,47 @@
 # Host support and qualification
 
+## Shared Tooling 0.3.0 for pending 0.31.0
+
+Based on released Testkit 0.30.0 `6ac161b8ed689012bf8b0ce926946f94ea9f407d`,
+the isolated canonical export selects committed Shared Tooling 0.3.0
+`88a73139a0f083344c41a6f6f4b5c3a8aca7dc1d`, retaining the 84-file roster.
+Uncommitted sibling changes are excluded. The complete common toolset contract
+requires a minor release; both pending changelog views select 0.31.0 while the
+maintainer-owned manifest version remains 0.30.0. Dependency selections and the
+lockfile remain unchanged (SHA-256
+`45dc20ba66d7188fa0552c29de229ee75cd318702ccc932c568be3476d73a919`).
+
+The actual root Makefile registers PocketIC setup/check through Shared's ordered
+product target lists. Explicit setup prepares host, IC and Cargo tools before
+building the owning CLI and preparing PocketIC. Offline admission checks the same
+order and refuses a missing CLI without compiling it. CI and release preflight
+use that aggregate; source/candidate admission still precedes preflight setup.
+Rust toolchain preparation remains explicit. There is no published Testkit CLI
+self-installer, retained installation reset or stored-format change.
+
+Focused Linux qualification passes under Bash 5 and genuine Bash 3.2: host
+installer fixtures, the committed upstream aggregate fixture projected onto the
+selected consumer include, actual consumer Make routing under `-j4`, release
+guards/metadata qualification, and failure-evidence archive/retention fixtures.
+Consumer fixtures substitute installers, Cargo and CLI effects; they prove
+ordering, failure stops, setup-free admission and preservation of fixture server
+bytes, rather than native installation behavior. ShellCheck, actionlint,
+snapshot integrity, dependency pins, formatting and diff checks pass.
+
+Logs use `/tmp/ic-testkit-0310-{host-tools,host-bash32,commands,commands-bash32,
+guards-current,guards-bash32,evidence,evidence-bash32,shellcheck-final,
+actionlint-final,checks}.log`. Initial fixture projection failures remain in
+`guards.log` and `guards-final.log`; the initial workflow style failure remains
+in `actionlint.log`, with the same prefix. No broad local gate, actual tool/server
+installation, Cargo compilation, sibling edit, release or CI rerun was performed.
+At inspection the released Testkit 0.30.0 run
+[38043841501](https://github.com/dragginzgame/ic-testkit/actions/runs/38043841501)
+and Shared 0.3.0 run
+[38044218125](https://github.com/dragginzgame/shared-tooling/actions/runs/38044218125)
+were queued. Native setup and full delivery qualification for this pending
+consumer source remain outstanding; upstream and released-source results do not
+qualify these local edits.
+
 ## Bounded diagnostics and Host probe capture for pending 0.30.0
 
 The maintainer authorized the minor boundary for

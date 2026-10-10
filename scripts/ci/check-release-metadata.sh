@@ -93,7 +93,7 @@ cat > "$work_dir/bin/make" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  '--no-print-directory install-tools' | '--no-print-directory install-format-tools')
+  '--no-print-directory install-tools')
     printf '%s\n' "$*" >> tool-trace
     printf '%s\n' "$*" >> preparation-trace
     exit "${ADAPTER_SETUP_STATUS:-0}" ;;
@@ -222,8 +222,7 @@ expect_failure() {
 # substituted; these cases do not install tools or run a complete gate.
 new_fixture tool-ordering
 ADAPTER_PARALLEL=true adapter preflight || fail 'selected tool preparation failed'
-printf '%s\n' '--no-print-directory install-tools' \
-  '--no-print-directory install-format-tools' '--no-print-directory tools-check' \
+printf '%s\n' '--no-print-directory install-tools' '--no-print-directory tools-check' \
   '--no-print-directory format-tools-check' > expected-tools
 cmp expected-tools tool-trace || fail 'selected tool preparation order changed'
 printf 'fetch\n' > expected-preparation

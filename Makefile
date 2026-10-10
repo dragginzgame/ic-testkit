@@ -1,7 +1,7 @@
 .PHONY: \
 	build-test-canisters check check-wasm ci clean \
 	clippy docs-check ensure-clean git-hooks-check help \
-	install-format-tools install-hooks installation-check msrv package publish \
+	install-hooks installation-check msrv package publish \
 	publish-dry-run publish-guards-check release-check \
 	release-guards-check \
 	release-version release-preflight release-verify release-prepare-version \
@@ -14,6 +14,8 @@ IC_TOOL_PINS ?= $(REPO_ROOT)ci/ic-tools.tsv
 HOST_TOOL_VERSIONS ?= $(REPO_ROOT)ci/tool-versions.env
 
 SHARED_TOOLING_ROOT := $(REPO_ROOT)
+LOCAL_TOOL_INSTALL_TARGETS := install-server
+LOCAL_TOOL_CHECK_TARGETS := server-check
 include $(REPO_ROOT)make/tools.mk
 include $(REPO_ROOT)make/release.mk
 include $(REPO_ROOT)make/rust-format.mk
@@ -27,7 +29,9 @@ build-server-cli:
 install-server: build-server-cli
 	target/debug/ic-testkit-server setup
 
-server-check: build-server-cli
+server-check:
+	@test -x "$(REPO_ROOT)target/debug/ic-testkit-server" || { \
+		echo 'Owner CLI missing; run make install-tools during explicit setup.' >&2; exit 1; }
 	target/debug/ic-testkit-server check
 
 MSRV ?= 1.88.0
@@ -41,13 +45,12 @@ RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 help:
 	@echo "Available commands:"
 	@echo ""
-	@echo "  install-tools   Explicitly install pinned jq/yq, ripgrep, cloc and IC executables"
+	@echo "  install-tools   Prepare common host, IC and Cargo tools, then PocketIC"
 	@echo "  install-server  Build the owner CLI and explicitly prepare PocketIC"
-	@echo "  server-check    Build the owner CLI and verify the prepared bundle offline"
-	@echo "  tools-check     Verify installed host and IC tools offline"
+	@echo "  server-check    Verify the prepared owner CLI and PocketIC bundle offline"
+	@echo "  tools-check     Verify common and product tools offline"
 	@echo "  cloc            Count this workspace's Rust code"
 	@echo "  dependency-pins-check Check dependency declarations and tracked lockfiles offline"
-	@echo "  install-format-tools Install the pinned checkout-local Rust tool bundle"
 	@echo "  install-hooks   Enable the repository-local formatting hook"
 	@echo "  fmt             Sort Cargo manifests and format all workspace Rust code"
 	@echo "  fmt-check       Check manifest sorting and Rust formatting without mutation"
@@ -96,8 +99,6 @@ build-test-canisters:
 test-canisters: build-server-cli
 	@server="$$(target/debug/ic-testkit-server check)" || exit $$?; \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test canister_benchmark -- --nocapture
-
-install-format-tools: install-rust-tools
 
 dependency-pins-check:
 	bash scripts/ci/check-dependency-pins.sh --cargo-inheritance

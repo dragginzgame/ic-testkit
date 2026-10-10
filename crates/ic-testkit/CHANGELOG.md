@@ -8,6 +8,27 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.31.0]
+
+### Breaking: complete tool setup and offline admission
+
+Adopt Shared Tooling 0.3.0. Prepare the declared Rust toolchain, then use
+`make install-tools` to prepare host, IC and Cargo tools in order, followed by
+the owner CLI and PocketIC. `make tools-check` checks those same selections
+offline. Product targets are registered through the shared ordered lists.
+Replace `make install-format-tools` with `make install-tools`; the redundant
+target is removed. `make server-check` now requires the prepared owner CLI
+instead of compiling it. Missing prerequisites stop checks before builds or
+installation. Release preflight and native CI use the same aggregate, preserving
+source/candidate admission and explicit setup boundaries
+([#50](https://github.com/dragginzgame/ic-testkit/issues/50),
+[shared #98](https://github.com/dragginzgame/shared-tooling/issues/98)).
+
+Direct host-installer callers must stop passing `--with-ripgrep`/`--with-cloc`;
+the complete host set is mandatory. Existing incomplete toolsets need explicit
+setup; older selections, receipts, failed attempts and server bytes are retained.
+No Rust library API, persisted format or installation reset changes are required.
+
 ## [0.30.0] - 2026-10-10
 
 ### Breaking: bounded diagnostics and complete probe output

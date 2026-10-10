@@ -256,4 +256,78 @@ bash "${repo_root}/scripts/ci/check-release-commands.sh" "${repo_root}" \
   make/tools.mk make/release.mk make/rust-format.mk make/execution.mk \
   scripts/ci/check-make-execution.sh scripts/ci/run-formatting.sh
 
+# Qualify the actual consumer's complete aggregates with substituted installers,
+# Cargo and owner CLI. Parallel Make must retain ordering and checks stay offline.
+(
+  unset MAKEFLAGS MFLAGS MAKEOVERRIDES GNUMAKEFLAGS MAKEFILES
+  export TOOL_ROOT="${work_dir}/tools" TOOL_TRACE="${work_dir}/tools/trace"
+  mkdir -p "$TOOL_ROOT/make" "$TOOL_ROOT/scripts/dev" "$TOOL_ROOT/scripts/ci" "$TOOL_ROOT/bin" "$TOOL_ROOT/ci"
+  cp "$repo_root/Makefile" "$TOOL_ROOT/"
+  cp "$repo_root"/make/*.mk "$TOOL_ROOT/make/"
+  cp "$repo_root/ci/tool-versions.env" "$TOOL_ROOT/ci/"
+  cp "$repo_root/scripts/ci/check-make-execution.sh" "$TOOL_ROOT/scripts/ci/"
+  for name in host ic rust; do
+    cat > "$TOOL_ROOT/scripts/dev/install-$name-tools.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+name="${0##*/}"; name="${name#install-}"; name="${name%-tools.sh}"
+mode=setup
+[[ "${*: -1}" != --check ]] || mode=check
+printf '%s:%s\n' "$name" "$mode" >> "$TOOL_TRACE"
+[[ "${TOOL_FAIL:-}" != "$name:$mode" ]] || exit 23
+if [[ "$mode" == setup ]]; then : > "$TOOL_ROOT/$name-ready"
+else [[ -f "$TOOL_ROOT/$name-ready" ]]; fi
+STUB
+  done
+  cat > "$TOOL_ROOT/bin/cargo" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == build && "$*" == *--locked* ]] || exit 97
+printf 'cargo:build\n' >> "$TOOL_TRACE"
+mkdir -p "$TOOL_ROOT/target/debug"
+cat > "$TOOL_ROOT/target/debug/ic-testkit-server" <<'SERVER'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'server:%s\n' "$1" >> "$TOOL_TRACE"
+case "$1" in
+  setup) printf 'retained server bytes\n' > "$TOOL_ROOT/server-bytes" ;;
+  check) [[ -f "$TOOL_ROOT/server-bytes" ]]; printf '/prepared/server\n' ;;
+  *) exit 97 ;;
+esac
+SERVER
+chmod +x "$TOOL_ROOT/target/debug/ic-testkit-server"
+STUB
+  chmod +x "$TOOL_ROOT/bin/cargo"
+  export PATH="$TOOL_ROOT/bin:$PATH"
+  "$make_bin" --no-print-directory -C "$TOOL_ROOT" > "$TOOL_ROOT/help.log"
+  [[ ! -e "$TOOL_TRACE" ]] || fail 'default goal dispatched tools'
+  status=0
+  "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" tools-check > "$TOOL_ROOT/missing.log" 2>&1 || status=$?
+  [[ "$status" == 2 && "$(cat "$TOOL_TRACE")" == host:check ]] || fail 'missing common tool check installed or continued'
+  : > "$TOOL_TRACE"
+  "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" install-tools > "$TOOL_ROOT/install.log" 2>&1
+  printf '%s\n' host:setup ic:setup rust:setup cargo:build server:setup > "$TOOL_ROOT/expected"
+  cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'complete setup ordering changed'
+  cp "$TOOL_ROOT/server-bytes" "$TOOL_ROOT/retained-server"
+  : > "$TOOL_TRACE"
+  "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" tools-check > "$TOOL_ROOT/check.log" 2>&1
+  printf '%s\n' host:check ic:check rust:check server:check > "$TOOL_ROOT/expected"
+  cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'complete offline check rebuilt or installed'
+  cmp "$TOOL_ROOT/server-bytes" "$TOOL_ROOT/retained-server"
+  : > "$TOOL_TRACE"
+  status=0
+  TOOL_FAIL=rust:setup "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" install-tools > "$TOOL_ROOT/failed.log" 2>&1 || status=$?
+  printf '%s\n' host:setup ic:setup rust:setup > "$TOOL_ROOT/expected"
+  [[ "$status" == 2 ]] || fail 'setup failure status lost'
+  cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'failed common setup dispatched product'
+  cmp "$TOOL_ROOT/server-bytes" "$TOOL_ROOT/retained-server"
+  rm "$TOOL_ROOT/target/debug/ic-testkit-server"
+  : > "$TOOL_TRACE"
+  status=0
+  "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" tools-check > "$TOOL_ROOT/missing-cli.log" 2>&1 || status=$?
+  printf '%s\n' host:check ic:check rust:check > "$TOOL_ROOT/expected"
+  [[ "$status" == 2 ]] || fail 'missing owner CLI was accepted'
+  cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'missing CLI check compiled or installed'
+)
+
 /bin/bash "${repo_root}/scripts/ci/check-release-metadata.sh"

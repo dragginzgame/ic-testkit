@@ -406,8 +406,9 @@ writers. Parent traversal and symlinked directory components are refused. Checks
 create no installation files; the version probe executes authenticated bytes.
 
 Shared Tooling 0.2.0 prepares five generic IC tools; PocketIC is provisioned
-only by Testkit. Run `make install-tools install-server` during explicit setup
-and `make tools-check server-check` for offline verification. Existing shared
+only by Testkit. Run `make install-tools` during explicit setup
+and `make tools-check` for offline verification; these aggregates include the
+owning PocketIC targets after the complete common toolset. Existing shared
 bundles, receipts and failed attempts remain intact; rerun `make install-ic-tools`
 to activate the new five-tool selection. The ownership handoff is tracked in
 [#38](https://github.com/dragginzgame/ic-testkit/issues/38).
@@ -1704,17 +1705,19 @@ the pinned checkout-local Rust tool bundle, and the reviewed repository-local ho
 
 ```bash
 rustup component add rustfmt
-make install-tools install-server
-make install-format-tools install-hooks
-make tools-check rust-tools-check server-check dependency-pins-check
+make install-tools
+make install-hooks
+make tools-check dependency-pins-check
 ```
 
 The selected versions are recorded in `ci/tool-versions.env` and `ci/ic-tools.tsv`
 and used by CI too. `make install-tools` prepares pinned jq/yq, ripgrep with
-PCRE2, cloc and the common
-IC executables under `.tools/host/bin` and `.tools/ic/bin`.
-`make install-format-tools` delegates to the shared Rust installer, preparing
-`cargo-sort`, `cargo-sort-derives` and `candid-extractor` under `.tools/rust/bin`.
+PCRE2, cloc, common IC executables and the Cargo toolset in order under
+`.tools/host/bin`, `.tools/ic/bin` and `.tools/rust/bin`, then builds the owning
+CLI and prepares PocketIC. The Cargo set includes `cargo-sort`,
+`cargo-sort-derives` and `candid-extractor`. `make tools-check` verifies all
+selections and the prepared server offline, without compiling or installing
+the owner CLI. Prepare the declared Rust toolchain before explicit setup.
 Make and the formatting hook select these local tool directories; direct Cargo
 commands should export them explicitly:
 

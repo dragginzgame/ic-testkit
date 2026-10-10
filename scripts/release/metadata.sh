@@ -153,9 +153,8 @@ case "$mode" in
     # An explicit offline policy still fails on a miss; never retry it online.
     cargo fetch --manifest-path "$cache_manifest" --locked
     # Source admission and saved-graph reconciliation precede setup. Reuse the
-    # consumer's selected tool owners, without provisioning PocketIC here.
+    # consumer's common and registered product tool owners.
     make --no-print-directory install-tools
-    make --no-print-directory install-format-tools
     make --no-print-directory tools-check
     make --no-print-directory format-tools-check
     ;;

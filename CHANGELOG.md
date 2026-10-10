@@ -6,6 +6,18 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.31.0]
+
+### Breaking
+
+- Adopt Shared Tooling 0.3.0's complete setup/check aggregates: host, IC and
+  Cargo tools, followed by Testkit's PocketIC setup/check. Prepare the Rust
+  toolchain, run `make install-tools`, then `make tools-check`. The redundant
+  `install-format-tools` target is removed; server checks require a prepared
+  owner CLI and never build it. Existing installations and evidence are retained
+  ([#50](https://github.com/dragginzgame/ic-testkit/issues/50),
+  [shared #98](https://github.com/dragginzgame/shared-tooling/issues/98)).
+
 ## [0.30.0] - 2026-10-10
 
 ### Breaking

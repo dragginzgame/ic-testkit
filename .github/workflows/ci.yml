@@ -66,14 +66,11 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - name: Prepare the pinned manifest formatter
-        run: make install-format-tools
-      - name: Prepare pinned local host and IC tools
+      - name: Prepare complete common and product tools
         shell: bash
         run: |
-          make install-tools install-server 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
-          echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
-          echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
+          make install-tools 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
+          printf '%s\n' "$GITHUB_WORKSPACE/.tools/host/bin" "$GITHUB_WORKSPACE/.tools/ic/bin" "$GITHUB_WORKSPACE/.tools/rust/bin" >> "$GITHUB_PATH"
           server="$(target/debug/ic-testkit-server check)"
           echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Prepare selected dependencies
@@ -118,14 +115,11 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - name: Prepare the pinned manifest formatter
-        run: make install-format-tools
-      - name: Prepare pinned local host and IC tools with the system Bash
+      - name: Prepare complete common and product tools with the system Bash
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         run: |
-          make install-tools install-server 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
-          echo "$GITHUB_WORKSPACE/.tools/host/bin" >> "$GITHUB_PATH"
-          echo "$GITHUB_WORKSPACE/.tools/ic/bin" >> "$GITHUB_PATH"
+          make install-tools 2>&1 | tee "$RUNNER_TEMP/ic-testkit-tools-install.log"
+          printf '%s\n' "$GITHUB_WORKSPACE/.tools/host/bin" "$GITHUB_WORKSPACE/.tools/ic/bin" "$GITHUB_WORKSPACE/.tools/rust/bin" >> "$GITHUB_PATH"
           server="$(target/debug/ic-testkit-server check)"
           echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Select system Bash on macOS
@@ -233,10 +227,10 @@ jobs:
         run: echo "RUSTUP_TOOLCHAIN=$IC_TESTKIT_INTERNAL_TOOLCHAIN" >> "$GITHUB_ENV"
       # Swatinem/rust-cache v2
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-      - name: Prepare pinned local host and IC tools
+      - name: Prepare complete common and product tools
         shell: bash
         run: |
-          make install-tools install-server
+          make install-tools
           make tools-check
           server="$(target/debug/ic-testkit-server check)"
           echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
