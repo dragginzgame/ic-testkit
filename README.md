@@ -731,7 +731,9 @@ Recipes that wrap PocketIC's currently unstructured transport failures can use
 `stage.default_rebuild_reason()` otherwise. The classifier searches the error
 source chain and recognizes testkit transport error kinds directly. For
 unstructured errors it requires a maintained reqwest error shape, an instance
-URL and a recognized transport source. Generic `channel closed` or
+URL and a recognized transport source, including OS connection resets during
+HTTP requests. Such resets can select the recipe's dead-transport rebuild path.
+Generic `channel closed` or
 `ConnectionRefused` text and bare I/O errors do not qualify. Use it only for
 errors originating in PocketIC operations; it is a heuristic, not proof that
 an instance or server has died.

@@ -61,6 +61,63 @@ fn refused_creation_returns_the_standalone_instance() {
 
 #[cfg(unix)]
 #[test]
+fn reset_creation_returns_the_standalone_instance() {
+    run_reset_operation_probe(
+        "refused_creation_probe",
+        "POST /instances/0/update/submit_ingress_message HTTP/1.1",
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn reset_instance_request_is_classified_at_the_call_boundary() {
+    run_reset_operation_probe(
+        "refused_instance_request_probe",
+        "POST /instances/0/read/query HTTP/1.1",
+    );
+}
+
+#[cfg(unix)]
+fn run_reset_operation_probe(name: &str, expected_request: &str) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind resetting PocketIC peer");
+    listener.set_nonblocking(true).expect("bound accept wait");
+    let mut probe = spawn_probe(&listener, name);
+    create_instance(&listener);
+    probe.release();
+    let (request, line) = accept_request(&listener);
+    assert_eq!(line, expected_request);
+    let linger = libc::linger {
+        l_onoff: 1,
+        l_linger: 0,
+    };
+    // SAFETY: request owns a live socket and linger points to the declared
+    // SO_LINGER value for the duration of setsockopt.
+    let status = unsafe {
+        libc::setsockopt(
+            request.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_LINGER,
+            std::ptr::from_ref(&linger).cast(),
+            std::mem::size_of_val(&linger)
+                .try_into()
+                .expect("linger size"),
+        )
+    };
+    assert_eq!(
+        status,
+        0,
+        "configure reset: {}",
+        std::io::Error::last_os_error()
+    );
+    // Reset an accepted, fully read request before sending any HTTP response.
+    // This exercises a different boundary from refusing a new connection.
+    drop(request);
+    drop(listener);
+    assert!(probe.wait().success(), "real reqwest reset must qualify");
+}
+
+#[cfg(unix)]
+#[test]
 fn request_reader_handles_an_initially_nonblocking_stream() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind synthetic peer");
     listener.set_nonblocking(true).expect("bound accept wait");
@@ -115,13 +172,7 @@ fn run_refused_operation_probe(name: &str) {
     create_instance(&listener);
     // The probe waits on stdin so its first call starts after the peer is gone.
     drop(listener);
-    probe
-        .0
-        .stdin
-        .take()
-        .expect("probe release pipe")
-        .write_all(b"x")
-        .expect("release refused call");
+    probe.release();
     assert!(probe.wait().success(), "real reqwest refusal must qualify");
 }
 
@@ -298,6 +349,15 @@ fn respond(stream: &mut TcpStream, body: &str) {
 struct Probe(Child);
 
 impl Probe {
+    fn release(&mut self) {
+        self.0
+            .stdin
+            .take()
+            .expect("probe release pipe")
+            .write_all(b"x")
+            .expect("release transport call");
+    }
+
     fn wait(&mut self) -> ExitStatus {
         let deadline = Instant::now() + DEADLOCK_ESCAPE;
         loop {

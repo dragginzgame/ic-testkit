@@ -78,6 +78,7 @@ pub(super) fn panic_is_dead_instance_transport(payload: &(dyn Any + Send)) -> bo
 /// PocketIC instance URL and a recognized transport source, optionally prefixed
 /// by PocketIC's HTTP panic context. Generic application messages and bare I/O
 /// error kinds do not qualify.
+/// Recognized sources include OS connection resets during an HTTP request.
 ///
 /// Use this only for errors originating in a PocketIC operation. This is a
 /// message-based heuristic, not proof that the server or instance has died;
@@ -168,7 +169,12 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
         .or_else(|| source.strip_prefix("hyper_util::client::legacy::Error(SendRequest, "))
         .and_then(|source| source.strip_suffix(')'))
         .unwrap_or(source);
+    let reset = source
+        .strip_prefix("hyper::Error(Io, Os { code: ")
+        .and_then(|source| source.split_once(", kind: ConnectionReset, message: \""))
+        .is_some_and(|(code, message)| code.parse::<i32>().is_ok() && message.ends_with("\" })"));
     (source.starts_with("ConnectError(") && source.contains("kind: ConnectionRefused,"))
+        || reset
         || matches!(
             source,
             "hyper::Error(IncompleteMessage)"
@@ -190,6 +196,7 @@ mod tests {
 
     const REFUSED: &str = "reqwest::Error { kind: Request, url: \"http://127.0.0.1:1234/instances/0/update/tick\", source: hyper_util::client::legacy::Error(Connect, ConnectError(\"tcp connect error\", 127.0.0.1:1234, Os { code: 111, kind: ConnectionRefused, message: \"Connection refused\" })) }";
     const INCOMPLETE: &str = "reqwest::Error { kind: Request, url: \"http://127.0.0.1:1234/instances/0/read/get_time\", source: hyper::Error(IncompleteMessage) }";
+    const RESET: &str = "reqwest::Error { kind: Request, url: \"http://127.0.0.1:49238/instances/0/update/submit_ingress_message\", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(Io, Os { code: 54, kind: ConnectionReset, message: \"Connection reset by peer\" })) }";
 
     impl std::fmt::Display for WrapperError {
         fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -220,6 +227,19 @@ mod tests {
     }
 
     #[test]
+    fn dead_instance_transport_error_detects_native_connection_reset() {
+        for message in [RESET.to_owned(), RESET.replace("code: 54", "code: 104")] {
+            assert!(is_dead_instance_transport_error(&message));
+            assert!(panic_is_dead_instance_transport(&format!(
+                "HTTP failure: {message}"
+            )));
+            assert!(is_dead_instance_transport_error(&format!(
+                "called `Result::unwrap()` on an `Err` value: {message}"
+            )));
+        }
+    }
+
+    #[test]
     fn classify_pocket_ic_panic_marks_dead_instance_transport() {
         let classified = PocketIcOperationError::new(INCOMPLETE);
 
@@ -239,8 +259,8 @@ mod tests {
     #[test]
     fn snapshot_and_install_wrappers_preserve_transport_causes() {
         let canister_id = candid::Principal::anonymous();
-        for message in [REFUSED, "unrelated application panic"] {
-            let expected = message == REFUSED;
+        for message in [REFUSED, RESET, "unrelated application panic"] {
+            let expected = message != "unrelated application panic";
             let capture = ControllerSnapshotError::CapturePanicked {
                 canister_id,
                 source: PocketIcOperationError::new(message),
@@ -292,6 +312,12 @@ mod tests {
                 "hyper::Error(IncompleteMessage)",
                 "Custom(\"hyper::Error(IncompleteMessage)\")",
             ),
+            &format!("fixture quoted {RESET}"),
+            &RESET.replace("/instances/0/", "/application/worker/"),
+            &RESET.replace("/instances/0/", "/instances/quoted/"),
+            &RESET.replace("kind: ConnectionReset,", "kind: ConnectionAborted,"),
+            &RESET.replace("code: 54", "code: quoted"),
+            &RESET.replace("hyper::Error(Io, Os {", "Custom(Os {"),
         ] {
             let error = WrapperError(std::io::Error::other(message.to_owned()));
             assert!(!is_dead_pocket_ic_transport_error(&error), "{message}");
@@ -301,6 +327,9 @@ mod tests {
         let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
         assert!(!is_dead_pocket_ic_transport_error(&refused));
         assert!(!is_dead_pocket_ic_transport_error(&WrapperError(refused)));
+        let reset = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        assert!(!is_dead_pocket_ic_transport_error(&reset));
+        assert!(!is_dead_pocket_ic_transport_error(&WrapperError(reset)));
     }
 
     #[test]

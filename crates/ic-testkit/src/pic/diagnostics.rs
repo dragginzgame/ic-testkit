@@ -714,10 +714,11 @@ mod tests {
     #[test]
     fn diagnostic_transport_classification_survives_context_and_io_wrapping() {
         const REFUSED: &str = "HTTP failure: reqwest::Error { kind: Request, url: \"http://127.0.0.1:1234/instances/0/read/get_time\", source: ConnectError(\"tcp connect error\", Os { code: 111, kind: ConnectionRefused, message: \"Connection refused\" }) }";
-        for message in [REFUSED, "application worker channel closed"] {
+        const RESET: &str = "HTTP failure: reqwest::Error { kind: Request, url: \"http://127.0.0.1:49238/instances/0/read/get_time\", source: hyper_util::client::legacy::Error(SendRequest, hyper::Error(Io, Os { code: 54, kind: ConnectionReset, message: \"Connection reset by peer\" })) }";
+        for message in [REFUSED, RESET, "application worker channel closed"] {
             let error = capture_diagnostic_call::<()>(|| panic!("{message}"))
                 .expect_err("diagnostic operation should capture the panic");
-            let expected = message == REFUSED;
+            let expected = message != "application worker channel closed";
             assert_eq!(
                 matches!(
                     &error,

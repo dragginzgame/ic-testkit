@@ -1,5 +1,70 @@
 # Host support and qualification
 
+## Incoming Host 0.12.4 selection for pending 0.33.0
+
+The maintainer's incoming lock selects all four Host 0.12.4 crates, reviewed
+against `5400f159474cebac1ec7ae7c8763abfd258bde03`. Their Rust source is unchanged
+from 0.12.3; the upstream release adopts Binaryen 133 development tooling, already
+selected by Testkit. The incoming lock is preserved byte-for-byte with SHA-256
+`d130c63519487e6ad35364983127599e9975d36d93dcd3852162e4fa203cc3d9`.
+Explicit locked fetch prepares that graph without dependency resolution changes.
+The earlier 0.33.0 proof below retains its original 0.12.3 graph identity.
+
+Pending #52 is now freshly qualified against 0.12.4: ten transport unit cases,
+the diagnostic-capture case, all six synthetic socket parent cases and their
+explicit child probes pass on Linux. Strict scoped Clippy and Rust 1.88
+library/integration-fixture compilation pass. Logs are
+`/tmp/ic-testkit-0330-host0124-{fetch,transport,diagnostics,teardown,clippy,msrv}.log`.
+Manifest versions remain unchanged. No broad gate, sibling edit, setup, release
+or CI rerun occurred. Native delivered-source acceptance stays in
+[#52](https://github.com/dragginzgame/ic-testkit/issues/52).
+
+## Connection-reset recovery for pending 0.33.0
+
+Based on released 0.32.2 `9e697b6363441e3fa96477adae5b07820461c3c5`,
+[#52](https://github.com/dragginzgame/ic-testkit/issues/52) recognizes the scoped
+reqwest/hyper OS `ConnectionReset` shape observed in
+[0.30.0 Apple Silicon portable CI](https://github.com/dragginzgame/ic-testkit/actions/runs/38043841501/job/114189268109).
+This changes public dead-transport recovery semantics, so both pending release
+views select 0.33.0. Package metadata and dependency selections remain unchanged;
+lock SHA-256 is
+`3e56b63d86c526370cfe836ffd8a151ac5d8c5b528431c8803d022bfb6850f00`.
+No retained-format or installation reset is required.
+
+Focused Linux qualification passes: all ten transport unit cases and all five
+synthetic transport/teardown parent cases (the three subprocess-only probes stay
+ignored in the parent list and are invoked explicitly). The new actual reset
+case fully reads an accepted canister-creation request, selects zero-time
+`SO_LINGER`, then closes the socket before any response. The observed reqwest
+error contains Linux `ConnectionReset` code 104; standalone ownership and the
+original transport cause survive failed installation. Exact observed macOS code
+54 and Linux code 104 messages qualify through maintained panic contexts,
+installation/snapshot causes and contextual I/O wrappers. Bare I/O, quoted
+application errors, non-instance URLs, invalid OS codes and other error kinds
+remain excluded. Strict scoped Clippy and Rust 1.88 library/integration-fixture
+compilation pass, as do formatting and diff checks.
+
+Logs are `/tmp/ic-testkit-0330-{transport-final,teardown-native,clippy,msrv,
+format}.log`. The initial unit suffix-matching failure remains in
+`transport.log`; the corrected cases pass in `transport-final.log`. Initial
+sandbox TCP-listener denial remains in `teardown.log`; the actual loopback suite
+passes in `teardown-native.log` with loopback access enabled. No broad local gate,
+sibling edit, installation, release or CI rerun occurred. Linux socket execution
+and captured macOS-message tests do not replace native macOS execution against
+the delivered source; #52 retains that acceptance obligation.
+
+Further pending 0.33.0 qualification extends the same reset fixture to a real
+query request. Linux logs contain actual `ConnectionReset` errors for both query
+and installation; all six parent cases pass with their subprocess probes.
+The focused diagnostic-capture case also passes for the macOS reset shape,
+preserving `InstanceUnavailable` through I/O wrapping. Strict scoped Clippy,
+Rust 1.88 library/fixture compilation, formatting and diff checks pass again for
+the changed callers. Logs are
+`/tmp/ic-testkit-0330-reset-{call,diagnostics,clippy,msrv,format}.log`.
+The earlier five-parent-case record remains the original installation-only proof;
+no additional production recovery path or dependency selection is introduced.
+Native macOS execution and delivered-source acceptance remain required under #52.
+
 ## Shared 0.3.4 and Host 0.12.3 for pending 0.32.2
 
 The pending batch now selects canonical Shared 0.3.4

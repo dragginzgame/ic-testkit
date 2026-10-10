@@ -6,6 +6,27 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.33.0]
+
+### Changed
+
+- Select Host 0.12.4 for all four Host crates; their Rust source and public APIs
+  are unchanged from 0.12.3.
+
+### Breaking
+
+- Recognize scoped PocketIC HTTP connection resets as dead-instance transport
+  failures. Recovery recipes now take their configured transport-rebuild path
+  for these errors; review custom failure classification when upgrading. Bare
+  I/O and unrelated application errors remain excluded
+  ([#52](https://github.com/dragginzgame/ic-testkit/issues/52)).
+
+### Testing
+
+- Exercise real TCP resets at query and installation boundaries and preserve
+  diagnostic transport classification through contextual error wrappers
+  ([#52](https://github.com/dragginzgame/ic-testkit/issues/52)).
+
 ## [0.32.2] - 2026-10-10
 
 ### Changed

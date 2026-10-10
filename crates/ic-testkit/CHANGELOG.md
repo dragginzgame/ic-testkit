@@ -8,6 +8,36 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.33.0]
+
+### Changed
+
+- Select Host 0.12.4 for all four Host crates; their Rust source and public APIs
+  are unchanged from 0.12.3.
+
+### Breaking: connection-reset recovery classification
+
+`is_dead_pocket_ic_transport_error` and `PocketIcOperationError` now recognize
+OS `ConnectionReset` inside maintained reqwest/hyper HTTP errors for numeric
+PocketIC instance URLs. The error retains its classification through installation
+and snapshot causes and contextual I/O wrappers. macOS may report a reset when
+an instance peer disappears instead of refusing the connection
+([#52](https://github.com/dragginzgame/ic-testkit/issues/52)).
+
+Recovery recipes can now choose `DeadPocketIcTransport` and rebuild for these
+errors. Review custom classification/rebuild policy when upgrading; bare I/O
+errors, quoted application text and non-instance URLs do not gain classification.
+No API signature, dependency selection or retained-artifact format changes;
+existing caches and installations need no reset.
+
+### Testing: reset boundaries
+
+Synthetic native peers now reset fully received query and installation requests,
+verifying real reqwest error classification and preserved standalone ownership.
+Diagnostic capture also checks that scoped resets become `InstanceUnavailable`
+through contextual I/O wrappers
+([#52](https://github.com/dragginzgame/ic-testkit/issues/52)).
+
 ## [0.32.2] - 2026-10-10
 
 ### Changed: common IC tools and Host selection
