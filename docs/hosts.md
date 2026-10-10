@@ -1,5 +1,46 @@
 # Host support and qualification
 
+## Shared 0.3.7 and Host 0.12.6 for pending 0.33.1
+
+The unchanged 85-file canonical roster selects clean committed Shared
+`34e5ad7aac3599306c9572bb547f2239d09df1a3` (0.3.7), reviewed in an isolated
+export source. Mandatory portable assertions explicitly fail on Bash 3.2;
+selected Cargo-tool admission rejects absent host identities and non-executable
+candidates before activation. The incoming consumer workflow already uses
+workflow/ref concurrency and cancels older queued or running checks. Actionlint
+and a structural comparison confirm its existing jobs, hosts, triggers and
+permissions are preserved.
+
+Actual selected Rust, host, IC and release-runner fixtures pass under Bash 5 and
+genuine Bash 3.2, including nested interpreter selection. Host/IC suites also
+exercise the actual evidence collector. Cargo/release effects, downloads and host
+selections are substitutes. A disposable selected Rust-fixture copy contradicts
+the successful three-install count: both interpreters return 1 before later
+reuse checks and retain the successful-install evidence. Selected ShellCheck,
+snapshot, declaration pins, formatting and offline prepared Rust-tool admission
+pass. Logs use `/tmp/ic-testkit-0331-shared037-{export,rust,rust-bash32,host,
+host-bash32,ic,ic-bash32,runner,runner-bash32,assertion-current,assertion-bash32,
+workflow,workflow-structure,shellcheck,tooling}.log`.
+
+All four incoming Host selections are 0.12.6, reviewed against release source
+`5f356effea97fbc31dfcca5b9f1b2834f35325a9`. Rust source is unchanged from
+0.12.5; this release changes CI tooling only. The incoming lock remains unchanged
+with SHA-256 `05a94c890ae6d2e75afbac50923ba31f3489c671dc042fd18409327b6f27e26b`.
+Explicit locked fetch, locked offline all-target compilation, Rust 1.88 library/CLI
+compilation and the invalid-destination atomic-publication test pass. Logs use
+`/tmp/ic-testkit-0331-host0126-{fetch,check,msrv,invalid-path}.log`.
+Earlier proof below retains its original input identity.
+
+Exact-source [Shared CI](https://github.com/dragginzgame/shared-tooling/actions/runs/38064027998),
+[Host CI](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38063794538)
+and [Testkit 0.33.0 CI](https://github.com/dragginzgame/ic-testkit/actions/runs/38060751752)
+remain queued at inspection. Linux Bash 3.2 is not native macOS qualification;
+cancelled earlier checks do not qualify unfinished hosts. Both changelogs retain
+compatible pending 0.33.1. No public API or retained-format change, version bump,
+broad gate, sibling edit, installation, release or CI rerun was performed here.
+Relevant feedback is under [Shared #107](https://github.com/dragginzgame/shared-tooling/issues/107)
+and [Shared #108](https://github.com/dragginzgame/shared-tooling/issues/108).
+
 ## Host 0.12.5 for pending 0.33.1
 
 On released Testkit 0.33.0 `22d07d2c0a186ffe7dfa48d51ddc243a56c07dda`,
