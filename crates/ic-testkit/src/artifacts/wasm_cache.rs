@@ -1,8 +1,8 @@
 use ic_host_process::{
     child::OwnedChild,
     tool::{
-        ExecutionFailure, OutputLimit, OutputLimits, OutputStream, SuccessfulExit, ToolError,
-        communicate_child_with_observer,
+        ExecutionFailure, ExecutionOperation, OutputLimit, OutputLimits, OutputStream,
+        SuccessfulExit, ToolError, capture_command, communicate_child_with_observer,
     },
 };
 use serde_json::Value;
@@ -44,6 +44,11 @@ use super::{
 };
 
 const CACHE_FORMAT_VERSION: &str = "ic-testkit-wasm-build-v1";
+// Consumer policy: diagnostic prefixes, complete probe output, and no deadline.
+const CARGO_DIAGNOSTIC_BYTES: usize = 1024 * 1024;
+const TOOL_IDENTITY_BYTES: usize = 64 * 1024;
+const CARGO_METADATA_BYTES: usize = 16 * 1024 * 1024;
+
 const DEFAULT_TARGET: &str = "wasm32-unknown-unknown";
 const AUTOMATIC_ENVIRONMENT: &[&str] = &[
     "CARGO_BUILD_RUSTC",
@@ -795,6 +800,8 @@ pub enum WasmBuildError {
         source: io::Error,
     },
     /// An external command completed unsuccessfully.
+    /// Cargo-build streams retain at most 1 MiB of raw bytes each, with an explicit marker
+    /// if truncated; optional progress callbacks still receive all output.
     CommandFailed {
         phase: WasmBuildPhase,
         status: ExitStatus,
@@ -2183,6 +2190,9 @@ impl std::fmt::Display for WasmBuildOutcome {
 /// without running `cargo build`.
 /// Input-only snapshots may describe ordinary libraries or other Cargo targets;
 /// the `cdylib` name/output constraint is checked when acquiring Wasm artifacts.
+/// Tool identities require complete output within 64 KiB per stream. Metadata
+/// requires complete stdout within 16 MiB and stderr within 64 KiB. Probes have
+/// no elapsed-time deadline; oversized output fails before parsing or hashing.
 pub fn resolve_cargo_build_inputs(
     spec: &WasmBuildSpec,
 ) -> Result<ResolvedCargoBuildInputs, WasmBuildError> {
@@ -2485,8 +2495,9 @@ pub(super) fn build_wasm_canisters_cached_in_batch(
 
 /// Build or reuse one exact Wasm set while streaming structured progress.
 ///
-/// Cargo output remains captured for [`WasmBuildError::CommandFailed`] and is
-/// additionally forwarded as raw chunks when enabled. Potentially long input
+/// Cargo diagnostics retain a prefix of at most 1 MiB per stream, marked when
+/// truncated, for [`WasmBuildError::CommandFailed`]. All raw chunks are still
+/// forwarded when enabled. No build deadline is imposed. Potentially long input
 /// resolution, lock waits, maintenance, Cargo, and publication phases emit
 /// periodic heartbeats, so a legitimate acquisition need not appear stalled.
 /// Observer panics propagate after joining active phase work, terminating the
@@ -3657,13 +3668,7 @@ fn command_identity(
     let mut command = Command::new(program);
     command.current_dir(&spec.workspace_root).args(arguments);
     apply_command_environment(&mut command, spec);
-    let output = command
-        .output()
-        .map_err(|source| WasmBuildError::CommandSpawn {
-            phase,
-            program: program.to_owned(),
-            source,
-        })?;
+    let output = capture_probe_output(&mut command, phase, TOOL_IDENTITY_BYTES)?;
     ensure_command_success(phase, output).map(|output| {
         let mut identity = output.stdout;
         identity.extend_from_slice(&output.stderr);
@@ -3680,16 +3685,68 @@ fn cargo_metadata(spec: &WasmBuildSpec) -> Result<Value, WasmBuildError> {
         command.arg(argument);
     }
     apply_command_environment(&mut command, spec);
-    let output = command
-        .output()
-        .map_err(|source| WasmBuildError::CommandSpawn {
-            phase: WasmBuildPhase::CargoMetadata,
-            program: spec.cargo_program.clone(),
-            source,
-        })?;
+    let output = capture_probe_output(
+        &mut command,
+        WasmBuildPhase::CargoMetadata,
+        CARGO_METADATA_BYTES,
+    )?;
     let output = ensure_command_success(WasmBuildPhase::CargoMetadata, output)?;
     serde_json::from_slice(&output.stdout).map_err(|error| WasmBuildError::InvalidMetadata {
         message: format!("Cargo metadata was not valid JSON: {error}"),
+    })
+}
+
+fn capture_probe_output(
+    command: &mut Command,
+    phase: WasmBuildPhase,
+    stdout_bytes: usize,
+) -> Result<Output, WasmBuildError> {
+    let result = capture_command(
+        command,
+        OutputLimits {
+            stdout: OutputLimit::Terminate(stdout_bytes),
+            stderr: OutputLimit::Terminate(TOOL_IDENTITY_BYTES),
+            timeout: None,
+        },
+    )
+    .and_then(ic_host_process::tool::ExecutionEvidence::require_complete);
+    let evidence = match result {
+        Ok(evidence) => evidence,
+        Err(ToolError::Execution(error))
+            if matches!(error.failure, ExecutionFailure::ExitStatus) && error.cleanup.is_none() =>
+        {
+            error.evidence
+        }
+        Err(ToolError::Execution(error))
+            if matches!(
+                error.failure,
+                ExecutionFailure::Io {
+                    operation: ExecutionOperation::Spawn,
+                    ..
+                }
+            ) && error.cleanup.is_none() =>
+        {
+            let ExecutionFailure::Io { source, .. } = error.failure else {
+                unreachable!()
+            };
+            return Err(WasmBuildError::CommandSpawn {
+                phase,
+                program: command.get_program().to_owned(),
+                source,
+            });
+        }
+        Err(error) => {
+            return Err(WasmBuildError::Io {
+                operation: "capture complete Cargo/tool probe output",
+                path: PathBuf::from(command.get_program()),
+                source: io::Error::other(error),
+            });
+        }
+    };
+    Ok(Output {
+        status: evidence.status.expect("completed probe has a status"),
+        stdout: evidence.stdout,
+        stderr: evidence.stderr,
     })
 }
 
@@ -4801,10 +4858,10 @@ fn communicate_cargo_build(
         &mut child,
         None,
         OutputLimits {
-            // Preserve the existing retained-output contract and allow builds
-            // lasting hours. No new byte quota or elapsed-time deadline.
-            stdout: OutputLimit::Terminate(usize::MAX),
-            stderr: OutputLimit::Terminate(usize::MAX),
+            // Retention is bounded; all chunks still reach the observer.
+            // Output volume never terminates a build, and builds have no deadline.
+            stdout: OutputLimit::Truncate(CARGO_DIAGNOSTIC_BYTES),
+            stderr: OutputLimit::Truncate(CARGO_DIAGNOSTIC_BYTES),
             timeout: None,
         },
         SuccessfulExit::Cleanup,
@@ -4856,17 +4913,26 @@ fn communicate_cargo_build(
             });
         }
     };
-    ensure_command_success(
-        WasmBuildPhase::CargoBuild,
-        Output {
-            status: evidence
-                .status
-                .expect("completed Cargo communication has a status"),
-            stdout: evidence.stdout,
-            stderr: evidence.stderr,
-        },
-    )
-    .map(|_| ())
+    let status = evidence
+        .status
+        .expect("completed Cargo communication has a status");
+    if status.success() {
+        return Ok(());
+    }
+    Err(WasmBuildError::CommandFailed {
+        phase: WasmBuildPhase::CargoBuild,
+        status,
+        stdout: cargo_diagnostic(&evidence.stdout, evidence.stdout_truncated),
+        stderr: cargo_diagnostic(&evidence.stderr, evidence.stderr_truncated),
+    })
+}
+
+fn cargo_diagnostic(bytes: &[u8], truncated: bool) -> String {
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    if truncated {
+        text.push_str("\n[diagnostic truncated after 1 MiB; enable Cargo output events for the complete stream]\n");
+    }
+    text
 }
 
 fn ensure_command_success(phase: WasmBuildPhase, output: Output) -> Result<Output, WasmBuildError> {

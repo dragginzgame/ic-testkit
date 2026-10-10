@@ -6,6 +6,24 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.30.0]
+
+### Breaking
+
+- Bound retained Cargo diagnostics to a 1 MiB raw prefix per stream, marking
+  truncated failure text while forwarding complete observed output. Builds keep
+  no deadline. Tool/workspace probes reject output above 64 KiB per stream;
+  metadata permits 16 MiB stdout. Complete output is required before parsing or
+  deriving identities, using Host capture
+  ([#49](https://github.com/dragginzgame/ic-testkit/issues/49)).
+
+### Fixed
+
+- Report unavailable failed-step logs during CI inspection, retaining partial
+  logs and fetch errors instead of silently treating missing evidence as success,
+  through Shared Tooling 0.2.14
+  ([shared #97](https://github.com/dragginzgame/shared-tooling/issues/97)).
+
 ## [0.29.0] - 2026-10-10
 
 ### Breaking

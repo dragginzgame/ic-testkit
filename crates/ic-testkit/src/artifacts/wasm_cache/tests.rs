@@ -1565,8 +1565,11 @@ done
 #[cfg(unix)]
 fn observed_cargo_parallel_streams_preserve_raw_bytes() {
     let root = unique_temp_directory("cargo-parallel-streams");
-    let stdout = (0_u8..=255).cycle().take(256 * 1024).collect::<Vec<_>>();
-    let stderr = b"diagnostic\0\xff\n".repeat(32 * 1024);
+    let stdout = (0_u8..=255)
+        .cycle()
+        .take(super::CARGO_DIAGNOSTIC_BYTES + 37)
+        .collect::<Vec<_>>();
+    let stderr = b"diagnostic\0\xff\n".repeat(128 * 1024);
     fs::write(root.join("stdout"), &stdout).unwrap();
     fs::write(root.join("stderr"), &stderr).unwrap();
     fs::write(
@@ -1707,6 +1710,140 @@ fn observed_cargo_failure_retains_captured_diagnostics_and_exit_event() {
         );
     }
     fs::remove_dir_all(root).expect("remove failing observed Cargo fixture");
+}
+
+#[test]
+#[cfg(unix)]
+fn overflowing_cargo_diagnostics_are_bounded_without_losing_forwarded_output() {
+    let root = unique_temp_directory("cargo-truncated-failure");
+    let bytes = vec![b'x'; super::CARGO_DIAGNOSTIC_BYTES + 37];
+    fs::write(root.join("payload"), &bytes).unwrap();
+    fs::write(
+        root.join("build"),
+        "cat payload; cat payload >&2; exit 23\n",
+    )
+    .unwrap();
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program("/bin/sh");
+    for observed in [false, true] {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut observer = |event| {
+            if let WasmBuildProgressEvent::CargoOutput { stream, bytes } = event {
+                match stream {
+                    WasmBuildOutputStream::Stdout => stdout.extend(bytes),
+                    WasmBuildOutputStream::Stderr => stderr.extend(bytes),
+                }
+            }
+        };
+        let mut progress = if observed {
+            ProgressReporter::observed(
+                WasmBuildProgressConfig::new()
+                    .without_heartbeats()
+                    .with_cargo_output(true),
+                &mut observer,
+            )
+        } else {
+            ProgressReporter::silent()
+        };
+        let error = run_cargo_build(&spec, &root.join("target"), &mut progress).unwrap_err();
+        let WasmBuildError::CommandFailed {
+            status,
+            stdout: diagnostic,
+            stderr: errors,
+            ..
+        } = error
+        else {
+            panic!("expected bounded command diagnostics");
+        };
+        assert_eq!(status.code(), Some(23));
+        for text in [&diagnostic, &errors] {
+            assert_eq!(
+                &text.as_bytes()[..super::CARGO_DIAGNOSTIC_BYTES],
+                &bytes[..super::CARGO_DIAGNOSTIC_BYTES]
+            );
+            assert!(text[super::CARGO_DIAGNOSTIC_BYTES..].contains("diagnostic truncated"));
+            assert!(text.len() < super::CARGO_DIAGNOSTIC_BYTES + 128);
+        }
+        if observed {
+            assert_eq!(stdout, bytes);
+            assert_eq!(stderr, bytes);
+        } else {
+            assert!(stdout.is_empty() && stderr.is_empty());
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn complete_probe_limits_preserve_status_spawn_causes_and_refuse_partial_data() {
+    use ic_host_process::tool::{ExecutionFailure, ToolError};
+    use std::{io, process::Command};
+
+    let root = unique_temp_directory("complete-probe-limits");
+    let spec = WasmBuildSpec::new(&root, &root.join("exact"), &["fixture"], "debug")
+        .with_cargo_program("/bin/sh");
+    let identity = vec![b'x'; super::TOOL_IDENTITY_BYTES];
+    fs::write(root.join("payload"), &identity).unwrap();
+    let phase = super::WasmBuildPhase::CargoIdentity;
+    assert_eq!(
+        super::command_identity(
+            &spec,
+            phase,
+            std::ffi::OsStr::new("/bin/sh"),
+            &["-c", "cat payload"]
+        )
+        .unwrap(),
+        identity
+    );
+    for script in ["cat payload; printf x", "cat payload >&2; printf x >&2"] {
+        let error = super::command_identity(
+            &spec,
+            phase,
+            std::ffi::OsStr::new("/bin/sh"),
+            &["-c", script],
+        )
+        .unwrap_err();
+        let WasmBuildError::Io { source, .. } = error else {
+            panic!("overflow must retain Host evidence");
+        };
+        let host = source
+            .get_ref()
+            .unwrap()
+            .downcast_ref::<ToolError>()
+            .unwrap();
+        assert!(matches!(
+            host.execution_error().unwrap().failure,
+            ExecutionFailure::OutputLimit { .. }
+        ));
+    }
+    let mut failed = Command::new("/bin/sh");
+    failed.args(["-c", "printf diagnostic >&2; exit 23"]);
+    let output =
+        super::capture_probe_output(&mut failed, phase, super::TOOL_IDENTITY_BYTES).unwrap();
+    assert!(
+        matches!(super::ensure_command_success(phase, output), Err(WasmBuildError::CommandFailed { status, stderr, .. }) if status.code() == Some(23) && stderr == "diagnostic")
+    );
+    let mut missing = Command::new(root.join("absent"));
+    assert!(
+        matches!(super::capture_probe_output(&mut missing, phase, super::TOOL_IDENTITY_BYTES), Err(WasmBuildError::CommandSpawn { source, .. }) if source.kind() == io::ErrorKind::NotFound)
+    );
+
+    // A valid complete JSON value followed by excess whitespace must not be
+    // parsed successfully from a captured prefix.
+    fs::write(root.join("metadata"), "cat payload\n").unwrap();
+    let mut metadata = b"{}".to_vec();
+    metadata.resize(super::CARGO_METADATA_BYTES, b' ');
+    fs::write(root.join("payload"), &metadata).unwrap();
+    assert_eq!(super::cargo_metadata(&spec).unwrap(), serde_json::json!({}));
+    metadata.push(b' ');
+    fs::write(root.join("payload"), &metadata).unwrap();
+    assert!(matches!(
+        super::cargo_metadata(&spec),
+        Err(WasmBuildError::Io { .. })
+    ));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

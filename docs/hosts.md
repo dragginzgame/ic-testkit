@@ -1,5 +1,81 @@
 # Host support and qualification
 
+## Bounded diagnostics and Host probe capture for pending 0.30.0
+
+The maintainer authorized the minor boundary for
+[#49](https://github.com/dragginzgame/ic-testkit/issues/49), based on released
+0.29.0 `e15cc2acfd9324f6877f854415005f91d169a031`. The reviewed proposal from
+Host 0.11 was applied and qualified here, with local strict-Clippy corrections.
+The pending Shared 0.2.14 work below is carried into the same 0.30.0 notes.
+Manifest version, dependency selections and lock remain unchanged (SHA-256
+`47cf2d3922416b3ad78233f68f82087e9d63527dc127a8bd011e8c20bf79463c`).
+
+Host owns pipe capture and cleanup for Cargo builds, version/identity probes,
+metadata and workspace discovery. Testkit keeps its command/environment/schema
+policy and error projections. Cargo retains a 1 MiB raw prefix per stream;
+every chunk is forwarded when requested, and failure strings mark truncation.
+Lossy UTF-8 rendering can expand the retained raw prefix. Diagnostic volume
+never terminates a build. All these paths have no elapsed-time deadline.
+Complete probes are hard-bounded: identity/discovery streams and probe stderr
+at 64 KiB, metadata stdout at 16 MiB. Current owning locked/offline metadata is
+1,373,890 bytes (`/tmp/ic-testkit-0300-metadata.json`); this single graph is not
+a universal workspace-size guarantee. Oversized responses cannot be parsed or
+hashed from a prefix. Nonzero status, original spawn I/O causes and whole typed
+Host failures remain distinguishable. Successful bounded identities and stored
+v1 framing are unchanged; retained entries/installations need no reset.
+
+Focused Linux qualification passes: 60 Wasm-cache tests, one workspace capture
+unit test, four real Cargo workspace integration tests, and the benchmark
+driver's selected tool/context test. Larger-than-cap successful/failing output
+reaches observers intact, silent/observed failure prefixes are bounded/marked,
+exact-limit identity/metadata/discovery responses pass, and over-limit complete
+JSON/identity output is refused. Existing observer unwind, descendant cleanup,
+cache publication and command selection cases still pass. Typed cleanup retention
+follows whole-error projection; no cleanup syscall fault was injected locally.
+No multi-hour build was dispatched; the no-deadline policy is explicit in the
+invocation limits. Strict Clippy including test callers, Rust 1.88 native
+library/CLI and Wasm library compilation, strict rustdoc, fmt/snapshot/pins and
+diff checks pass. The final complete-probe and workspace unit runs cover the
+small method-reference correction after initial strict Clippy failure.
+
+Logs use `/tmp/ic-testkit-0300-{cache,wasm,workspace-unit,workspace-integration,
+workspace-final,probe-final,driver,clippy-final,msrv,msrv-wasm,docs,tooling}.log`.
+The initial Clippy failure remains in `clippy.log` with the same prefix.
+No broad local gate, tool/server installation, sibling edit, package-version
+change, release or CI rerun was performed. Released 0.29.0
+[38041559012](https://github.com/dragginzgame/ic-testkit/actions/runs/38041559012)
+has passing Linux checks/MSRV/portable/concurrency and ARM MSRV/concurrency,
+with other native jobs queued/running at inspection. Those results do not
+qualify this pending 0.30.0 source; native/full delivery checks remain outstanding.
+
+## Shared Tooling 0.2.14 for pending 0.29.1
+
+Based on released Testkit 0.29.0 `e15cc2acfd9324f6877f854415005f91d169a031`,
+the clean isolated canonical export selects committed Shared 0.2.14
+`fd11692f31e7dfd44dcc2ca56634eaeab3569825`, retaining 84 files. New dirty
+upstream tools/evidence changes are excluded. CI inspection preserves partial
+failed-step logs and fetch errors, propagates unsuccessful observations, and
+refuses empty failure evidence unless a completed non-failing run permits it.
+This changes tooling diagnostics, not a library API or stored format.
+
+The committed upstream fixture is projected onto the exact selected consumer
+gh-ci.sh bytes without adding it to the snapshot roster. Bash 5 and genuine
+Bash 3.2 checks pass for command routing, failed/partial log retention,
+unavailable and whitespace-only failure output, failed state observation and
+completed success without failed-step logs. These use substituted Git/GitHub
+commands, not live log downloads. Actual snapshot/pins checks, selected
+ShellCheck and diff checks pass. Logs use
+`/tmp/ic-testkit-0291-{export,gh-ci,gh-ci-bash32,checks,shellcheck}.log`.
+The selected lock is unchanged (SHA-256
+`47cf2d3922416b3ad78233f68f82087e9d63527dc127a8bd011e8c20bf79463c`).
+No Cargo job, tool installation, sibling edit, full gate, package-version change,
+release or CI rerun was performed. Released 0.29.0 CI
+[38041559012](https://github.com/dragginzgame/ic-testkit/actions/runs/38041559012)
+and Shared 0.2.14 CI
+[38041453237](https://github.com/dragginzgame/shared-tooling/actions/runs/38041453237)
+were queued at inspection; native results for this pending consumer source
+remain outstanding. Earlier evidence below belongs to its stated inputs.
+
 ## IC Host 0.11 and Shared Tooling 0.2.13 for pending 0.29.0
 
 The maintainer authorized the 0.29.0 hard cut on released Testkit 0.28.1

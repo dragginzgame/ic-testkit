@@ -8,6 +8,34 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.30.0]
+
+### Breaking: bounded diagnostics and complete probe output
+
+Cargo build errors retain the first 1 MiB of raw output per stream, followed by
+an explicit truncation marker when needed. Lossy UTF-8 rendering may expand that
+raw prefix. Enable Cargo output progress events to receive every raw byte, on
+success or failure. Excess diagnostic output never terminates a build, and no
+deadline is introduced. Silent builds retain the same bounded failure prefixes.
+
+Tool identity and workspace discovery require complete streams of at most
+64 KiB each. Cargo metadata allows 16 MiB stdout and 64 KiB stderr. Oversized
+probes fail through typed Host evidence before partial output can become an
+identity or JSON result. Workspaces producing larger metadata must reduce their
+graph/output to the supported bound. Nonzero statuses and original spawn I/O
+causes remain distinguishable. These policies belong to Testkit, not Host
+defaults ([#49](https://github.com/dragginzgame/ic-testkit/issues/49)).
+
+Successful bounded tool identities, cache framing and retained installations
+are unchanged; no cache reset or compatibility reader is needed.
+
+### Fixed
+
+- Report unavailable failed-step logs during CI inspection, retaining partial
+  logs and fetch errors instead of silently treating missing evidence as success,
+  through Shared Tooling 0.2.14
+  ([shared #97](https://github.com/dragginzgame/shared-tooling/issues/97)).
+
 ## [0.29.0] - 2026-10-10
 
 ### Breaking: IC Host 0.11 process contracts

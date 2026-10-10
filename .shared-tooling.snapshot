@@ -1,8 +1,8 @@
 # Shared Tooling snapshot v1
-# version	0.2.13
+# version	0.2.14
 format	1
 source	https://github.com/dragginzgame/shared-tooling
-revision	5864f468d39f8f9d1bd26fca1afe0e20f25f1b5e
+revision	fd11692f31e7dfd44dcc2ca56634eaeab3569825
 file	6cb3d310a5184a99fdf2a07786c7011cefde1432758723415229be0e1dc8f553	-	DRAGGINZGAME.md
 file	59f6cb0b47fcfa698396776bbb391737292ebf34457ad7c65803fe7b36961499	-	docs/principles/README.md
 file	9315c9faffa4f36cfab496342535bf49d728ddd2111e8e127cbc44b3fac89ce7	-	docs/principles/decision-artifact-discipline.md
@@ -23,7 +23,7 @@ file	84db20c3fa0b7a524bcd10b875a11100ed00be27c9f329ce93c79f5ab8f1f40d	-	rules/ca
 file	dae76214fb4c8c698530b141a418ceab44f4c14fc8452b7a545bfe2e0c0c84fd	-	rules/git-hooks.md
 file	fbee8c292a242ec71babca5eebc30613c82005b6e9e80c850a1ebca1112eaea6	x	.githooks/pre-commit
 file	c1fcf72754976d3d2e5203226e97ef5f50eff4b5c0dabeb2a9b00cfcf0326645	x	scripts/dev/install-git-hooks.sh
-file	d0e3e07844d06f46ffe01d406ffb29624b31079c1402b899262aabb718cbb436	-	rules/agent-maintenance.md
+file	c8a327fff520f3bb0cdabf1a402b3bcb6de6831d7992f6685fe4dccf292f0d51	-	rules/agent-maintenance.md
 file	faa9a62257ecdfd6532ac2225b3fd053012dfe9c35b8bc2ddc95288d8626a518	-	audits/README.md
 file	518d890bf485bef06c316b4cf26ac6bf357ed52bcce995e8d9b1232a103d0ea3	-	audits/code-hygiene.md
 file	ffdca09602c44c8aff8fc2a17588b20eb6a56e2e71fb6d42ad75087fdd65819b	-	audits/complexity-and-technical-debt.md
@@ -50,7 +50,7 @@ file	40f31a19d6115411ebffe7c26e3ed30b8af7eead10dd4830de8d5a9312291222	x	scripts/
 file	d7b179f9ceaec6e11c690c975b61f91bedc80526415f71571615064db14f0c9c	x	scripts/ci/check-release-tag.sh
 file	1063002468575e2f821cfec71524bde06a64634bf30455d64d2d9fed872969d6	-	docs/tag-maintenance.md
 file	a52db278800a9f02d85a6b8a780a9b1eed860c49d5442cef9db1f7f9d7ddee0a	x	scripts/ci/check-format-tools.sh
-file	0d2931071ee28be1025d44caf72c19e4855cb4a934e6491e5457491f837be547	x	scripts/dev/gh-ci.sh
+file	24130b81f25fe6f60d2074cb8b932dc7874e2f7088933fc87095f3a9e00c5df3	x	scripts/dev/gh-ci.sh
 file	431f4a40037fc341bec1d53416b440b3bcd4b6af5cd45210e390c82abb08b475	-	scripts/distribution/governance-files.txt
 file	289473e702bd636cbf545afffdd837979dfc41fc0a530e31e110f8b88d01d337	-	rules/rust-workspaces.md
 file	9e32385247296ce95d2b15b1290c64e6b6dff15716c1c139f21ab5e5128f4be3	x	scripts/ci/check-make-execution.sh
