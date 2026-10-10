@@ -1,5 +1,57 @@
 # Host support and qualification
 
+## Shared 0.3.2 for pending 0.32.1
+
+Based on released Testkit 0.32.0 `1502f667bc6b7f54067dd57d1841cd0a150110a7`,
+the isolated canonical export selects Shared 0.3.2
+`c16444bf006f17c5bb4dda5ad070a0f345da9623`. The roster grows from 84 to 85
+only to include the advisory README task linked by the updated catalog; no
+schedule or gate is activated. Later dirty upstream runner work is excluded.
+Released Testkit already selects all four Host 0.12.2 crates, reviewed against
+`e1ef99e6a4c6d05f0b0d8364f8586c6cc358dadc`; their Rust source remains unchanged.
+The manifest version and dependency graph remain unchanged. Lock SHA-256 is
+`b0712fdc72397ff49e948fa55cd3f9c4a4acfc5946e8999b1863d165a3bf8be6`.
+A scoped update produced unrelated Windows dependency-edge churn, which was
+reverted to the exact incoming lock before qualification; locked fetch prepared
+that graph without changing selection.
+
+Shared jobserver and explicit-completion repairs are propagated to selected
+snapshot files. Five consumer-owned release, metadata, publication, hook and
+evidence fixtures also require completion before cleanup/success. A disposable
+copy of released metadata qualification, injected with an unset-variable read
+immediately after its trap, printed an expansion error but returned zero under
+Bash 3.2. Original source/log remain in `/tmp/ic-testkit-0321-before/` and
+`/tmp/ic-testkit-0321-before.log`. Sixty injected cases now pass across Bash 5
+and genuine Bash 3.2: five actual fixture copies, six termination/completion
+cases, preserved failure inputs and cleanup only on genuine success. Injection
+stops before fixture bodies, without installation/release effects.
+
+Normal consumer release guards/metadata, hook, publication and evidence checks
+pass under both shells, as do selected host/IC/Rust installer fixtures. Committed
+upstream command, formatting and retention fixtures projected onto selected
+consumer bytes pass under both shells. Installer/Cargo/release effects in those
+fixtures are substituted; retained failure/archive cases exercise their actual
+owners. Locked all-target compilation passes. Actual parallel common Rust and
+formatting checks pass without jobserver warnings. The consumer preflight recipe
+also forwards jobserver descriptors; final release guards pass under both shells
+without closed-descriptor warnings. Cargo still reports that its separately
+configured job count is ignored when an external jobserver is present; this is
+distinct from invalid descriptor inheritance. ShellCheck, snapshot integrity,
+dependency pins, formatting and diff checks pass. Logs use
+`/tmp/ic-testkit-0321-{export-final,fetch,cargo,commands,commands-bash32,format,
+format-bash32,retention,retention-bash32,injection,injection-bash32,guards-final,
+guards-bash32-final,hooks,hooks-bash32,publish,publish-bash32,evidence,evidence-bash32,
+host,host-bash32,ic,ic-bash32,rust,rust-bash32,shellcheck,tooling}.log`.
+Initial passing release-guard logs with the old preflight descriptor warnings
+remain in `guards.log` and `guards-bash32.log` with the same prefix.
+No broad local gate, real tool/server setup, sibling edit, release or CI rerun
+occurred. At inspection exact-source CI remained queued for
+[Testkit 0.32](https://github.com/dragginzgame/ic-testkit/actions/runs/38051695584),
+[Shared 0.3.2](https://github.com/dragginzgame/shared-tooling/actions/runs/38051446835)
+and [Host 0.12.2](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38051203749).
+Native/full acceptance of this consumer batch remains under
+[#51](https://github.com/dragginzgame/ic-testkit/issues/51).
+
 ## Shared 0.3.1 and Host 0.12.1 for pending 0.32.0
 
 Based on released Testkit 0.31.0 `f1ae9e6d3b0f3f20ec1e1f1b49c8b1dea3155e0a`,

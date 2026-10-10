@@ -7,7 +7,15 @@ repo_root="$(cd -P "${repo_root%/*}/../.." && printf '%s/.' "$PWD")"
 repo_root="${repo_root%/.}"
 make_bin="$(command -v make)"
 work_dir="$(mktemp -d)"
-trap 'rm -rf "${work_dir}"' EXIT
+fixture_complete=false
+cleanup() {
+  local status=$?
+  [[ "$fixture_complete" == true || "$status" != 0 ]] || status=1
+  if [[ "$status" == 0 ]]; then rm -rf "$work_dir"
+  else echo "Failed release guard qualification retained at $work_dir" >&2; fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 fail() {
   echo "error: $*" >&2
@@ -343,3 +351,4 @@ STUB
 )
 
 /bin/bash "${repo_root}/scripts/ci/check-release-metadata.sh"
+fixture_complete=true

@@ -8,6 +8,25 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.32.1]
+
+### Fixed: portable tooling and qualification evidence
+
+Shared Tooling 0.3.2 keeps Cargo's jobserver descriptors available during common
+Rust setup/checks, formatting and LOC commands. The tool include admits safe
+Make execution itself, so recursive recipe marking cannot bypass unsafe-mode
+refusal. Testkit's preflight dispatch also retains jobserver access for its
+locked Cargo preparation. Tool selection, setup order and offline checks are
+unchanged.
+
+Shared and consumer-owned qualification fixtures now distinguish completed
+assertions from premature exits. Bash 3.2 expansion errors and early zero exits
+must fail and preserve evidence; only completed successful fixtures clean up
+([#51](https://github.com/dragginzgame/ic-testkit/issues/51),
+[shared #99](https://github.com/dragginzgame/shared-tooling/issues/99),
+[shared #103](https://github.com/dragginzgame/shared-tooling/issues/103)).
+No Rust API, retained installation reset or persisted-format change is required.
+
 ## [0.32.0] - 2026-10-10
 
 ### Breaking: Host crate identity

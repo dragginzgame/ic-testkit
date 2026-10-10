@@ -159,7 +159,7 @@ release-version:
 	@bash scripts/ci/read-cargo-workspace-version.sh --stable Cargo.toml
 
 release-preflight:
-	@bash scripts/release/metadata.sh preflight
+	+@bash scripts/release/metadata.sh preflight
 
 release-verify:
 	+@bash scripts/release/metadata.sh verify

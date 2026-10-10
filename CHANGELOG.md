@@ -6,6 +6,18 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.32.1]
+
+### Fixed
+
+- Preserve Cargo jobserver access in common tool/formatting commands and release
+  preflight through Shared Tooling 0.3.2 and its consumer dispatch, while refusing
+  unsafe Make modes. Shared and consumer-owned fixtures require explicit completion before success or
+  cleanup, preserving evidence after premature Bash 3.2 exits
+  ([#51](https://github.com/dragginzgame/ic-testkit/issues/51),
+  [shared #99](https://github.com/dragginzgame/shared-tooling/issues/99),
+  [shared #103](https://github.com/dragginzgame/shared-tooling/issues/103)).
+
 ## [0.32.0] - 2026-10-10
 
 ### Breaking

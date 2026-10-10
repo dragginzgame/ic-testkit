@@ -5,7 +5,15 @@ root="$0"
 root="$(cd -P "${root%/*}/../.." && printf '%s/.' "$PWD")"
 root="${root%/.}"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-evidence-test.XXXXXX")"
-trap 'if [[ $? == 0 ]]; then rm -rf "$fixture"; else echo "Evidence fixture retained: $fixture" >&2; fi' EXIT
+fixture_complete=false
+cleanup() {
+    local status=$?
+    [[ "$fixture_complete" == true || "$status" != 0 ]] || status=1
+    if [[ "$status" == 0 ]]; then rm -rf "$fixture"
+    else echo "Evidence fixture retained: $fixture" >&2; fi
+    exit "$status"
+}
+trap cleanup EXIT
 
 verify_archive() {
     mkdir "$fixture/unpacked"
@@ -146,3 +154,4 @@ if [[ -n "${IC_TESTKIT_ARCHIVE_PROOF_DIR:-}" ]]; then
     cp "$archive" "$IC_TESTKIT_ARCHIVE_PROOF_DIR/evidence.tar.gz"
 fi
 echo 'Failure evidence selections, archive round trips and failure retention passed'
+fixture_complete=true

@@ -14,13 +14,16 @@ done
 export PATH
 export IC_TESTKIT_HOOK_CARGO_SORT="$root/.tools/rust/bin/cargo-sort"
 fixture="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-git-hooks.XXXXXX")"
+fixture_complete=false
 cleanup() {
     local status=$?
+    [[ "$fixture_complete" == true || "$status" != 0 ]] || status=1
     if [[ "$status" -eq 0 ]]; then
         rm -rf -- "$fixture"
     else
         echo "Failed hook qualification retained at $fixture" >&2
     fi
+    exit "$status"
 }
 trap cleanup EXIT
 fail() { echo "hook qualification failed: $*" >&2; exit 1; }
@@ -184,3 +187,4 @@ expect_failure env PATH="$PWD/tool-bin:$PATH" make --no-print-directory install-
 git diff --quiet -- Makefile Cargo.toml
 cmp selected-lock Cargo.lock
 echo 'Consumer hook formatting, lockfile preservation, rejection and activation checks passed'
+fixture_complete=true

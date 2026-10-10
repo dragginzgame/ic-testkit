@@ -6,10 +6,13 @@ repo_root="${BASH_SOURCE[0]}"
 repo_root="$(cd -P "${repo_root%/*}/../.." && printf '%s/.' "$PWD")"
 repo_root="${repo_root%/.}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-publish-guards.XXXXXX")"
+fixture_complete=false
 cleanup() {
   local status=$?
+  [[ "$fixture_complete" == true || "$status" != 0 ]] || status=1
   if [[ "$status" == 0 ]]; then rm -rf "$work_dir";
   else echo "Failed publication qualification retained at $work_dir" >&2; fi
+  exit "$status"
 }
 trap cleanup EXIT
 fail() { echo "publication qualification failed: $*" >&2; exit 1; }
@@ -139,3 +142,4 @@ for invalid in lightweight missing wrong-commit invalid-head failed-head failed-
   [[ ! -e "$work_dir/state/ic-testkit" ]] || fail 'invalid tag reached Cargo publication'
 done
 echo 'Actual Make publication tag-admission checks passed'
+fixture_complete=true

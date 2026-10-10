@@ -6,13 +6,16 @@ repo_root="${BASH_SOURCE[0]}"
 repo_root="$(cd -P "${repo_root%/*}/../.." && printf '%s/.' "$PWD")"
 repo_root="${repo_root%/.}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/ic-testkit-release-metadata.XXXXXX")"
+fixture_complete=false
 cleanup() {
   local status=$?
+  [[ "$fixture_complete" == true || "$status" != 0 ]] || status=1
   if [[ "$status" -eq 0 ]]; then
     rm -rf "$work_dir"
   else
     echo "Failed metadata qualification retained at $work_dir" >&2
   fi
+  exit "$status"
 }
 trap cleanup EXIT
 fail() { echo "metadata qualification failed: $*" >&2; exit 1; }
@@ -830,3 +833,4 @@ export RELEASE_SOURCE=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 expect_failure prepared
 
 echo 'release metadata isolated checks passed'
+fixture_complete=true
