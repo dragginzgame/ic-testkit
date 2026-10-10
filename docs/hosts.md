@@ -1,5 +1,140 @@
 # Host support and qualification
 
+## IC Host 0.11 and Shared Tooling 0.2.13 for pending 0.29.0
+
+The maintainer authorized the 0.29.0 hard cut on released Testkit 0.28.1
+`ebbea97c90161eb03834b01a9fb0159aa0d99d89`. Reviewed clean Host source is
+`1d768c80a5bb87e3330a6b7bacfdfc543063968f` (published 0.11.0); Shared is
+`5864f468d39f8f9d1bd26fca1afe0e20f25f1b5e` (0.2.13). The canonical export
+retains 84 files. Incoming Host manifest/lock changes are preserved; the final
+lock selects all four Host crates at 0.11.0, with no unrelated package changes
+against HEAD (SHA-256
+`d23fc74319824fe86e5256cd663197d958496cb6f75ad33283eb8e6fa37e2468`).
+An attempted registry update failed DNS resolution and is retained in
+`/tmp/ic-testkit-0290-host-update.log`; subsequent locked cache preparation
+succeeded against the selected graph without unlocking it.
+
+Process callers and the transactional example use the single OutputLimits
+contract with per-stream policies and optional deadlines. Finite probe/download
+bounds remain unchanged. Cargo retains its existing output policy and no
+deadline; this adoption imposes no quota on multi-hour builds. Any execution
+cleanup failure now prevents flattening the typed error into a plain failed
+Cargo status. Public re-exports require Host 0.11 source migration; both note
+views describe it. Stored v1 formats and retained installations need no reset.
+
+Release preflight admits source and reconciles the selected saved workspace,
+fetches its locked graph, then invokes existing install-tools and
+install-format-tools, followed by tools-check and format-tools-check.
+PocketIC provisioning remains the explicit owning setup operation. Standalone
+verification and the sequential full-gate roster perform offline tool admission
+before dependent validation; checks never install. Actual Make callback fixtures
+under parallel Make prove cache-before-setup ordering, repeated preparation,
+source refusal without setup, setup failure propagation and standalone early
+admission refusal without gate dispatch. Existing offline/network policy,
+metadata interruption and saved-release checks remain covered. Setup/gate/Git
+effects are substituted; these fixtures do not prove live tool installation or
+native macOS behavior. Shared's installer fixtures separately cover reuse,
+invalid selections and retained failed installation evidence.
+
+Focused Linux checks pass: 58 Wasm-cache tests, two Host adapter tests, 23 startup
+tests (one separately ignored live case), seven CLI tests, strict Clippy including
+test callers and the transactional example, strict rustdoc, and actual Rust 1.88
+library/CLI plus Wasm library compilation. Snapshot distribution and Rust-tool fixtures pass under Bash 5 and
+genuine Bash 3.2; consumer release guards pass under both. Actual consumer
+snapshot verification refuses LF/CR roots and resolved aliases beside a valid
+trimmed-name neighbor, accepts an ordinary alias with CDPATH set, and preserves
+the real manifest. Snapshot/pins/fmt-check, selected ShellCheck and diff checks
+pass. Logs use `/tmp/ic-testkit-0290-{shared-export,cache,wasm,host-callers,startup,
+cli,clippy,example,msrv,wasm-msrv,docs,snapshot-fixture,snapshot-bash32,rust-tools,
+rust-tools-bash32,guards-current,guards-bash32,paths,shellcheck,tooling-final}.log`.
+Earlier guard attempts remain in `guards.log` and `guards-final.log`: the first
+missed tracking the new fixture trace; the second was superseded by the final
+source-bound runs. Their retained temporary evidence is not erased.
+
+Exact-source upstream CI remains separate: Host
+[38040092044](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38040092044)
+is queued and Shared
+[38039035514](https://github.com/dragginzgame/shared-tooling/actions/runs/38039035514)
+is in progress at inspection. This pending consumer source has no hosted/native
+result. Full local gates remain maintainer-owned under the explicit overlay;
+none ran. No package version, sibling source, release, tag, publication or CI
+dispatch/rerun was changed by this work.
+
+## IC Host 0.10.2 selected-graph qualification for pending 0.28.2
+
+The maintainer's incoming lock selects all four published Host crates at
+0.10.2, reviewed clean source `6b755763aca71b7ea8c3de40edf032093dfdc62c`.
+No dependency resolution or manifest change ran. Host now rejects pathname
+publication targets ending in `/` or `/.` before normalization, parent creation
+or staging. Testkit needs no production adapter change. A real-I/O atomic-copy
+regression verifies existing and missing-parent targets are refused, original
+destination bytes survive, no parent/staging entries appear, and the wrapper
+retains both path context and Host's typed `BeforePublication`/`InvalidInput`
+error without a cleanup failure. Owner-level callback and named/validated
+writer coverage remains upstream rather than being duplicated here.
+
+Explicit `cargo fetch --locked` prepares the selected cache. Focused Linux
+checks pass: 12 digest/copy tests, 10 cache-filesystem tests, 28 transaction
+tests, all seven CLI tests and strict Clippy including test callers. Logs use
+`/tmp/ic-testkit-0282-host-{cache,digest,cache-fs,transaction,provisioning,
+clippy,tooling}.log`. The incoming lock remains byte-for-byte unchanged
+(SHA-256 `ebe24416c52e7a2b4a82b88f465eafe0299f83cff14dde7290b209a36173cddd`).
+Earlier 0.28.2 evidence below used the preceding incoming 0.10.1 selection and
+is not relabelled as qualification of this graph.
+
+Host's exact-release CI [38037252544](https://github.com/dragginzgame/ic-host-tooling/actions/runs/38037252544)
+has passing Linux and MSRV jobs; ARM/Intel macOS jobs are queued at inspection.
+The pending Testkit source still has no exact-source hosted/native result.
+Public APIs, v1 layouts and retained installations need no migration or reset.
+No function, method or type was removed, package version changed, sibling
+file edited, broad gate run, release performed or CI rerun requested.
+
+## Shared admission and provisioning fixture fixes for pending 0.28.2
+
+This batch starts at released 0.28.1
+`ebbea97c90161eb03834b01a9fb0159aa0d99d89`. The clean canonical export selects
+Shared Tooling 0.2.11 `83efac446348dea024798a331d77933b24b429dc`, preserving
+the 84-file selection. Admission now rejects unsafe outer Make modes when
+MAKEFLAGS is cleared or replaced; MFLAGS supplies independent evidence.
+The actual consumer Makefile fixture covers six formatter/release targets,
+eleven unsafe mode spellings and five flag contexts (330 cases), requiring
+status 2 without runner or formatter effects. Ordinary parallel help remains
+admitted, and a safe formatter failure propagates through Make.
+
+Released Linux CI [38035257345](https://github.com/dragginzgame/ic-testkit/actions/runs/38035257345)
+failed spawning a provisioning test executable with ETXTBSY. Mutable fixture
+writes can overlap another test's subprocess fork, which can briefly retain
+the writable descriptor. Host 0.10.1's private test support already coordinates
+this lifetime. Testkit now holds a test-only mutex through each provisioning
+fixture's cleanup; its concurrent setup test still runs two callers against
+one root and checks one download. Production setup, retries and cache formats
+are unchanged. The initial focused run passed before the fix, so this is an
+intermittent failure analysis rather than a deterministic local reproduction.
+
+Focused Linux qualification passes: all seven CLI unit tests, strict Clippy
+including test callers, and 100 repeated six-test provisioning runs with six
+test threads (600 test executions). Committed upstream formatting/release
+fixtures pass under Bash 5 and genuine Bash 3.2. The final consumer release
+guard run under Bash 3.2 includes the 330 cases, safe formatter failure and
+controlled-effect release/metadata fixtures. Snapshot, dependency pins,
+fmt-check and selected ShellCheck pass. No broad gate was run.
+
+Logs use `/tmp/ic-testkit-0282-{shared-export,cache,provisioning-final,
+provisioning-clippy-tests,format,format-bash32,release,release-bash32,
+guards-bash32,tooling,shellcheck}.log`; repeated runs use
+`/tmp/ic-testkit-0282-provisioning-stress-{1..100}.log`. The original hosted
+failure excerpt remains in `original-ci-failure.log` with the same prefix.
+The pre-fix passing run remains in `provisioning.log`; the first guard-field
+attempt's dead-code warning remains in `provisioning-fixed.log`. The final
+named guard field passes strict Clippy without a lint suppression.
+
+The incoming Cargo.lock remains unchanged (SHA-256
+`56e4b00ee4c11704935761aa0e3867e1350209abbcef0cb1225ce37e458f4d96`).
+No function, method or type was removed, package version changed, sibling
+file edited, retained installation reset, release performed or CI rerun
+requested. These local results do not qualify the pending source on native
+macOS or hosted CI; released 0.28.1's results belong to its own source.
+
 ## IC Host 0.10.1 selected-graph qualification for pending 0.28.1
 
 The maintainer's selected lock already uses all four Host crates at 0.10.1;

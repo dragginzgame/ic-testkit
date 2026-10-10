@@ -32,7 +32,7 @@ server-check: build-server-cli
 
 MSRV ?= 1.88.0
 .DEFAULT_GOAL := help
-CI_TARGETS := shared-tooling-check tools-check dependency-pins-check installation-check publish-guards-check \
+CI_TARGETS := shared-tooling-check tools-check format-tools-check dependency-pins-check installation-check publish-guards-check \
 	release-guards-check git-hooks-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 

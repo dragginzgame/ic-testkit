@@ -138,7 +138,6 @@ case "$mode" in
       || fail "cannot read source version"
     [[ "$observed_version" == "$RELEASE_PREVIOUS" ]] \
       || fail "source version differs from saved selection"
-    bash "$script_dir/../ci/check-format-tools.sh" "$SHARED_TOOLING_CARGO_SORT_VERSION"
     cache_manifest=Cargo.toml
     if [[ -e "$prepared/ready" ]]; then
       check_recovery
@@ -153,6 +152,12 @@ case "$mode" in
     # Prepare the selected cache using Cargo's caller-owned network policy.
     # An explicit offline policy still fails on a miss; never retry it online.
     cargo fetch --manifest-path "$cache_manifest" --locked
+    # Source admission and saved-graph reconciliation precede setup. Reuse the
+    # consumer's selected tool owners, without provisioning PocketIC here.
+    make --no-print-directory install-tools
+    make --no-print-directory install-format-tools
+    make --no-print-directory tools-check
+    make --no-print-directory format-tools-check
     ;;
   verify)
     attempt="$(mktemp -d "$state/$RELEASE_VERSION.validation.XXXXXX")"
@@ -162,6 +167,10 @@ case "$mode" in
     if [[ -e "$validation" ]]; then mv "$validation" "$attempt/prior-validation"; fi
     before="$(input_digest)"
     validation_identity "$before" > "$attempt/identity"
+    # Standalone verification never installs tools or starts an expensive gate
+    # before offline admission, even when release preflight was bypassed.
+    make --no-print-directory tools-check
+    make --no-print-directory format-tools-check
     # Complete gate, identical for patch/minor/major. Preserve the caller's
     # network policy: its registry dry run needs HTTP even with cached crates.
     # Retain the full log on failure; never retry offline failures online.

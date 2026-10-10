@@ -270,9 +270,9 @@ impl PocketIcStartupConfig {
         let evidence = ic_host_process::tool::capture_group_command(
             Command::new(&binary).arg("--version"),
             ic_host_process::tool::OutputLimits {
-                stdout_bytes: SERVER_OUTPUT_LIMIT,
-                stderr_bytes: SERVER_OUTPUT_LIMIT,
-                timeout,
+                stdout: ic_host_process::tool::OutputLimit::Terminate(SERVER_OUTPUT_LIMIT),
+                stderr: ic_host_process::tool::OutputLimit::Terminate(SERVER_OUTPUT_LIMIT),
+                timeout: Some(timeout),
             },
         )
         .map_err(|source| {

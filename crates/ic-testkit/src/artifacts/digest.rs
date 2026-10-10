@@ -781,6 +781,47 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn atomic_copy_rejects_directory_required_destinations_without_publication() {
+        use ic_host_fs::durable::NamedWriteError;
+
+        let root = unique_temp_directory("atomic-copy-directory-suffix");
+        let source = root.join("source");
+        let destination = root.join("destination");
+        fs::write(&source, b"replacement").unwrap();
+        fs::write(&destination, b"retained").unwrap();
+        for name in ["destination", "missing/child"] {
+            for suffix in ["/", "/."] {
+                let mut raw = root.join(name).into_os_string();
+                raw.push(suffix);
+                let target = PathBuf::from(raw);
+                let error = copy_file_atomic(&source, &target).unwrap_err();
+                let context = error
+                    .get_ref()
+                    .unwrap()
+                    .downcast_ref::<super::AtomicCopyErrorContext>()
+                    .unwrap();
+                assert_eq!(context.source_path, source);
+                assert_eq!(context.destination_path, target);
+                let publication = context
+                    .source
+                    .get_ref()
+                    .unwrap()
+                    .downcast_ref::<NamedWriteError<std::io::Error>>()
+                    .unwrap();
+                assert!(matches!(
+                    publication,
+                    NamedWriteError::BeforePublication { source, cleanup_error: None }
+                        if source.kind() == std::io::ErrorKind::InvalidInput
+                ));
+                assert_eq!(fs::read(&destination).unwrap(), b"retained");
+                assert_eq!(fs::read_dir(&root).unwrap().count(), 2);
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn atomic_publication_supports_long_destination_names() {
         let root = unique_temp_directory("atomic-long-destination");
         let destination = root.join("a".repeat(255));

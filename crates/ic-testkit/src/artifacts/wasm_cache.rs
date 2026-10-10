@@ -1,7 +1,7 @@
 use ic_host_process::{
     child::OwnedChild,
     tool::{
-        CommunicationLimits, ExecutionFailure, OutputStream, SuccessfulExit, ToolError,
+        ExecutionFailure, OutputLimit, OutputLimits, OutputStream, SuccessfulExit, ToolError,
         communicate_child_with_observer,
     },
 };
@@ -4800,11 +4800,11 @@ fn communicate_cargo_build(
     let result = communicate_child_with_observer(
         &mut child,
         None,
-        CommunicationLimits {
+        OutputLimits {
             // Preserve the existing retained-output contract and allow builds
             // lasting hours. No new byte quota or elapsed-time deadline.
-            stdout_bytes: usize::MAX,
-            stderr_bytes: usize::MAX,
+            stdout: OutputLimit::Terminate(usize::MAX),
+            stderr: OutputLimit::Terminate(usize::MAX),
             timeout: None,
         },
         SuccessfulExit::Cleanup,
@@ -4843,10 +4843,7 @@ fn communicate_cargo_build(
     let evidence = match result {
         Ok(evidence) => evidence,
         Err(ToolError::Execution(error))
-            if matches!(error.failure, ExecutionFailure::ExitStatus)
-                && error.group_error.is_none()
-                && error.kill_error.is_none()
-                && error.wait_error.is_none() =>
+            if matches!(error.failure, ExecutionFailure::ExitStatus) && error.cleanup.is_none() =>
         {
             error.evidence
         }

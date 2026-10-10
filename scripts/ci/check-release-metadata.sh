@@ -92,6 +92,16 @@ STUB
 cat > "$work_dir/bin/make" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+case "$*" in
+  '--no-print-directory install-tools' | '--no-print-directory install-format-tools')
+    printf '%s\n' "$*" >> tool-trace
+    printf '%s\n' "$*" >> preparation-trace
+    exit "${ADAPTER_SETUP_STATUS:-0}" ;;
+  '--no-print-directory tools-check' | '--no-print-directory format-tools-check')
+    printf '%s\n' "$*" >> tool-trace
+    printf '%s\n' "$*" >> preparation-trace
+    exit "${ADAPTER_TOOLS_STATUS:-0}" ;;
+esac
 [[ "$*" == '--no-print-directory release-check' ]] || exit 97
 printf '%s\n' "$*" >> gate-trace
 printf '%s\n' "${CARGO_NET_OFFLINE-unset}" >> gate-environment
@@ -119,6 +129,7 @@ chmod +x "$work_dir/bin/cat"
 cat > "$work_dir/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == fetch ]]; then printf 'fetch\n' >> preparation-trace; fi
 if [[ "$1" == fetch && "${ADAPTER_FETCH_TEST:-}" == true ]]; then
   printf '%s\n' "$*" >> fetch-trace
   printf '%s\n' "${CARGO_NET_OFFLINE-unset}" >> fetch-policy
@@ -183,6 +194,8 @@ new_fixture() {
 }
 adapter() {
   local target
+  local make_arguments=(--no-print-directory)
+  if [[ "${ADAPTER_PARALLEL:-}" == true ]]; then make_arguments+=(-j2); fi
   case "$1" in
     preflight) target=release-preflight ;;
     verify) target=release-verify ;;
@@ -197,13 +210,41 @@ adapter() {
   # This private release owns its identity. Recursive Make command-line
   # overrides from an outer release otherwise beat the fixture's environment.
   MAKEFLAGS='' MAKEOVERRIDES='' MFLAGS='' \
-    "$real_make" --no-print-directory -f "$repo_root/Makefile" "$target"
+    "$real_make" "${make_arguments[@]}" -f "$repo_root/Makefile" "$target"
 }
 expect_failure() {
   if adapter "$1" > rejected.log 2>&1; then
     fail "adapter unexpectedly accepted $1 in $PWD (${conflict:-no selected-commit conflict})"
   fi
 }
+
+# Setup/check ordering belongs to the actual consumer adapter. Effects are
+# substituted; these cases do not install tools or run a complete gate.
+new_fixture tool-ordering
+ADAPTER_PARALLEL=true adapter preflight || fail 'selected tool preparation failed'
+printf '%s\n' '--no-print-directory install-tools' \
+  '--no-print-directory install-format-tools' '--no-print-directory tools-check' \
+  '--no-print-directory format-tools-check' > expected-tools
+cmp expected-tools tool-trace || fail 'selected tool preparation order changed'
+printf 'fetch\n' > expected-preparation
+cat expected-tools >> expected-preparation
+cmp expected-preparation preparation-trace || fail 'tools prepared before locked cache'
+adapter preflight || fail 'repeated selected preparation failed'
+cat expected-tools expected-tools > expected-repeat
+cmp expected-repeat tool-trace || fail 'repeated preparation ordering changed'
+cmp "$repo_root/Cargo.lock" Cargo.lock || fail 'tool setup changed selected lock'
+[[ ! -e gate-trace && ! -e .release-state/"$RELEASE_VERSION".metadata ]] || fail 'tool setup dispatched validation or metadata'
+
+new_fixture tool-setup-failure
+ADAPTER_SETUP_STATUS=23 expect_failure preflight
+[[ "$(cat tool-trace)" == '--no-print-directory install-tools' && ! -e gate-trace ]] || fail 'failed setup continued'
+new_fixture tool-admission-failure
+ADAPTER_TOOLS_STATUS=24 expect_failure verify
+[[ "$(cat tool-trace)" == '--no-print-directory tools-check' && ! -e gate-trace ]] || fail 'standalone admission installed or built'
+[[ ! -e .release-state/"$RELEASE_VERSION".validation ]] || fail 'failed admission retained validation receipt'
+new_fixture tool-source-refusal
+ADAPTER_DIRTY=unexpected expect_failure preflight
+[[ ! -e tool-trace && ! -e preparation-trace ]] || fail 'source refusal dispatched cache or setup'
 
 # Imported undated history is not another pending release. Exercise both note
 # views through the actual consumer callbacks, preserving the historical bytes.
@@ -391,7 +432,7 @@ printf '/.release-state/\n' > .git/info/exclude
   crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md \
   rust-toolchain.toml crates/ic-testkit/Cargo.toml crates/ic-testkit/src/lib.rs \
   crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs \
-  artifact gate-trace gate-environment rejected.log scripts ci
+  artifact gate-trace gate-environment tool-trace preparation-trace rejected.log scripts ci
 printf 'interrupted root staging bytes\n' > .release-metadata.fixture
 printf 'interrupted package staging bytes\n' > crates/ic-testkit/.release-metadata.fixture
 ADAPTER_REAL_UNTRACKED=true adapter preflight || fail "tracked fixture preflight rejected"

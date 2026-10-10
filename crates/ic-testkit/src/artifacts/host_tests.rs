@@ -3,7 +3,8 @@ use super::{ArtifactCachePreparation, ArtifactCacheSpec, prepare_artifact_cache}
 use crate::{
     ic_host_artifacts::artifact::{ArtifactError, Sha256Digest},
     ic_host_process::tool::{
-        AdmittedTool, ExecutionContext, OutputLimits, ToolError, ToolSpec, resolve_executable,
+        AdmittedTool, ExecutionContext, OutputLimit, OutputLimits, ToolError, ToolSpec,
+        resolve_executable,
     },
 };
 use std::{ffi::OsString, fs, path::Path, time::Duration};
@@ -22,9 +23,9 @@ fn admitted_shared_tool_output_is_published_and_invalidated_by_tool_bytes() {
         environment: &[],
     };
     let limits = OutputLimits {
-        stdout_bytes: 128,
-        stderr_bytes: 128,
-        timeout: Duration::from_secs(5),
+        stdout: OutputLimit::Terminate(128),
+        stderr: OutputLimit::Terminate(128),
+        timeout: Some(Duration::from_secs(5)),
     };
     let tool = AdmittedTool::admit(
         &ToolSpec {
@@ -94,9 +95,9 @@ fn shim_wasm_and_post_link_caches_reuse_and_invalidate_independently() {
         environment: &[],
     };
     let limits = OutputLimits {
-        stdout_bytes: 128,
-        stderr_bytes: 128,
-        timeout: Duration::from_secs(5),
+        stdout: OutputLimit::Terminate(128),
+        stderr: OutputLimit::Terminate(128),
+        timeout: Some(Duration::from_secs(5)),
     };
     let admit = |bytes: &[u8]| {
         AdmittedTool::admit(

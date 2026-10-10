@@ -5,7 +5,7 @@ use ic_testkit::{
     },
     ic_host_artifacts::artifact::Sha256Digest,
     ic_host_process::tool::{
-        AdmittedTool, ExecutionContext, OutputLimits, ToolSpec, resolve_executable,
+        AdmittedTool, ExecutionContext, OutputLimit, OutputLimits, ToolSpec, resolve_executable,
     },
 };
 use std::time::Duration;
@@ -25,9 +25,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         environment: &[],
     };
     let limits = OutputLimits {
-        stdout_bytes: 64 * 1024,
-        stderr_bytes: 64 * 1024,
-        timeout: Duration::from_secs(60),
+        stdout: OutputLimit::Terminate(64 * 1024),
+        stderr: OutputLimit::Terminate(64 * 1024),
+        timeout: Some(Duration::from_secs(60)),
     };
     // Admission uses caller authority, never a digest computed from untrusted
     // selected bytes. Transform tools must work with this empty environment.

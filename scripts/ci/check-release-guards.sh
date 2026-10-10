@@ -192,6 +192,66 @@ check_make_sequence() {
 check_make_sequence ci "check-first check-second check-third"
 check_make_sequence release-check "check-first check-second check-third"
 
+# Exercise the actual consumer Makefile with harmless formatter/runner effects.
+# Even replacing flag variables must not conceal the real outer invocation.
+(
+  unset MAKEFLAGS MFLAGS MAKEOVERRIDES GNUMAKEFLAGS MAKEFILES
+  modes_case="${work_dir}/modes"
+  mkdir -p "$modes_case/make" "$modes_case/scripts/ci" "$modes_case/ci"
+  cp "$repo_root/Makefile" "$modes_case/"
+  cp "$repo_root/make/"*.mk "$modes_case/make/"
+  cp "$repo_root/ci/tool-versions.env" "$modes_case/ci/"
+  for helper in check-make-execution.sh check-format-tools.sh run-formatting.sh; do
+    cp "$repo_root/scripts/ci/$helper" "$modes_case/scripts/ci/"
+  done
+  cat > "$modes_case/scripts/ci/run-release.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'runner\n' >> "$MODE_EVENTS"
+exit 23
+EOF
+  cat > "$modes_case/cargo" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  'sort --version') printf 'cargo-sort 2.1.4\n'; exit 0 ;;
+  'fmt --version') exit 0 ;;
+esac
+printf 'formatter\n' >> "$MODE_EVENTS"
+exit 23
+EOF
+  chmod +x "$modes_case/cargo"
+  export MODE_EVENTS="$modes_case/events"
+  for target in fmt fmt-check release-patch release-minor release-major release-resume; do
+    for mode in -i --ignore-errors -n --dry-run --just-print --recon -t --touch -q --question -kin; do
+      for selection in direct inherited cleared replaced both-hidden; do
+        : > "$MODE_EVENTS"
+        arguments=("$mode" "$target" VERSION=0.28.2 "FORMAT_CARGO=$modes_case/cargo")
+        case "$selection" in
+          cleared) arguments+=(MAKEFLAGS=) ;;
+          replaced) arguments+=(MAKEFLAGS=--no-print-directory) ;;
+          both-hidden) arguments+=(MAKEFLAGS= MFLAGS=) ;;
+        esac
+        status=0
+        if [[ "$selection" == inherited ]]; then
+          MAKEFLAGS="$mode" "$make_bin" -C "$modes_case" "${arguments[@]:1}" \
+            > "$modes_case/mode.log" 2>&1 || status=$?
+        else
+          "$make_bin" -C "$modes_case" "${arguments[@]}" \
+            > "$modes_case/mode.log" 2>&1 || status=$?
+        fi
+        [[ "$status" -eq 2 && ! -s "$MODE_EVENTS" ]] \
+          || fail "unsafe Make admission: $target $mode $selection (status $status)"
+      done
+    done
+  done
+  "$make_bin" -C "$modes_case" -j2 help MAKEFLAGS= > "$modes_case/help.log"
+  [[ ! -s "$MODE_EVENTS" ]] || fail "harmless help dispatched a tool"
+  status=0
+  RUNNER_TEMP="$modes_case" "$make_bin" -C "$modes_case" fmt-check \
+    "FORMAT_CARGO=$modes_case/cargo" > "$modes_case/format-failure.log" 2>&1 || status=$?
+  [[ "$status" -eq 2 && "$(<"$MODE_EVENTS")" == formatter ]] \
+    || fail "safe formatting did not propagate the formatter's failure"
+)
+
 bash "${repo_root}/scripts/ci/check-release-commands.sh" "${repo_root}" \
   make/tools.mk make/release.mk make/rust-format.mk make/execution.mk \
   scripts/ci/check-make-execution.sh scripts/ci/run-formatting.sh

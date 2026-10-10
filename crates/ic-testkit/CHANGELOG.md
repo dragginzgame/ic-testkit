@@ -8,6 +8,43 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.29.0]
+
+### Breaking: IC Host 0.11 process contracts
+
+The public Host re-exports select 0.11. Replace `CommunicationLimits` with
+`OutputLimits`, and replace `stdout_bytes: n` / `stderr_bytes: n` with
+`stdout: OutputLimit::Terminate(n)` / `stderr: OutputLimit::Terminate(n)`.
+Wrap finite deadlines in `Some(duration)`; `None` permits long-running work.
+For forwarding every byte while retaining a bounded prefix, use
+`OutputLimit::Truncate(n)`. Read secondary execution failures through
+`ExecutionError::cleanup` rather than its former individual cleanup fields
+([#47](https://github.com/dragginzgame/ic-testkit/issues/47),
+[host #46](https://github.com/dragginzgame/ic-host-tooling/issues/46)).
+
+Testkit Cargo builds retain their existing output policy with no new quota or
+deadline. A failed Cargo invocation with any cleanup failure preserves the whole
+typed Host error. No stored format or retained installation needs a reset.
+
+### Fixed
+
+- Adopt Shared Tooling 0.2.13's snapshot path safeguards and selected-tool
+  diagnostics. Release preflight prepares required tools after locked cache
+  preparation; offline admission precedes standalone validation
+  ([#48](https://github.com/dragginzgame/ic-testkit/issues/48),
+  [shared #95](https://github.com/dragginzgame/shared-tooling/issues/95),
+  [shared #96](https://github.com/dragginzgame/shared-tooling/issues/96)).
+- Inherit IC Host's pathname admission fix to refuse directory-suffixed
+  publication targets without replacing the stripped filename
+  ([host #44](https://github.com/dragginzgame/ic-host-tooling/issues/44)).
+- Reject unsafe Make execution modes even when flag variables are cleared or
+  replaced, adopting Shared Tooling 0.2.11
+  ([#45](https://github.com/dragginzgame/ic-testkit/issues/45),
+  [shared #30](https://github.com/dragginzgame/shared-tooling/issues/30)).
+- Coordinate mutable provisioning test fixtures to prevent executable-busy
+  races between parallel tests, preserving concurrent setup coverage
+  ([#46](https://github.com/dragginzgame/ic-testkit/issues/46)).
+
 ## [0.28.1] - 2026-10-10
 
 ### Changed
