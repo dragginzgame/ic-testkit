@@ -8,7 +8,7 @@ PocketIC-oriented test utilities for Internet Computer canister tests.
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.40"
+ic-testkit = "0.41"
 ```
 
 The published MSRV is Rust 1.88, and the selected PocketIC line is 16.
@@ -99,6 +99,7 @@ The [0.19 guide](CHANGELOG.md#0190) covers
 explicit tool resolution and verified external-transform arguments.
 
 The published archive includes [`CHANGELOG.md`](CHANGELOG.md), which contains
+the [0.41.0 integer benchmark projection migration](CHANGELOG.md#0410),
 the [0.40.0 instance/server ownership migration](CHANGELOG.md#0400),
 the [0.38.0 single-pool migration](CHANGELOG.md#0380),
 the [0.13.0 benchmark and reset-requirement migration](CHANGELOG.md#0130),
@@ -112,11 +113,14 @@ compiled by the crate's normal all-target checks. The
 is compiled and maintained by IC Build.
 
 Benchmark aggregate/comparison rows and aggregate errors use `suite()` for their
-label; aggregate rows use `average()` for approximate `f64` averages derived from
-totals and run count. Distinct integers above 2^53 can round to the same average
-and report zero percentage change; use exact totals and run counts for exact
-comparisons. Text reports also round displayed averages and percentages to whole
-numbers. Baseline recipes construct reset requirements with
+label; `average(scale)` now returns checked floor-rounded `u128` means through
+IC Metrics. `compare_benchmark_aggregates(current, previous, scale)` returns
+current/previous means and run counts, preserving missing rows and measured zero.
+Approximate percentage fields are removed. Aggregate CSV/text uses scale one in
+original counter units; comparison CSV includes both scales. Exact totals remain
+available, and zero runs/scaled overflow return typed errors. Write the changed
+columns to new report directories; retained reports are not reinterpreted.
+Baseline recipes construct reset requirements with
 `ResetRequirements::try_new(cycle_policy, non_snapshot_requirements)`. The pool
 verifies snapshots and cycle policy through `CanisterRestoreReceipt`, while
 `ResetReceipt` covers non-snapshot guarantees. These are source API hard cuts.

@@ -269,13 +269,13 @@ for file in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
   cmp history-tail old-history-tail || fail "undated history changed: $file"
 done
 
-# One private policy selection drives both cache preparation and gate admission.
-# Local exported variables cannot leak into another fixture.
-check_network_policy() {
-  local policy="$1" ADAPTER_FETCH_TEST=true ADAPTER_REGISTRY_CHECK=true CARGO_NET_OFFLINE
-  export ADAPTER_FETCH_TEST ADAPTER_REGISTRY_CHECK CARGO_NET_OFFLINE
+# A subshell isolates each policy from the caller and other fixtures. Unsetting
+# a local variable can otherwise reveal the caller's exported offline policy.
+check_network_policy() (
+  local policy="$1" ADAPTER_FETCH_TEST=true ADAPTER_REGISTRY_CHECK=true
+  export ADAPTER_FETCH_TEST ADAPTER_REGISTRY_CHECK
   if [[ "$policy" == unset ]]; then unset CARGO_NET_OFFLINE;
-  else CARGO_NET_OFFLINE="$policy"; fi
+  else export CARGO_NET_OFFLINE="$policy"; fi
   if [[ "$policy" == true || "$policy" == 1 ]]; then
     expect_failure preflight
   else
@@ -300,7 +300,7 @@ check_network_policy() {
   [[ "$(wc -l < gate-trace)" -eq 1 ]] || fail 'gate retried implicitly'
   cmp "$repo_root/Cargo.toml" Cargo.toml || fail 'network fixture changed manifest'
   cmp "$repo_root/Cargo.lock" Cargo.lock || fail 'network fixture changed lock selection'
-}
+)
 for policy in unset false true 1; do
   new_fixture "network-$policy"
   check_network_policy "$policy" || fail "network-policy qualification failed: $policy"
