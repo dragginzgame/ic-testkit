@@ -180,8 +180,11 @@ skipped run; do not treat missing failure logs as a completed diagnosis.
   requirements and owner links before closing the duplicate. Do not erase
   unresolved requirements to reduce the count. Downstream automatic closing
   references must not close Shared issues with unmet producer criteria.
-- That issue authorization does not authorize sibling file edits, unrelated
-  messages, commits or release effects. A check request
+- Issue-posting authority and source-contribution authority are separate.
+  Relevant sibling repairs use the standing
+  [isolated PR workflow](contributions.md#cross-repository-pull-requests), including
+  its scoped commits and branch pushes; never edit sibling working checkouts
+  directly. Neither authority permits unrelated messages or release effects. A check request
   remains inspection; it does not authorize applying newly found local repairs.
   If another contributor owns an active edit or validation, coordinate before
   changing its source; retain a proposed patch as evidence until it can be applied.

@@ -1,5 +1,71 @@
 # Host support and qualification
 
+## Pending 0.43.0: retained synthetic HTTP capture
+
+The Backup-driven HTTP capture contribution is reconciled with released 0.42.0.
+`testing::capture_http_request` retains exact partial bytes and typed failure
+causes under one deadline; the phased request-line completion keeps its public
+signature and now uses that same framing engine. Removing the old whole-request
+`read_http_request` signature selects 0.43.0 before 1.0. Callers using that
+helper must select a Content-Length policy and inspect `HttpCapture` or convert
+it with `into_result` when partial evidence is unnecessary. Socket responses,
+application fault injection and evidence-file custody remain caller-owned.
+Linux focused framing, all 80 active library cases and six teardown cases pass,
+along with strict all-target Clippy/docs and Rust 1.88 checking. Native macOS
+acceptance, full CI and publication remain separate.
+
+## Pending 0.42.0: canonical release projection and prepared native callers
+
+The working tree adopts Shared Tooling 0.12.7 at
+`9364ffe3f770a6d5d94809f0bf82c33202054bf8` through its exporter and recorded
+106-file snapshot. Release preparation projects only admitted local lockfile
+versions through the canonical rewriter; saved manifests still support interrupted
+cache preparation. Snapshot integrity, 19 rewriter assertions with real Cargo,
+consumer metadata/recovery, prepared-tool fixtures, formatting and focused shell
+lint pass on Linux. Metadata/recovery and host/IC/Rust installer fixtures also
+pass under genuine Bash 3.2.57. Catalog pin bytes remain unchanged.
+
+[Host PR #108](https://github.com/dragginzgame/ic-host-tooling/pull/108) at
+`ba2e007dc9dc11949c124d21e613614a14617f60` supplies scoped Unix signal actions;
+[Build PR #31](https://github.com/dragginzgame/ic-build/pull/31) at
+`31658b37b1958886c25342c08ffc54f036cab236` supplies Cargo-reported native executable
+and target paths. Their focused native tests, strict lint, docs and actual Rust
+1.88 checks pass. The isolated Testkit consumer passes eight driver cases, CLI
+cancellation, strict caller lint and Rust 1.88 with temporary source selections.
+A fresh/pooled PocketIC smoke passes through that build path, establishing
+correctness rather than a performance improvement. Cargo duration and total
+diagnostic output remain unlimited by default; decoding bounds apply per message.
+
+Normal Testkit signal/build callers await published APIs under
+[#93](https://github.com/dragginzgame/ic-testkit/issues/93) and
+[#94](https://github.com/dragginzgame/ic-testkit/issues/94). Exact inputs, failed
+attempts, the consumer patch and raw evidence remain in
+`/tmp/testkit-next-three/`. Full validation, native macOS acceptance and publication
+remain with the maintainer. The combined draft selects 0.42.0 for the concurrent
+exposed Host 0.18 filesystem contract change; own package metadata remains 0.41.0.
+The earlier prospective 0.41.1 qualification below retains its original identity.
+
+## Pending 0.41.1: phased synthetic HTTP capture
+
+The authorized Blob extraction extends the existing native testing reader with
+bounded request-line capture and completion through one caller absolute deadline.
+Incomplete connections may stay caller-owned while another request progresses;
+response/fault policy and original socket provenance remain local.
+[Blob #70](https://github.com/dragginzgame/ic-blob-storage/issues/70) owns consumer
+activation after the additive API is published. Existing whole-request capture
+and the 0.41.0 startup/teardown callers keep their contracts.
+
+Focused Linux qualification passes 77 library units (four governed cases remain
+ignored), four socket/framing cases, strict library lint/docs and Rust 1.88.
+The isolated Blob candidate passes complete CLI cases, strict lint, Rust 1.88
+and three installed observation/recovery journeys. Published 0.41.0 source is
+`5abb2d6cde750386647817741f7ccec403bc7fca`; prospective 0.41.1 metadata/path
+selection is confined to the isolated qualification graph. Exact before-images,
+inputs, failed sandbox attempts and raw logs remain at
+`/tmp/blob-cleanup3.OxzNfJ/`. Native macOS and published phased adoption remain
+separate; no full gate, package-version change, Git effect or publication ran
+for this extension. The maintainer's concurrent 0.41.0 release is preserved.
+
 ## Pending 0.41.0: numerical and synthetic transport convergence
 
 The benchmark API projects checked integer means through published IC Metrics

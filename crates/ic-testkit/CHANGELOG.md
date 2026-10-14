@@ -8,7 +8,7 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.42.0]
+## [0.43.0]
 
 ### Breaking
 
@@ -17,8 +17,44 @@ repository checkout. The complete historical changelog remains at
   HttpContentLength::Optional)` for the old framing rule. The new result retains
   partial bytes and typed failure causes. Call `.into_result()` only when failed
   bytes are expendable. Select `HttpContentLength::Required` when signed requests
-  must declare a length, including zero. Existing fixture responses and retained
-  evidence-file custody remain caller-owned.
+  must declare a length, including zero. The phased line reader and completion
+  helper keep their signatures, but use the shared framing engine. Fixture
+  responses and retained evidence-file custody remain caller-owned.
+
+## [0.42.0] - 2026-10-14
+
+### Breaking
+
+- The public IC Host reexports now select 0.18. Following file reads/hashes
+  admit their opened descriptor instead of checking metadata before opening.
+  Native open failures therefore precede type/size refusal; callers relying on
+  error precedence must update their handling. No stored-format migration is
+  required for this library contract change.
+
+### Changed
+
+- Select reviewed Shared Tooling 0.12.7 and its local-lockfile rewriter for
+  release preparation. Only exact unsourced workspace package versions and
+  local dependency references change; all external selections remain intact.
+  Saved manifests still support cache preparation after interrupted metadata
+  installation, and final locked Cargo admission remains independent
+  ([#73 — Adopt snapshot-owned common tool catalogs](https://github.com/dragginzgame/ic-testkit/issues/73)).
+
+### Added
+
+- Use `testing::read_http_request_line` to classify a synthetic request without
+  waiting for headers/body, then `read_http_request_with_line` on that same
+  socket to complete it under the original absolute deadline. Both phases
+  retain caller-selected bounds, response policy and failure injection; the
+  existing whole-request helper remains available for complete peers
+  ([Blob #70](https://github.com/dragginzgame/ic-blob-storage/issues/70)).
+
+### Fixed
+
+- Allocate retained idle-lifetime evidence atomically with a randomized temporary
+  directory under `target/`. Previous logs remain intact when CI restores its
+  cache; the server lifetime and evidence upload paths retain their contracts
+  ([#91](https://github.com/dragginzgame/ic-testkit/issues/91)).
 
 ## [0.41.0] - 2026-10-14
 

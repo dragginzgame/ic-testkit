@@ -728,9 +728,9 @@ dependencies = [
 
 [[package]]
 name = "ic-build"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "415c50c37611014ab87016292bffb7ca366498c52062d226a0c9e886346683f8"
+checksum = "671361f0f18d3d592e9ae652dc29325a986d2a0472c88c4627706132a997f986"
 dependencies = [
  "ic-host-artifacts",
  "ic-host-fs",
@@ -806,11 +806,12 @@ dependencies = [
 
 [[package]]
 name = "ic-host-artifacts"
-version = "0.17.13"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9acf9183cfe37a9400ce6893d77292af8b22bcdb7a5451d7a36c81cac33b3be4"
+checksum = "729c311bdd8cfafda7388aab5760f34d96ba34967a62f57bd08efa5dbd57c1d5"
 dependencies = [
  "flate2",
+ "leb128",
  "sha2",
  "tar",
  "wasmparser",
@@ -818,9 +819,9 @@ dependencies = [
 
 [[package]]
 name = "ic-host-fs"
-version = "0.17.13"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c549e4539b625ae82ed2de592acef0b8fc98a35e6edba47cc5ee98614c0936b"
+checksum = "1a6b7a144a74269b883b235c2b5f7578883a09c79a710922230b34507a683f13"
 dependencies = [
  "ic-host-artifacts",
  "rustix",
@@ -828,9 +829,9 @@ dependencies = [
 
 [[package]]
 name = "ic-host-process"
-version = "0.17.13"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7d287d27872f8d97a64da3d2d26cc18bdeaafba3c3009a6d538ee8026e0b07"
+checksum = "9ae1f84deba8cbd191895fb2800e71ae46718883c46dcde8f4b6d5cd164484cf"
 dependencies = [
  "ic-host-artifacts",
  "ic-host-fs",
@@ -851,13 +852,13 @@ dependencies = [
 
 [[package]]
 name = "ic-metrics"
-version = "0.9.4"
+version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65678222f2c60563768da53a4d03b39c963180dd85e3dd2894237b3ccb7a0fe"
+checksum = "b2e743e0e40b8bb69b6807b18c767e51625ce711bc7f672fb30c0460c9b07f76"
 
 [[package]]
 name = "ic-testkit"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "candid",
  "ic-build",
@@ -913,7 +914,7 @@ dependencies = [
 
 [[package]]
 name = "ic_testkit_perf_probe"
-version = "0.41.0"
+version = "0.42.0"
 dependencies = [
  "candid",
  "ic-cdk",

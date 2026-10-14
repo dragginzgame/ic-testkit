@@ -82,18 +82,43 @@ pub fn capture_http_request(
     if max_header_bytes < 4 || max_header_bytes.checked_add(max_body_bytes).is_none() {
         return failed(Vec::new(), HttpCaptureFailure::InvalidBounds);
     }
-    if Instant::now().checked_add(timeout).is_none() {
+    let Some(deadline) = Instant::now().checked_add(timeout) else {
         return failed(Vec::new(), HttpCaptureFailure::InvalidDeadline);
+    };
+    capture_http_request_until(
+        stream,
+        Vec::new(),
+        deadline,
+        max_header_bytes,
+        max_body_bytes,
+        content_length,
+    )
+}
+
+pub(super) fn capture_http_request_until(
+    stream: &mut TcpStream,
+    initial: Vec<u8>,
+    deadline: Instant,
+    max_header_bytes: usize,
+    max_body_bytes: usize,
+    content_length: HttpContentLength,
+) -> HttpCapture {
+    if max_header_bytes < 4
+        || max_header_bytes.checked_add(max_body_bytes).is_none()
+        || initial.len() > max_header_bytes
+    {
+        return failed(initial, HttpCaptureFailure::InvalidBounds);
     }
     if let Err(error) = stream.set_nonblocking(false) {
-        return failed(Vec::new(), HttpCaptureFailure::Io(error));
+        return failed(initial, HttpCaptureFailure::Io(error));
     }
-    capture_with(
+    capture_with_deadline(
         |buffer, remaining| {
             stream.set_read_timeout(Some(remaining))?;
             stream.read(buffer)
         },
-        timeout,
+        initial,
+        deadline,
         max_header_bytes,
         max_body_bytes,
         content_length,
@@ -107,23 +132,41 @@ const fn failed(bytes: Vec<u8>, failure: HttpCaptureFailure) -> HttpCapture {
     }
 }
 
+#[cfg(test)]
 fn capture_with(
-    mut read: impl FnMut(&mut [u8], Duration) -> io::Result<usize>,
+    read: impl FnMut(&mut [u8], Duration) -> io::Result<usize>,
     budget: Duration,
     max_header_bytes: usize,
     max_body_bytes: usize,
     content_length: HttpContentLength,
 ) -> HttpCapture {
-    let Some(capacity) = max_header_bytes.checked_add(max_body_bytes) else {
-        return failed(Vec::new(), HttpCaptureFailure::InvalidBounds);
-    };
-    if max_header_bytes < 4 {
-        return failed(Vec::new(), HttpCaptureFailure::InvalidBounds);
-    }
     let Some(deadline) = Instant::now().checked_add(budget) else {
         return failed(Vec::new(), HttpCaptureFailure::InvalidDeadline);
     };
-    let mut bytes = Vec::new();
+    capture_with_deadline(
+        read,
+        Vec::new(),
+        deadline,
+        max_header_bytes,
+        max_body_bytes,
+        content_length,
+    )
+}
+
+fn capture_with_deadline(
+    mut read: impl FnMut(&mut [u8], Duration) -> io::Result<usize>,
+    mut bytes: Vec<u8>,
+    deadline: Instant,
+    max_header_bytes: usize,
+    max_body_bytes: usize,
+    content_length: HttpContentLength,
+) -> HttpCapture {
+    let Some(capacity) = max_header_bytes.checked_add(max_body_bytes) else {
+        return failed(bytes, HttpCaptureFailure::InvalidBounds);
+    };
+    if max_header_bytes < 4 || bytes.len() > max_header_bytes {
+        return failed(bytes, HttpCaptureFailure::InvalidBounds);
+    }
     let mut chunk = [0; 4096];
     let failure = loop {
         let Some(remaining) = deadline
