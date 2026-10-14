@@ -2,6 +2,10 @@
   <img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/ic-testkit/ic-testkit-readme-header.svg" alt="IC Testkit — Internet Computer helper library" width="100%">
 </p>
 
+Native allocator workloads can use the separate std-only
+[`ic-testkit-native`](crates/ic-testkit-native/README.md) package without
+acquiring PocketIC or canister dependencies.
+
 <!-- helper-navigation:start -->
 <p align="center">
   <a href="https://github.com/dragginzgame/canic"><img src="https://raw.githubusercontent.com/dragginzgame/shared-assets/main/icons/canic.svg" width="18" height="18" alt=""> <strong>canic</strong></a>

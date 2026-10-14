@@ -14,9 +14,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   reply decoding with explicit single-result and exact-single-result policies.
   It has no simulator dependency and preserves existing PocketIC call defaults
   ([#87](https://github.com/dragginzgame/ic-testkit/issues/87)).
+  Exact decoding requires one wire argument even for optional/null results;
+  ordinary decoding retains Candid defaults.
 - Workspace packaging/publication includes the codec first and preserves
   observation-based retry after a partial publication.
+- Add the dependency-free `ic-testkit-native` package for scoped native allocation
+  counts and elapsed time. Workloads remain caller-owned; PocketIC and canister
+  dependencies stay out of this package
+  ([#86 — Own native allocation measurement](https://github.com/dragginzgame/ic-testkit/issues/86)).
 
+### Testing
+
+- Include the native measurement package in configured package checks, both
+  Rust 1.88 targets, hook exports and release-metadata recovery fixtures
+  ([#86](https://github.com/dragginzgame/ic-testkit/issues/86)).
 
 [Integration details](crates/ic-testkit/CHANGELOG.md#0411)
 

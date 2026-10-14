@@ -32,13 +32,13 @@ server-check:
 	"$(SERVER_CLI)" check
 
 MSRV ?= 1.88.0
-CI_TARGETS := candid-codec-check shared-tooling-check tools-check format-tools-check dependency-pins-check installation-check publish-guards-check \
+CI_TARGETS := candid-codec-check native-measurement-check shared-tooling-check tools-check format-tools-check dependency-pins-check installation-check publish-guards-check \
 	release-guards-check git-hooks-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
 RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 VALIDATION_INPUTS := Makefile Cargo.toml Cargo.lock rust-toolchain.toml \
-	crates/ic-testkit/Cargo.toml crates/ic-testkit-candid/Cargo.toml crates/ic_testkit_perf_probe/Cargo.toml \
+	crates/ic-testkit/Cargo.toml crates/ic-testkit-candid/Cargo.toml crates/ic-testkit-native/Cargo.toml crates/ic_testkit_perf_probe/Cargo.toml \
 	ci/tool-versions.env ci/ic-tools.tsv .shared-tooling.snapshot
 
 help:
@@ -114,6 +114,13 @@ candid-codec-check:
 	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit-candid --locked --no-deps
 	+cargo check -p ic-testkit-candid --locked --target wasm32-unknown-unknown
 
+.PHONY: native-measurement-check
+native-measurement-check:
+	+cargo test -p ic-testkit-native --locked
+	+cargo clippy -p ic-testkit-native --all-targets --locked -- -D warnings
+	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit-native --locked --no-deps
+	+cargo check -p ic-testkit-native --all-targets --locked --target wasm32-unknown-unknown
+
 check:
 	+cargo check -p ic-testkit --locked
 
@@ -131,6 +138,8 @@ msrv:
 	cargo +$(MSRV) --version
 	+cargo +$(MSRV) check -p ic-testkit-candid --locked
 	+cargo +$(MSRV) check -p ic-testkit-candid --locked --target wasm32-unknown-unknown
+	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --locked
+	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --locked --target wasm32-unknown-unknown
 	+cargo +$(MSRV) check -p ic-testkit --locked
 	+cargo +$(MSRV) check -p ic-testkit --lib --target wasm32-unknown-unknown --locked
 	+cargo +$(MSRV) check -p ic_testkit_perf_probe --lib --target wasm32-unknown-unknown --locked
@@ -146,11 +155,12 @@ release-guards-check:
 
 package:
 	+cargo package -p ic-testkit-candid --locked --allow-dirty
-	+cargo package -p ic-testkit --locked --allow-dirty
+	+cargo package -p ic-testkit -p ic-testkit-native --locked --allow-dirty
 
 publish-dry-run:
 	+cargo publish -p ic-testkit-candid --locked --dry-run --allow-dirty
 	+cargo publish -p ic-testkit --locked --dry-run --allow-dirty
+	+cargo publish -p ic-testkit-native --locked --dry-run --allow-dirty
 
 ci:
 	+@bash scripts/ci/run-validation-targets.sh --fail-fast $(addprefix --input ,$(VALIDATION_INPUTS)) $(CI_TARGETS)

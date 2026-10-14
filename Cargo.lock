@@ -883,6 +883,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic-testkit-native"
+version = "0.41.0"
+
+[[package]]
 name = "ic-transport-types"
 version = "0.49.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
