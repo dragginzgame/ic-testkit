@@ -10,6 +10,10 @@ repository checkout. The complete historical changelog remains at
 
 ## [0.41.1]
 
+- Add opt-in stable-memory IO counters with shared clone/reset observation and
+  specialized unsafe reads. Caller workloads and failure injection stay local
+  ([#95 — Own native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95)).
+
 ### Added
 
 - Add the dependency-free `ic-testkit-native` package for scoped native allocation

@@ -1,5 +1,9 @@
 [workspace]
-members = ["crates/ic-testkit", "crates/ic-testkit-native", "crates/ic_testkit_perf_probe"]
+members = [
+    "crates/ic-testkit",
+    "crates/ic-testkit-native",
+    "crates/ic_testkit_perf_probe",
+]
 resolver = "2"
 
 [workspace.package]
@@ -23,6 +27,7 @@ ic-host-artifacts = { version = "0.17.9", features = ["archive", "wasm"] }
 ic-host-fs = "0.17.9"
 ic-host-process = "0.17.9"
 ic-metrics = "0.9.4"
+ic-stable-structures = "0.7.2"
 ic-testkit = { path = "crates/ic-testkit" }
 libc = "0.2"
 pocket-ic = "16.1"

@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- Add the dependency-free `ic-testkit-native` package for scoped native allocation
+- Add opt-in stable-memory IO counters with shared clone/reset observation,
+  specialized unsafe reads and caller-owned backings; no PocketIC graph is added
+  ([#95 — Own native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95)).
+
+- Add the default-feature dependency-free `ic-testkit-native` package for scoped native allocation
   counts and elapsed time. Workloads remain caller-owned; PocketIC and canister
   dependencies stay out of this package
   ([#86 — Own native allocation measurement](https://github.com/dragginzgame/ic-testkit/issues/86)).

@@ -6,8 +6,15 @@ version.workspace = true
 license.workspace = true
 repository.workspace = true
 authors.workspace = true
-description = "Dependency-free native allocation measurement for test workloads"
+description = "Native allocation measurement and opt-in stable-memory IO fixtures"
 readme = "README.md"
+
+[features]
+default = []
+stable-memory = ["dep:ic-stable-structures"]
+
+[dependencies]
+ic-stable-structures = { workspace = true, optional = true }
 
 [lints]
 workspace = true
