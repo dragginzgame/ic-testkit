@@ -8,6 +8,14 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.41.1]
+
+### Fixed
+
+- Skip simulated-time reads and same-time writes in zero-duration readiness
+  polling, retaining tick budgets and nonzero advancement before each tick.
+  Qualify the actual PocketIC client request sequence with a bounded native peer.
+
 ## [0.41.0] - 2026-10-14
 
 ### Breaking

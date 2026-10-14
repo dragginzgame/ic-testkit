@@ -38,7 +38,7 @@ impl<E: std::error::Error + 'static> std::error::Error for TickUntilError<E> {
 /// The predicate runs once before any mutation. Each pending result permits one
 /// round of `advance_time(advance)`, then `tick()`, then another predicate check,
 /// up to `max_rounds`. A zero budget still performs the initial check. A zero
-/// duration permits ticks without advancing time. Completion on the last allowed
+/// duration permits ticks without reading or writing simulated time. Completion on the last allowed
 /// round succeeds; predicate failures return immediately without another round.
 ///
 /// This bounds simulated progression, not wall-clock time spent inside PocketIC
@@ -53,7 +53,9 @@ pub fn tick_until<T, E>(
     poll_with_rounds(
         max_rounds,
         || {
-            pic.advance_time(advance);
+            if !advance.is_zero() {
+                pic.advance_time(advance);
+            }
             pic.tick();
         },
         || poll(pic),
@@ -183,5 +185,84 @@ mod tests {
             std::io::ErrorKind::PermissionDenied
         );
         assert_eq!(rounds.get(), 1);
+    }
+    #[test]
+    fn polling_transport_skips_zero_time_and_preserves_nonzero_advancement() {
+        use std::{io::Write as _, net::TcpListener, thread, time::Instant};
+        for advance in [Duration::ZERO, Duration::from_nanos(7)] {
+            let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let url = format!("http://{}/", listener.local_addr().unwrap())
+                .parse()
+                .unwrap();
+            let worker = thread::spawn(move || {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut requests = Vec::new();
+                loop {
+                    assert!(Instant::now() < deadline, "polling peer timed out");
+                    let (mut stream, _) = match listener.accept() {
+                        Ok(connection) => connection,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            thread::sleep(Duration::from_millis(1));
+                            continue;
+                        }
+                        Err(error) => panic!("accept polling request: {error}"),
+                    };
+                    let request = crate::testing::read_http_request(
+                        &mut stream,
+                        Duration::from_secs(1),
+                        16_384,
+                        16_384,
+                    )
+                    .unwrap();
+                    let text = std::str::from_utf8(&request).unwrap();
+                    let path = text.split_whitespace().nth(1).unwrap().to_owned();
+                    let reply = if path.ends_with("/read/get_time") {
+                        "{\"nanos_since_epoch\":100}"
+                    } else {
+                        "null"
+                    };
+                    if path.ends_with("/update/set_time") {
+                        let body = text.split_once("\r\n\r\n").unwrap().1;
+                        assert_eq!(
+                            serde_json::from_str::<serde_json::Value>(body).unwrap()["nanos_since_epoch"],
+                            100 + u64::from(advance.subsec_nanos())
+                        );
+                    }
+                    stream
+                        .set_write_timeout(Some(Duration::from_secs(1)))
+                        .unwrap();
+                    write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+                    let finished = path.ends_with("/update/tick");
+                    requests.push(path);
+                    if finished {
+                        return requests;
+                    }
+                }
+            });
+            let pic = PocketIc::new_from_existing_instance(url, 0, Some(1_000));
+            let mut polls = 0;
+            let result = tick_until(&pic, 1, advance, |_| {
+                polls += 1;
+                if polls == 2 {
+                    Poll::Ready(Ok::<_, ()>(42))
+                } else {
+                    Poll::Pending
+                }
+            });
+            assert_eq!(result, Ok(42));
+            assert_eq!(polls, 2);
+            let requests = worker.join().unwrap();
+            let expected = if advance.is_zero() {
+                vec!["/instances/0/update/tick"]
+            } else {
+                vec![
+                    "/instances/0/read/get_time",
+                    "/instances/0/update/set_time",
+                    "/instances/0/update/tick",
+                ]
+            };
+            assert_eq!(requests, expected);
+        }
     }
 }
