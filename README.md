@@ -962,10 +962,11 @@ when floor rounding would hide a fraction. Marker framing, metadata discovery an
 retained prior report files are unchanged; new reports must use unique destinations
 rather than reinterpret or overwrite an older report under the changed columns.
 
-Native synthetic peers can use `testing::read_http_request` with an explicit
-read budget and header/body byte bounds. It returns one raw request, selects
-blocking reads on accepted sockets and rejects ambiguous framing. Callers own
-responses and transport-failure injection.
+Native synthetic peers can use `testing::capture_http_request` with an explicit
+read budget, header/body byte bounds and Content-Length rule. It selects blocking
+reads on accepted sockets, rejects ambiguous framing and retains partial bytes
+with a typed failure when a request is incomplete. Callers own responses,
+evidence files and transport-failure injection.
 
 ## Deterministic principals
 

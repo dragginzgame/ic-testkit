@@ -8,6 +8,18 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.42.0]
+
+### Breaking
+
+- Replace `testing::read_http_request(stream, timeout, max_header, max_body)`
+  with `testing::capture_http_request(stream, timeout, max_header, max_body,
+  HttpContentLength::Optional)` for the old framing rule. The new result retains
+  partial bytes and typed failure causes. Call `.into_result()` only when failed
+  bytes are expendable. Select `HttpContentLength::Required` when signed requests
+  must declare a length, including zero. Existing fixture responses and retained
+  evidence-file custody remain caller-owned.
+
 ## [0.41.0] - 2026-10-14
 
 ### Breaking

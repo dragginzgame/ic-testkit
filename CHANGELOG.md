@@ -6,6 +6,14 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.42.0]
+
+### Breaking
+
+- Replace `testing::read_http_request` with `testing::capture_http_request`.
+  Native fixture callers now select optional or required Content-Length framing
+  and receive partial bytes and typed failure causes for retained evidence.
+
 ## [0.41.0] - 2026-10-14
 
 ### Breaking

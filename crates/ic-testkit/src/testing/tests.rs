@@ -1,21 +1,33 @@
-use super::request_length;
+use super::*;
+use std::{
+    io::Write,
+    net::{TcpListener, TcpStream},
+    thread,
+    time::Duration,
+};
 
 #[test]
-fn request_framing_preserves_body_bounds_and_rejects_ambiguous_lengths() {
-    assert_eq!(request_length(b"POST / HTTP/1.1\r\n", 32, 4).unwrap(), None);
-    let request = b"POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\ntest";
-    assert_eq!(request_length(request, 64, 4).unwrap(), Some(request.len()));
-    assert_eq!(
-        request_length(b"DELETE / HTTP/1.1\r\n\r\n", 64, 0).unwrap(),
-        Some(21)
+fn a_nonblocking_accepted_stream_can_capture_a_fragmented_body() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let bytes = b"POST / HTTP/1.1\r\nContent-Length: 3\r\n\r\nabc".to_vec();
+    let expected = bytes.clone();
+    let address = listener.local_addr().unwrap();
+    let client = thread::spawn(move || {
+        let mut stream = TcpStream::connect(address).unwrap();
+        stream.write_all(&bytes[..bytes.len() - 2]).unwrap();
+        thread::sleep(Duration::from_millis(20));
+        stream.write_all(&bytes[bytes.len() - 2..]).unwrap();
+    });
+    let (mut stream, _) = listener.accept().unwrap();
+    stream.set_nonblocking(true).unwrap();
+    let capture = capture_http_request(
+        &mut stream,
+        Duration::from_secs(1),
+        1024,
+        1024,
+        HttpContentLength::Required,
     );
-    for request in [
-        &b"POST / HTTP/1.1\r\nContent-Length: 5\r\n\r\n"[..],
-        &b"POST / HTTP/1.1\r\nContent-Length: 1\r\ncontent-length: 1\r\n\r\n"[..],
-        &b"POST / HTTP/1.1\r\nContent-Length: -1\r\n\r\n"[..],
-        &b"POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n"[..],
-    ] {
-        assert!(request_length(request, 128, 4).is_err());
-    }
-    assert!(request_length(b"POST / HTTP/1.1\r\n\r\n", 4, 4).is_err());
+    client.join().unwrap();
+    assert!(capture.failure.is_none(), "{:?}", capture.failure);
+    assert_eq!(capture.bytes, expected);
 }

@@ -302,9 +302,15 @@ fn read_request(mut stream: TcpStream) -> (TcpStream, String) {
     stream
         .set_write_timeout(Some(DEADLOCK_ESCAPE))
         .expect("bound response write");
-    let bytes =
-        ic_testkit::testing::read_http_request(&mut stream, DEADLOCK_ESCAPE, 65_536, 65_536)
-            .expect("capture complete synthetic request");
+    let bytes = ic_testkit::testing::capture_http_request(
+        &mut stream,
+        DEADLOCK_ESCAPE,
+        65_536,
+        65_536,
+        ic_testkit::testing::HttpContentLength::Optional,
+    )
+    .into_result()
+    .expect("capture complete synthetic request");
     let line = std::str::from_utf8(bytes.split(|byte| *byte == b'\r').next().unwrap())
         .expect("HTTP request line")
         .to_owned();
