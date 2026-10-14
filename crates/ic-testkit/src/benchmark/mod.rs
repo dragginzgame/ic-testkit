@@ -6,11 +6,10 @@
 //! producers can use [`format_marker`] on the host or
 //! [`crate::performance::Performance`] in canister code.
 //!
-//! Totals and run counts remain exact integers. Averages and percentage changes
-//! are approximate `f64` projections: distinct integers above 2^53 can round to
-//! the same value and report a zero change. Use aggregate totals and run counts
-//! for exact comparisons. CSV averages retain this approximation; text reports
-//! additionally round displayed averages and percentages to whole numbers.
+//! Totals and run counts remain exact integers. Means use IC Metrics' exact
+//! scaled integer projection, rounded down. Callers choose the scale and handle
+//! projection errors; reports use scale one in the original counter units.
+//! Comparisons retain current and previous means instead of percentage estimates.
 
 use std::{
     collections::{BTreeMap, btree_map::Entry},
@@ -19,6 +18,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ic_metrics::{MeasurementRatioError, checked_scaled_ratio};
 use serde_json::Value;
 
 /// Default prefix for benchmark marker lines.
@@ -235,14 +235,17 @@ pub struct BenchmarkAggregateRow {
     scope: AggregateScope,
 }
 
-/// Approximate floating-point means of exact aggregate totals and run counts.
-/// Integer precision can be lost above 2^53; these values are for reporting.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// Floor-rounded scaled means of exact aggregate totals and run counts.
+///
+/// Fields are `floor(total * scale / runs)`; choose a positive scale to
+/// interpret them in the original counter unit. Scale zero projects zero.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BenchmarkAverages {
-    pub instructions: f64,
-    pub heap_bytes: f64,
-    pub memory_bytes: f64,
-    pub total_allocation: f64,
+    pub scale: u64,
+    pub instructions: u128,
+    pub heap_bytes: u128,
+    pub memory_bytes: u128,
+    pub total_allocation: u128,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -294,25 +297,28 @@ impl std::fmt::Display for BenchmarkAggregateError {
 
 impl std::error::Error for BenchmarkAggregateError {}
 
-/// Percentage changes between approximate floating-point averages.
-/// A zero change does not establish equality of exact aggregate totals.
-#[derive(Clone, Debug, PartialEq)]
+/// Current and previous scaled means, preserving missing rows and measured zero.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BenchmarkComparisonRow {
     pub span_label: String,
     pub current_runs: Option<u64>,
     pub previous_runs: Option<u64>,
-    pub instructions_avg_change_percent: Option<f64>,
-    pub heap_bytes_avg_change_percent: Option<f64>,
-    pub memory_bytes_avg_change_percent: Option<f64>,
-    pub total_allocation_avg_change_percent: Option<f64>,
+    pub current_average: Option<BenchmarkAverages>,
+    pub previous_average: Option<BenchmarkAverages>,
     scope: AggregateScope,
 }
 
 impl BenchmarkAggregateRow {
-    /// Approximate `f64` averages derived from exact totals and run count.
-    #[must_use]
-    pub fn average(&self) -> BenchmarkAverages {
-        averages(self.total, self.runs)
+    /// Project exact totals at the caller's scale, rounding down.
+    /// Zero runs and unrepresentable scaled results return IC Metrics' typed error.
+    pub fn average(&self, scale: u64) -> Result<BenchmarkAverages, MeasurementRatioError> {
+        Ok(BenchmarkAverages {
+            scale,
+            instructions: checked_scaled_ratio(self.total.instructions, self.runs, scale)?,
+            heap_bytes: checked_scaled_ratio(self.total.heap_bytes, self.runs, scale)?,
+            memory_bytes: checked_scaled_ratio(self.total.memory_bytes, self.runs, scale)?,
+            total_allocation: checked_scaled_ratio(self.total.total_allocation, self.runs, scale)?,
+        })
     }
 
     /// Suite label, or `ALL` for the cross-suite aggregate.
@@ -342,7 +348,7 @@ impl BenchmarkComparisonRow {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BenchmarkComparisonReport {
     pub rows: Vec<BenchmarkComparisonRow>,
 }
@@ -361,7 +367,7 @@ pub struct BenchmarkRunMetadata {
     pub selected_previous_run: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BenchmarkRunReport {
     pub parse: BenchmarkParseReport,
     pub spans: BenchmarkSpanReport,
@@ -637,13 +643,13 @@ pub fn aggregate_benchmark_spans(
     })
 }
 
-/// Compare approximate averages; integer differences lost to rounding can
-/// produce a zero percentage change. Exact totals remain on the input rows.
-#[must_use]
+/// Pair current and previous means at the same caller-selected scale.
+/// Returns a typed error if either side cannot supply the selected projection.
 pub fn compare_benchmark_aggregates(
     current: &[BenchmarkAggregateRow],
     previous: &[BenchmarkAggregateRow],
-) -> BenchmarkComparisonReport {
+    scale: u64,
+) -> Result<BenchmarkComparisonReport, MeasurementRatioError> {
     let mut rows = BTreeMap::new();
     for row in current {
         rows.insert((&row.scope, row.span_label.as_str()), (Some(row), None));
@@ -654,37 +660,21 @@ pub fn compare_benchmark_aggregates(
             .1 = Some(row);
     }
 
-    BenchmarkComparisonReport {
+    Ok(BenchmarkComparisonReport {
         rows: rows
             .into_iter()
             .map(|((scope, span_label), (current_row, previous_row))| {
-                let current_average = current_row.map(BenchmarkAggregateRow::average);
-                let previous_average = previous_row.map(BenchmarkAggregateRow::average);
-                BenchmarkComparisonRow {
+                Ok(BenchmarkComparisonRow {
                     span_label: span_label.to_owned(),
                     current_runs: current_row.map(|row| row.runs),
                     previous_runs: previous_row.map(|row| row.runs),
-                    instructions_avg_change_percent: compare_average(
-                        current_average.map(|average| average.instructions),
-                        previous_average.map(|average| average.instructions),
-                    ),
-                    heap_bytes_avg_change_percent: compare_average(
-                        current_average.map(|average| average.heap_bytes),
-                        previous_average.map(|average| average.heap_bytes),
-                    ),
-                    memory_bytes_avg_change_percent: compare_average(
-                        current_average.map(|average| average.memory_bytes),
-                        previous_average.map(|average| average.memory_bytes),
-                    ),
-                    total_allocation_avg_change_percent: compare_average(
-                        current_average.map(|average| average.total_allocation),
-                        previous_average.map(|average| average.total_allocation),
-                    ),
+                    current_average: current_row.map(|row| row.average(scale)).transpose()?,
+                    previous_average: previous_row.map(|row| row.average(scale)).transpose()?,
                     scope: scope.clone(),
-                }
+                })
             })
-            .collect(),
-    }
+            .collect::<Result<_, MeasurementRatioError>>()?,
+    })
 }
 
 /// Write one complete benchmark report into the requested directory.
@@ -696,6 +686,21 @@ pub fn write_benchmark_report_dir(
     path: impl AsRef<Path>,
 ) -> io::Result<()> {
     let path = path.as_ref();
+    let suite_aggregates = aggregates_csv(
+        report
+            .aggregates
+            .rows
+            .iter()
+            .filter(|row| !row.is_all_suites()),
+    )?;
+    let all_aggregates = aggregates_csv(
+        report
+            .aggregates
+            .rows
+            .iter()
+            .filter(|row| row.is_all_suites()),
+    )?;
+    let summary = benchmark_summary_markdown(report)?;
     fs::create_dir_all(path)?;
 
     fs::write(
@@ -715,34 +720,13 @@ pub fn write_benchmark_report_dir(
         path.join("invalid-spans.csv"),
         invalid_spans_csv(&report.spans.invalid_spans),
     )?;
-    fs::write(
-        path.join("suite-aggregates.csv"),
-        aggregates_csv(
-            report
-                .aggregates
-                .rows
-                .iter()
-                .filter(|row| !row.is_all_suites()),
-        ),
-    )?;
-    fs::write(
-        path.join("all-aggregates.csv"),
-        aggregates_csv(
-            report
-                .aggregates
-                .rows
-                .iter()
-                .filter(|row| row.is_all_suites()),
-        ),
-    )?;
+    fs::write(path.join("suite-aggregates.csv"), suite_aggregates)?;
+    fs::write(path.join("all-aggregates.csv"), all_aggregates)?;
     fs::write(
         path.join("comparison.csv"),
         comparison_csv(report.comparison.as_ref()),
     )?;
-    fs::write(
-        path.join("bench-summary.md"),
-        benchmark_summary_markdown(report),
-    )?;
+    fs::write(path.join("bench-summary.md"), summary)?;
     fs::write(path.join("metadata.json"), metadata_json(&report.metadata))?;
 
     Ok(())
@@ -975,26 +959,6 @@ fn add_span_to_aggregate<'a>(
     }
 }
 
-#[expect(clippy::cast_precision_loss)]
-fn averages(total: BenchmarkCounters, runs: u64) -> BenchmarkAverages {
-    let runs = runs as f64;
-    BenchmarkAverages {
-        instructions: total.instructions as f64 / runs,
-        heap_bytes: total.heap_bytes as f64 / runs,
-        memory_bytes: total.memory_bytes as f64 / runs,
-        total_allocation: total.total_allocation as f64 / runs,
-    }
-}
-
-fn compare_average(current: Option<f64>, previous: Option<f64>) -> Option<f64> {
-    match (current, previous) {
-        (Some(current), Some(previous)) if previous != 0.0 => {
-            Some(((current - previous) / previous) * 100.0)
-        }
-        _ => None,
-    }
-}
-
 fn raw_events_csv(events: &[RawBenchmarkEvent]) -> String {
     let mut out = String::from(
         "source_line,source,prefix,suite,label,span_label,kind,instructions,heap_bytes,memory_bytes,total_allocation\n",
@@ -1092,15 +1056,15 @@ fn invalid_spans_csv(spans: &[InvalidBenchmarkSpan]) -> String {
     out
 }
 
-fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> String {
+fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> io::Result<String> {
     let mut out = String::from(
-        "suite,span_label,runs,instructions_total,instructions_avg,heap_bytes_total,heap_bytes_avg,memory_bytes_total,memory_bytes_avg,total_allocation_total,total_allocation_avg\n",
+        "suite,span_label,runs,instructions_total,instructions_mean,heap_bytes_total,heap_bytes_mean,memory_bytes_total,memory_bytes_mean,total_allocation_total,total_allocation_mean\n",
     );
     for row in rows {
-        let average = row.average();
+        let average = row.average(1).map_err(io::Error::other)?;
         let _ = writeln!(
             out,
-            "{},{},{},{},{:.4},{},{:.4},{},{:.4},{},{:.4}",
+            "{},{},{},{},{},{},{},{},{},{},{}",
             csv_cell(row.suite()),
             csv_cell(&row.span_label),
             row.runs,
@@ -1114,84 +1078,67 @@ fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> 
             average.total_allocation
         );
     }
-    out
+    Ok(out)
 }
 
 fn comparison_csv(comparison: Option<&BenchmarkComparisonReport>) -> String {
     let mut out = String::from(
-        "scope,suite,span_label,current_runs,previous_runs,instructions_avg_change_percent,heap_bytes_avg_change_percent,memory_bytes_avg_change_percent,total_allocation_avg_change_percent\n",
+        "scope,suite,span_label,current_runs,previous_runs,current_mean_scale,previous_mean_scale,current_instructions_mean,previous_instructions_mean,current_heap_bytes_mean,previous_heap_bytes_mean,current_memory_bytes_mean,previous_memory_bytes_mean,current_total_allocation_mean,previous_total_allocation_mean\n",
     );
-
-    let Some(comparison) = comparison else {
-        return out;
-    };
-
-    for row in &comparison.rows {
-        let _ = writeln!(
-            out,
-            "{},{},{},{},{},{},{},{},{}",
-            if row.is_all_suites() { "all" } else { "suite" },
-            csv_cell(row.suite()),
-            csv_cell(&row.span_label),
-            optional_u64_cell(row.current_runs),
-            optional_u64_cell(row.previous_runs),
-            optional_f64_cell(row.instructions_avg_change_percent),
-            optional_f64_cell(row.heap_bytes_avg_change_percent),
-            optional_f64_cell(row.memory_bytes_avg_change_percent),
-            optional_f64_cell(row.total_allocation_avg_change_percent)
-        );
+    if let Some(comparison) = comparison {
+        for row in &comparison.rows {
+            let current = row.current_average;
+            let previous = row.previous_average;
+            let value = |mean: Option<BenchmarkAverages>, field: fn(BenchmarkAverages) -> u128| {
+                mean.map_or_else(String::new, |mean| field(mean).to_string())
+            };
+            let _ = writeln!(
+                out,
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                if row.is_all_suites() { "all" } else { "suite" },
+                csv_cell(row.suite()),
+                csv_cell(&row.span_label),
+                optional_u64_cell(row.current_runs),
+                optional_u64_cell(row.previous_runs),
+                current.map_or_else(String::new, |mean| mean.scale.to_string()),
+                previous.map_or_else(String::new, |mean| mean.scale.to_string()),
+                value(current, |m| m.instructions),
+                value(previous, |m| m.instructions),
+                value(current, |m| m.heap_bytes),
+                value(previous, |m| m.heap_bytes),
+                value(current, |m| m.memory_bytes),
+                value(previous, |m| m.memory_bytes),
+                value(current, |m| m.total_allocation),
+                value(previous, |m| m.total_allocation)
+            );
+        }
     }
-
     out
 }
 
-fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> String {
-    let comparison_by_key = report.comparison.as_ref().map(|comparison| {
-        comparison
-            .rows
-            .iter()
-            .map(|row| ((&row.scope, row.span_label.as_str()), row))
-            .collect::<BTreeMap<_, _>>()
-    });
+fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> io::Result<String> {
     let mut out = String::from(
-        "# Benchmark Summary\n\n| Benchmark | Runs | Instructions Avg | Heap Delta Avg | Memory Delta Avg | Allocation Avg |\n| --- | ---: | ---: | ---: | ---: | ---: |\n",
+        "# Benchmark Summary\n\nMeans are floor-rounded in original counter units. Comparison CSV retains current and previous scaled means.\n\n| Benchmark | Runs | Instructions Mean | Heap Bytes Mean | Memory Bytes Mean | Allocation Mean |\n| --- | ---: | ---: | ---: | ---: | ---: |\n",
     );
-
     for row in report
         .aggregates
         .rows
         .iter()
         .filter(|row| !row.is_all_suites())
     {
-        let average = row.average();
-        let comparison = comparison_by_key
-            .as_ref()
-            .and_then(|rows| rows.get(&(&row.scope, row.span_label.as_str())).copied());
+        let average = row.average(1).map_err(io::Error::other)?;
         let _ = writeln!(
             out,
             "| {} | {} | {} | {} | {} | {} |",
             markdown_cell(&row.span_label),
             row.runs,
-            format_instructions(
-                average.instructions,
-                change_suffix(comparison, |c| { c.instructions_avg_change_percent })
-            ),
-            format_bytes(
-                average.heap_bytes,
-                change_suffix(comparison, |c| c.heap_bytes_avg_change_percent)
-            ),
-            format_bytes(
-                average.memory_bytes,
-                change_suffix(comparison, |c| c.memory_bytes_avg_change_percent)
-            ),
-            format_bytes(
-                average.total_allocation,
-                change_suffix(comparison, |c| c.total_allocation_avg_change_percent)
-            )
+            average.instructions,
+            average.heap_bytes,
+            average.memory_bytes,
+            average.total_allocation
         );
     }
-
-    out
+    Ok(out)
 }
 
 fn metadata_json(metadata: &BenchmarkRunMetadata) -> String {
@@ -1254,52 +1201,6 @@ fn metadata_json_error(err: serde_json::Error) -> io::Error {
     )
 }
 
-fn change_suffix(
-    comparison: Option<&BenchmarkComparisonRow>,
-    change: impl FnOnce(&BenchmarkComparisonRow) -> Option<f64>,
-) -> Option<String> {
-    comparison.and_then(|row| {
-        if row.previous_runs.is_none() {
-            Some("new".to_string())
-        } else {
-            change(row).map(|percent| format!("{percent:+.0}%"))
-        }
-    })
-}
-
-fn format_instructions(value: f64, suffix: Option<String>) -> String {
-    with_optional_suffix(format!("{:.4}B", value / 1_000_000_000.0), suffix)
-}
-
-fn format_bytes(value: f64, suffix: Option<String>) -> String {
-    with_optional_suffix(human_bytes(value), suffix)
-}
-
-fn with_optional_suffix(value: String, suffix: Option<String>) -> String {
-    match suffix {
-        Some(suffix) => format!("{value} ({suffix})"),
-        None => value,
-    }
-}
-
-fn human_bytes(value: f64) -> String {
-    const KIB: f64 = 1024.0;
-    const MIB: f64 = KIB * 1024.0;
-    const GIB: f64 = MIB * 1024.0;
-
-    let (unit_value, unit) = if value.abs() >= GIB {
-        (value / GIB, "GB")
-    } else if value.abs() >= MIB {
-        (value / MIB, "MB")
-    } else if value.abs() >= KIB {
-        (value / KIB, "KB")
-    } else {
-        (value, "B")
-    };
-
-    format!("{unit_value:+.1} {unit}")
-}
-
 const fn kind_str(kind: BenchmarkEventKind) -> &'static str {
     match kind {
         BenchmarkEventKind::Start => "start",
@@ -1317,10 +1218,6 @@ fn csv_cell(value: &str) -> String {
 
 fn optional_u64_cell(value: Option<u64>) -> String {
     value.map_or_else(String::new, |value| value.to_string())
-}
-
-fn optional_f64_cell(value: Option<f64>) -> String {
-    value.map_or_else(String::new, |value| format!("{value:.4}"))
 }
 
 fn markdown_cell(value: &str) -> String {

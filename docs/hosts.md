@@ -1,5 +1,76 @@
 # Host support and qualification
 
+## Pending 0.41.0: numerical and synthetic transport convergence
+
+The benchmark API projects checked integer means through published IC Metrics
+0.9.4. Exact counter totals, aggregation overflow rejection and platform reads
+remain local. Comparison rows retain both means/scales instead of percentage
+estimates; write the changed CSV columns into new report directories
+([#84](https://github.com/dragginzgame/ic-testkit/issues/84)).
+
+All 28 benchmark cases, one request-framing case, four ordinary async startup
+cases and six parent teardown/transport cases pass on Linux. Startup and teardown
+now share blocking socket selection, bounded framing and a single read deadline;
+the existing teardown barrier supplies socket-mode qualification. Strict
+all-target Clippy, docs and actual Rust 1.88 native/Wasm library checks pass.
+The incoming CI partition and its distinct real/native selections are retained;
+no full local suite or new macOS qualification is claimed.
+
+Host's isolated [capture contribution](https://github.com/dragginzgame/ic-host-tooling/pull/99)
+shares its existing execution engine. Its nine group/direct cases, strict
+all-target/all-feature process Clippy, docs and Rust 1.88 checks pass. The prepared
+Testkit consumer passes six provisioning cases and strict CLI Clippy with a
+coherent temporary Host family override. The normal Testkit graph retains
+published Host 0.17.13; actual removal of downloader plumbing awaits the API's
+publication under [#85](https://github.com/dragginzgame/ic-testkit/issues/85).
+Temporary overrides and the concrete consumer correction are confined to
+`/tmp/testkit-three-reductions-1791977164924197643/`. Versions, releases and native
+acceptance remain with their owners; the normal Host checkout is untouched.
+
+## Pending 0.41.0: CI selection and release-policy qualification
+
+The locally prepared PR #80 policy reference adopts only Shared Tooling 0.12.5's
+validation cadence at `4256171b5b7ec4c4cc4078548c1c1617ee150699`; executable
+snapshot selections remain unchanged. PR #82's CI partition is reconciled against
+released 0.40.0 `2a7f2d48fd666ff42ae9ee9a99e230eaefb8cc31`, retaining the new
+real instance lifetime step and using the existing Make gate as the ordinary
+package/guard owner ([#81](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
+| Qualification | Native CI owner |
+| --- | --- |
+| Common guards, formatting and ordinary package tests | `checks`: `make ci` under system Bash, CDPATH and physical TMPDIR |
+| Installer, dependency and release-runner fixtures | `portable-hosts`: existing portable commands |
+| Benchmark example and hosted archive upload/readback | `portable-hosts`: existing dedicated steps |
+| Ignored real sync/async lifetimes, recovery, provisioning and idle evidence | `pocket-ic-concurrency`: existing dedicated steps |
+
+Actionlint, prepared-tool hook qualification, formatting, publication/installation
+guards and the complete focused release guard pass on Linux in the consolidated
+shell/path context. Actual workflow failure-evidence controls and archive round
+trips also pass. The release network-policy fixture initially exposed its caller's
+exported offline value; subshell isolation now preserves all four policy cases
+and passes the same focused guard with an offline caller
+([#83](https://github.com/dragginzgame/ic-testkit/issues/83)). Logs and exact inputs
+remain under `/tmp/ic-testkit-pr-work/`. The remote PR #82 head is still conflicted;
+the tested correction is applied locally and supplied in its discussion. Native
+CI and branch delivery remain outstanding; no full local suite or release ran.
+
+## Published 0.40.0 CLI archive qualification
+
+The cached crates.io archive matches its sparse-index SHA-256
+`2627451b0b7bf945b75963dc76218e493ed1ba9d19d6096bb1fec52dea2dfba9` and VCS
+source `2a7f2d48fd666ff42ae9ee9a99e230eaefb8cc31`. Its extracted normalized
+package installs the CLI locked/offline in debug profile into a private temporary
+root, using this workspace's target. That exact installed CLI admits the retained
+PocketIC bundle with PATH unavailable and launches a separate real instance worker
+through its governed server URL, with no new server setup
+([#77](https://github.com/dragginzgame/ic-testkit/issues/77)).
+
+Archive, package-lock and binary identities plus install/admission/launch logs
+are retained under `/tmp/ic-testkit-pr-work/published*`. This is Linux package
+installation/runtime evidence; both native macOS archive installations remain
+unqualified. The released 0.40.0 workflow currently has four Linux passes and
+eight queued native jobs; it does not yet establish complete native acceptance.
+
 ## Pending 0.40.0: synthetic async peer socket mode
 
 The async startup fixture now configures accepted sockets for blocking reads,

@@ -6,7 +6,7 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.40.1]
+## [0.41.1]
 
 ### Added
 
@@ -16,6 +16,40 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   ([#87](https://github.com/dragginzgame/ic-testkit/issues/87)).
 - Workspace packaging/publication includes the codec first and preserves
   observation-based retry after a partial publication.
+
+## [0.41.0] - 2026-10-14
+
+### Breaking
+
+- Use `average(scale)` and `compare_benchmark_aggregates(current, previous, scale)`
+  for fallible integer projections through IC Metrics 0.9.4. Current/previous
+  scaled means replace approximate percentage-change fields. Aggregate CSV/text
+  uses whole original units; comparison CSV carries each side's scale. Keep
+  retained reports separate and write the changed columns to new directories
+  ([#84](https://github.com/dragginzgame/ic-testkit/issues/84)).
+
+### Added
+
+- Capture bounded raw native requests with `testing::read_http_request` for
+  synthetic peers. Response policy and failure injection remain caller-owned
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+### Testing
+
+- Share bounded synthetic HTTP request capture across startup and teardown
+  fixtures, retaining one read deadline and explicit macOS blocking socket mode
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+- Run shared guards and ordinary package lifecycle tests once per native CI
+  host, retaining system Bash/path qualification, real instance lifetimes,
+  isolated recovery and hosted evidence round trips
+  ([#81](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
+- Isolate release-policy qualification from an exported offline setting, so
+  its synthetic network cases remain independent of the caller
+  ([#83](https://github.com/dragginzgame/ic-testkit/issues/83)).
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0410)
 
 ## [0.40.0] - 2026-10-14
 

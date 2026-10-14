@@ -31,6 +31,9 @@ pub use {ic_host_artifacts, ic_host_fs, ic_host_process};
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pic;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod testing;
+
 pub mod performance;
 
 use candid::Principal;

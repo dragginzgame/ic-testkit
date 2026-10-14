@@ -214,10 +214,17 @@ impl PendingHttpServer {
         let worker = std::thread::spawn(move || {
             while !stop_worker.load(Ordering::Acquire) {
                 match listener.accept() {
-                    Ok((stream, _)) => {
-                        let Some(mut stream) = Self::read_request(stream) else {
+                    Ok((mut stream, _)) => {
+                        if crate::testing::read_http_request(
+                            &mut stream,
+                            Duration::from_secs(1),
+                            65_536,
+                            65_536,
+                        )
+                        .is_err()
+                        {
                             continue;
-                        };
+                        }
                         request_received.store(true, Ordering::Release);
                         if let Some(path) = &exit_file {
                             fs::write(path, b"exit").unwrap();
@@ -244,71 +251,6 @@ impl PendingHttpServer {
             worker: Some(worker),
         }
     }
-
-    fn read_request(mut stream: std::net::TcpStream) -> Option<std::net::TcpStream> {
-        use std::io::Read as _;
-        // Darwin inherits the listener's nonblocking mode; the read timeout
-        // requires blocking I/O on the accepted stream, not on the listener.
-        stream.set_nonblocking(false).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
-        let mut bytes = [0; 1024];
-        if stream.read(&mut bytes).unwrap_or(0) == 0 {
-            return None;
-        }
-        Some(stream)
-    }
-}
-
-#[cfg(unix)]
-#[test]
-fn pending_http_reader_waits_for_bytes_on_an_initially_nonblocking_stream() {
-    use std::{io::Read as _, net::TcpListener, os::fd::AsRawFd as _, thread};
-
-    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-    let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-    let (stream, _) = listener.accept().unwrap();
-    // Exercise the inherited Darwin state on Linux too, before any request bytes.
-    stream.set_nonblocking(true).unwrap();
-    let observation = stream.try_clone().unwrap();
-    client
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-
-    thread::scope(|scope| {
-        let reader = scope.spawn(move || {
-            let mut stream = PendingHttpServer::read_request(stream)
-                .expect("request must remain open until bytes arrive");
-            stream.write_all(b"read").unwrap();
-        });
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            // SAFETY: observation retains this live descriptor; F_GETFL needs no argument.
-            let flags = unsafe { libc::fcntl(observation.as_raw_fd(), libc::F_GETFL) };
-            assert!(flags >= 0, "inspect accepted socket flags");
-            if flags & libc::O_NONBLOCK == 0 {
-                break;
-            }
-            assert!(
-                !reader.is_finished(),
-                "reader closed before request delivery"
-            );
-            assert!(
-                Instant::now() < deadline,
-                "reader did not configure its socket"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
-        // The observed mode change is the barrier; no sleep supplies request bytes.
-        client
-            .write_all(b"POST /instances HTTP/1.1\r\n\r\n")
-            .unwrap();
-        let mut reply = [0; 4];
-        client.read_exact(&mut reply).unwrap();
-        assert_eq!(&reply, b"read");
-        reader.join().unwrap();
-    });
 }
 
 #[cfg(unix)]
