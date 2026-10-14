@@ -66,8 +66,8 @@ pub use snapshot::{
 pub use standalone::StandaloneCanisterFixture;
 pub use standalone_recipe::StandaloneCanisterRecipe;
 pub use startup::{
-    PocketIcBuilderExt, PocketIcInstance, PocketIcManagedServer, PocketIcManagedServerOutput,
-    PocketIcStartupConfig, PocketIcStartupError, PocketIcStartupFailure,
+    PocketIcInstance, PocketIcManagedServer, PocketIcManagedServerOutput, PocketIcStartupConfig,
+    PocketIcStartupError, PocketIcStartupFailure,
 };
 pub use time::{PocketIcTimeExt, TickUntilError, tick_until};
 pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};
@@ -78,7 +78,7 @@ pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};
 /// repeated trait lists across a large integration-test crate.
 pub mod prelude {
     pub use super::{
-        CandidCallExt, CanisterInstallExt, PocketIcBuilderExt, PocketIcDiagnosticsExt,
-        PocketIcSnapshotExt, PocketIcTimeExt,
+        CandidCallExt, CanisterInstallExt, PocketIcDiagnosticsExt, PocketIcSnapshotExt,
+        PocketIcTimeExt,
     };
 }

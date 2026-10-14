@@ -205,24 +205,6 @@ pub enum PocketIcStartupFailure {
     ServerCleanup { command_status: ExitStatus },
 }
 
-/// Fallible construction at PocketIC's panicking builder boundary.
-///
-/// Startup is explicit: callers either provide an existing server URL or let
-/// `ic-testkit` spawn and monitor one exact server binary. This prevents the
-/// upstream builder from hiding an unobservable child process.
-pub trait PocketIcBuilderExt {
-    /// Build one PocketIC instance within the configured deadline.
-    ///
-    /// Managed server startup detects child exit while awaiting the port file,
-    /// terminates the child on timeout, and reads bounded stdout/stderr prefixes.
-    /// Instance creation is also bounded. Upstream panics remain structured.
-    ///
-    /// This deadline covers construction only. Dropping the returned instance
-    /// uses PocketIC's synchronous HTTP deletion, which has no request deadline
-    /// in PocketIC 16. An operation's maximum request time does not bound drop.
-    fn try_build(self, config: PocketIcStartupConfig) -> Result<PocketIc, PocketIcStartupError>;
-}
-
 impl PocketIcStartupConfig {
     /// Select the shared environment contract without discovery or downloads.
     ///
@@ -746,16 +728,6 @@ impl PocketIcManagedServerOutput {
     }
 }
 
-impl PocketIcBuilderExt for PocketIcBuilder {
-    fn try_build(self, config: PocketIcStartupConfig) -> Result<PocketIc, PocketIcStartupError> {
-        let PocketIcInstance { instance, server } = config.build_instance(self)?;
-        if let Some(server) = server {
-            server.server.reap_in_background();
-        }
-        Ok(instance)
-    }
-}
-
 fn startup_deadline(started: Instant, timeout: Duration) -> Result<Instant, PocketIcStartupError> {
     started.checked_add(timeout).ok_or_else(|| {
         PocketIcStartupError::new(PocketIcStartupFailure::InvalidConfiguration {
@@ -1085,17 +1057,6 @@ impl ManagedServer {
         drop(child);
         (files.capture(), cleanup)
     }
-
-    fn reap_in_background(self) {
-        let _ = thread::Builder::new()
-            .name("ic-testkit-pocket-ic-server-reaper".to_owned())
-            .spawn(move || {
-                // Keep child and files under one owner, including if spawning
-                // this thread fails. On Unix, Drop terminates the group before reaping.
-                let mut server = self;
-                let _ = server.child.wait();
-            });
-    }
 }
 
 struct StartupFiles {
@@ -1109,10 +1070,15 @@ impl StartupFiles {
     fn read_port(&self) -> Result<PortFileState, PocketIcStartupError> {
         let port_path = &self.port;
         let mut contents = String::new();
-        match open_regular_startup_file(port_path).and_then(|file| {
-            file.take((SERVER_PORT_FILE_LIMIT + 1) as u64)
-                .read_to_string(&mut contents)
-        }) {
+        match ic_host_fs::read::open_regular_file(port_path)
+            .map_err(|error| match error {
+                ic_host_artifacts::artifact::ArtifactError::Io(source) => source,
+                error => io::Error::new(io::ErrorKind::InvalidData, error),
+            })
+            .and_then(|file| {
+                file.take((SERVER_PORT_FILE_LIMIT + 1) as u64)
+                    .read_to_string(&mut contents)
+            }) {
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(PortFileState::Pending);
@@ -1206,7 +1172,7 @@ fn startup_file_error(
 }
 
 fn read_bounded_lossy(path: &Path) -> String {
-    let Ok(file) = open_regular_startup_file(path) else {
+    let Ok(file) = ic_host_fs::read::open_regular_file(path) else {
         return String::new();
     };
     let length = file.metadata().map_or(0, |metadata| metadata.len());
@@ -1222,23 +1188,6 @@ fn read_bounded_lossy(path: &Path) -> String {
         let _ = write!(output, "\n<truncated {omitted} bytes>");
     }
     output
-}
-
-fn open_regular_startup_file(path: &Path) -> io::Result<File> {
-    let mut options = OpenOptions::new();
-    options.read(true);
-    // Bound opening a replaced FIFO as well as reading file contents. Inspect
-    // the opened file, rather than a path that can change before open completes.
-    #[cfg(unix)]
-    options.custom_flags(libc::O_NONBLOCK);
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "PocketIC startup reader requires a regular file",
-        ));
-    }
-    Ok(file)
 }
 
 impl std::fmt::Display for PocketIcStartupFailure {
@@ -1370,13 +1319,12 @@ mod tests {
     };
 
     use super::{
-        PocketIcBuilderExt as _, PocketIcStartupConfig, PocketIcStartupError,
-        PocketIcStartupFailure, StartupFiles,
+        PocketIcStartupConfig, PocketIcStartupError, PocketIcStartupFailure, StartupFiles,
     };
     use pocket_ic::PocketIcBuilder;
 
     #[cfg(unix)]
-    use crate::test_executable::write_executable_script;
+    use ic_host_process::testing::write_executable_script;
     #[cfg(unix)]
     use std::{
         io::Write as _,
@@ -2138,9 +2086,8 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" != \"--port-file\" ] || [ -e \"$2\" ]; then exit 97; fi\nprintf 'synthetic server stdout'\nprintf 'synthetic bind failure' >&2\nexit 23\n",
         );
 
-        let result = PocketIcBuilder::new().with_application_subnet().try_build(
-            PocketIcStartupConfig::spawn(script.path(), Duration::from_secs(2)),
-        );
+        let result = PocketIcStartupConfig::spawn(script.path(), Duration::from_secs(2))
+            .build_instance(PocketIcBuilder::new().with_application_subnet());
 
         let error = result.err().unwrap();
         let PocketIcStartupFailure::ServerExited {
@@ -2189,9 +2136,8 @@ mod tests {
         let timeout = Duration::from_millis(100);
         let started = Instant::now();
 
-        let result = PocketIcBuilder::new()
-            .with_application_subnet()
-            .try_build(PocketIcStartupConfig::spawn(script.path(), timeout));
+        let result = PocketIcStartupConfig::spawn(script.path(), timeout)
+            .build_instance(PocketIcBuilder::new().with_application_subnet());
 
         assert!(
             started.elapsed() < Duration::from_secs(2),
@@ -2232,18 +2178,14 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn managed_server_cleans_descendants_on_drop_timeout_exit_and_background_reap() {
-        for mode in ["drop", "timeout", "exit", "background"] {
-            let publish = if matches!(mode, "drop" | "background") {
+    fn managed_server_cleans_descendants_on_drop_timeout_and_exit() {
+        for mode in ["drop", "timeout", "exit"] {
+            let publish = if mode == "drop" {
                 "printf '34567\\n' > \"$2\"\n"
             } else {
                 ""
             };
-            let finish = if mode == "background" {
-                // The caller removes the port only after handing off to the
-                // reaper, so slow native hosts cannot miss this ready server.
-                "while [ -e \"$2\" ]; do sleep 0.01; done\nexit 23\n"
-            } else if mode == "exit" {
+            let finish = if mode == "exit" {
                 "sleep 0.03\nexit 23\n"
             } else {
                 "exec sleep 30\n"
@@ -2257,13 +2199,7 @@ mod tests {
             let output = match result {
                 Ok(server) => {
                     let output = server.output().stdout().to_owned();
-                    if mode == "background" {
-                        let port = server.server.files.port.clone();
-                        server.server.reap_in_background();
-                        fs::remove_file(port).expect("release the background server after handoff");
-                    } else {
-                        drop(server);
-                    }
+                    drop(server);
                     output
                 }
                 Err(error) => {
@@ -2318,31 +2254,24 @@ mod tests {
         let binary = std::env::var_os("POCKET_IC_BIN")
             .map(PathBuf::from)
             .expect("set POCKET_IC_BIN to the exact server binary");
-        // Observe this exact child's port path; the shared sequence is not a
-        // reservation and other startup tests may advance it concurrently.
+        // Observe this exact child's port path without inspecting other startup
+        // directories created concurrently.
         let wrapper = TestServerScript::new(
-            "real-reaper",
+            "real-owned-instance",
             "#!/bin/sh\nprintf '%s\n%s\n' \"$$\" \"$4\" > \"$0.record\"\nexec \"$POCKET_IC_BIN\" \"$@\"\n",
         );
-        let one_shot = PocketIcBuilder::new()
-            .with_application_subnet()
-            .try_build(
-                PocketIcStartupConfig::spawn(wrapper.path(), Duration::from_secs(30))
-                    .with_server_hard_ttl(Duration::from_secs(3)),
-            )
-            .expect("one-shot managed spawn must construct an instance");
+        let owned = PocketIcStartupConfig::spawn(wrapper.path(), Duration::from_secs(30))
+            .with_server_hard_ttl(Duration::from_secs(60))
+            .build_instance(PocketIcBuilder::new().with_application_subnet())
+            .expect("owned managed spawn must construct an instance");
         let record_file = wrapper.path().with_extension("record");
         let record = fs::read_to_string(&record_file).unwrap();
         let mut fields = record.lines();
         let pid = fields.next().unwrap().parse().unwrap();
         let port_path = PathBuf::from(fields.next().unwrap());
-        let one_shot_directory = port_path.parent().unwrap();
-        drop(one_shot);
-        let cleanup_deadline = Instant::now() + Duration::from_secs(5);
-        while one_shot_directory.exists() && Instant::now() < cleanup_deadline {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert!(!one_shot_directory.exists());
+        let startup_directory = port_path.parent().unwrap();
+        drop(owned);
+        assert!(!startup_directory.exists());
         assert_eq!(process_state(pid), None);
         fs::remove_file(record_file).unwrap();
 
@@ -2354,12 +2283,8 @@ mod tests {
         let startup_directory = files._directory.path().to_path_buf();
 
         assert!(files.port.is_file());
-        let pocket_ic = PocketIcBuilder::new()
-            .with_application_subnet()
-            .try_build(PocketIcStartupConfig::connect(
-                server.url(),
-                Duration::from_secs(30),
-            ))
+        let pocket_ic = PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30))
+            .build_instance(PocketIcBuilder::new().with_application_subnet())
             .expect("construct instance through caller-provided server");
 
         drop(pocket_ic);
@@ -2382,7 +2307,7 @@ mod tests {
                 .tempdir()
                 .expect("create test server directory");
             let path = directory.path().join("server");
-            write_executable_script(&path, contents);
+            write_executable_script(&path, contents).expect("write executable test script");
             Self {
                 path,
                 _directory: directory,

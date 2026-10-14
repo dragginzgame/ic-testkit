@@ -9,7 +9,6 @@ use ic_testkit::{
     ic_host_fs::read::read_file,
     pic::{CandidCallExt, InstallSpec, StandaloneCanisterFixture},
 };
-use std::fs;
 use support::unique_temp_directory as unique_temp_dir;
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
@@ -24,9 +23,10 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
         eprintln!("skipping perf probe canister test: fixture canister is not packaged");
         return;
     }
-    let target_dir = unique_temp_dir("ic-testkit-perf-probe-target");
+    let target_dir_directory = unique_temp_dir("ic-testkit-perf-probe-target");
+    let target_dir = target_dir_directory.path();
 
-    let spec = WasmBuildSpec::new(&workspace, &target_dir, &[PERF_PROBE_PACKAGE], "debug")
+    let spec = WasmBuildSpec::new(&workspace, target_dir, &[PERF_PROBE_PACKAGE], "debug")
         .with_cargo_profile_args(["--locked"]);
     let outcome = build_wasm_canisters_cached(&spec).expect("build perf probe Wasm");
     let wasm_path = outcome
@@ -86,5 +86,4 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
 
     drop(fixture);
     drop(outcome);
-    fs::remove_dir_all(target_dir).expect("clean temp target dir");
 }

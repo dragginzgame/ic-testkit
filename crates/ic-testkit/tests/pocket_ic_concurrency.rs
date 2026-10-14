@@ -16,8 +16,9 @@ use candid::Principal;
 use ic_testkit::pic::{
     BaselinePoolError, BaselinePoolOutcome, BaselinePoolPreparationError, BaselinePreparationStage,
     CachedPocketIcBaselinePool, ControllerSnapshotError, FixtureRecipeId, InstallSpec, PocketIc,
-    PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupFailure, RebuildReason,
-    SnapshotRestoreFunding, StandaloneCanisterFixture, StandaloneCanisterRecipe, prelude::*,
+    PocketIcBuilder, PocketIcInstance, PocketIcStartupConfig, PocketIcStartupFailure,
+    RebuildReason, SnapshotRestoreFunding, StandaloneCanisterFixture, StandaloneCanisterRecipe,
+    prelude::*,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -93,26 +94,20 @@ enum Event {
 #[test]
 fn upstream_supports_two_overlapping_instances() {
     assert_two_instances_overlap(move || {
-        pocket_ic::PocketIcBuilder::new()
-            .with_application_subnet()
-            .try_build(support::startup_config())
+        support::startup_config()
+            .build_instance(pocket_ic::PocketIcBuilder::new().with_application_subnet())
             .expect("build explicitly configured upstream instance")
     });
 }
 
 #[test]
-fn builder_extension_returns_a_typed_startup_error() {
+fn startup_configuration_returns_a_typed_startup_error() {
     let missing_binary = std::env::temp_dir().join(format!(
         "ic-testkit-missing-pocket-ic-{}",
         std::process::id()
     ));
-    let result =
-        PocketIcBuilder::new()
-            .with_application_subnet()
-            .try_build(PocketIcStartupConfig::spawn(
-                &missing_binary,
-                Duration::from_secs(1),
-            ));
+    let result = PocketIcStartupConfig::spawn(&missing_binary, Duration::from_secs(1))
+        .build_instance(PocketIcBuilder::new().with_application_subnet());
 
     let error = result.err().unwrap();
     assert!(
@@ -122,16 +117,19 @@ fn builder_extension_returns_a_typed_startup_error() {
 
 #[test]
 fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
-    let caller_built = PocketIcBuilder::new()
-        .with_application_subnet()
-        .with_ii_subnet()
-        .try_build(support::startup_config())
+    let caller_built = support::startup_config()
+        .build_instance(
+            PocketIcBuilder::new()
+                .with_application_subnet()
+                .with_ii_subnet(),
+        )
         .expect("build explicitly configured custom topology");
     let fixture = StandaloneCanisterFixture::install(
         caller_built,
         InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
     );
-    let (pocket_ic, canister_id) = fixture.into_parts();
+    let (owned, canister_id) = fixture.into_parts();
+    let pocket_ic = &owned.instance;
 
     assert_eq!(
         pocket_ic.current_time_nanos(),
@@ -469,9 +467,8 @@ fn standalone_dead_transport_preserves_failed_recovery_and_can_build_again() {
     let pool = single_canister_pool(NonZeroUsize::new(1).unwrap(), move || {
         match builder_count.fetch_add(1, Ordering::SeqCst) {
             0 => StandaloneCanisterFixture::install(
-                PocketIcBuilder::new()
-                    .with_application_subnet()
-                    .try_build(PocketIcStartupConfig::connect(&url, READY_TIMEOUT))
+                PocketIcStartupConfig::connect(&url, READY_TIMEOUT)
+                    .build_instance(PocketIcBuilder::new().with_application_subnet())
                     .unwrap(),
                 InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
             ),
@@ -539,7 +536,7 @@ fn build_deleted_standalone_fixture() -> StandaloneCanisterFixture {
 
 fn assert_two_instances_overlap<F>(build: F)
 where
-    F: Fn() -> PocketIc + Send + Sync + 'static,
+    F: Fn() -> PocketIcInstance<PocketIc> + Send + Sync + 'static,
 {
     let build = Arc::new(build);
     let (event_tx, event_rx) = mpsc::channel();
@@ -672,13 +669,14 @@ fn run_worker<F>(
     commands: Receiver<Command>,
     events: Sender<Event>,
 ) where
-    F: Fn() -> PocketIc,
+    F: Fn() -> PocketIcInstance<PocketIc>,
 {
     if start.recv().is_err() {
         return;
     }
 
-    let pocket_ic = build();
+    let owned = build();
+    let pocket_ic = &owned.instance;
     if events.send(Event::Ready { worker }).is_err() {
         return;
     }
@@ -712,7 +710,7 @@ fn run_worker<F>(
                 }
             }
             Command::Drop => {
-                drop(pocket_ic);
+                drop(owned);
                 let _ = events.send(Event::Dropped { worker });
                 return;
             }

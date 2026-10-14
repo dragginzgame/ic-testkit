@@ -1,5 +1,96 @@
 # Host support and qualification
 
+## Pending 0.40.0: synthetic async peer socket mode
+
+The async startup fixture now configures accepted sockets for blocking reads,
+retaining its nonblocking accept loop, bounded read and request/cancellation
+barrier. A controlled socket starts nonblocking with no request bytes; before
+the fix its reader closes immediately, while the corrected reader remains live
+until delivery. The regression observes the actual socket-mode change before
+sending bytes, rather than relying on a timing delay
+([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+The controlled failure and passing regression, all 28 ordinary startup cases,
+strict library/test Clippy, actual Rust 1.88 library/test checking and formatting
+pass on Linux. The incoming lock selects Host 0.17.12 and IC Build 0.3.0 and is
+unchanged by this repair. Source/lock digests and logs remain under
+`/tmp/ic-testkit-068-socket/`. Earlier graph-bound evidence remains unchanged.
+The delivered 0.39.0 Intel failure remains unqualified until the repair is
+delivered and the supported native checks pass. Full suites and release
+execution remain maintainer-owned; this fixture fix changes no production
+startup policy, public API or retained installation.
+
+## Pending 0.40.0: retained instance/server ownership
+
+The approved hard cut uses the existing owner-returning constructor and carries
+its `PocketIcInstance<PocketIc>` through standalone install, install-error recovery
+and cached baselines. Managed drop deletes the synchronous instance before server
+teardown; borrowed connections retain no server authority. Host's regular-file
+opener preserves descriptor validation while Testkit keeps read bounds, pending
+port handling and native I/O causes. Ephemeral test roots use private `TempDir`
+ownership; retained provisioning attempts and installations remain unchanged
+([#79](https://github.com/dragginzgame/ic-testkit/issues/79)).
+
+Focused Linux checks use released anchor `d10763417b3e3a083c9de7f5b0405be97688b21e`
+plus the preserved incoming batch and this unpublished implementation. The incoming
+lock selects Host 0.17.10 and IC Build 0.2.7; no resolution or package-version edit
+ran. Explicit offline source preparation precedes qualification. Ordinary startup,
+real owned/borrowed construction, error/fixture/baseline transfer, failed capture,
+synthetic teardown, affected live callers and both dedicated-server recovery cases
+pass. Provisioning, CLI runner and benchmark report fixtures pass, including retained
+failure evidence. The real canister marker test and a two-task fresh/pooled smoke
+pass; this is correctness evidence, not a measured performance improvement.
+
+Actual Rust 1.88 affected-target and Wasm checks, strict Clippy, warning-denied
+Rustdoc, doctests, formatting and dependency admission pass. Logs, the private
+smoke report and exact source/lock digests remain under `/tmp/ic-testkit-040-cut/`.
+[Canic #548](https://github.com/dragginzgame/canic/issues/548) carries the apply-checked
+caller migration; [Backup #43](https://github.com/dragginzgame/ic-backup/issues/43)
+retains its consumer action. No sibling source or graph was edited. Both native
+macOS hosts, full maintainer-owned validation, publication and consumer adoption
+remain outstanding. Package metadata stays 0.39.0; pending notes are 0.40.0.
+
+## Published Host 0.17.9 for pending 0.39.1
+
+The normal registry graph selects Host 0.17.9 from published source
+`6fd078d9b914fff530b1efe521dc08ce18b97cc0`. Its opt-in Unix test writer replaces
+both local implementations; script bodies and domain assertions remain in
+Testkit. Only native Unix development enables `test-support`, and no path
+override or compatibility layer is added
+([#78](https://github.com/dragginzgame/ic-testkit/issues/78),
+[Host #87](https://github.com/dragginzgame/ic-host-tooling/issues/87)).
+
+The selected update changes only the three Host package records. All other
+lock selections and own metadata at 0.39.0 are preserved. Locked source
+preparation precedes offline qualification. Linux passes 27 ordinary startup
+cases, three real owned/borrowed startup cases, 13 controlled CLI runner cases,
+and both exact real CLI/instance cases. Strict library/test Clippy, actual Rust
+1.88 native/Wasm checks, public Rustdoc, formatting and dependency admission pass.
+This also requalifies the pending real-instance CI command on the new graph.
+
+Published archive identity, source/input digests and logs are retained under
+`/tmp/ic-testkit-host179-adoption/`. Earlier isolated producer overrides and
+Host 0.17.8 results remain source-bound below. Full maintainer validation,
+delivery and both native macOS consumer executions remain outstanding; no
+release, sibling edit, tool installation or retained artifact retirement ran.
+
+## Pending 0.39.1: real instance lifetime coverage
+
+The native concurrency matrix now explicitly runs the three ignored prepared
+PocketIC startup tests. Ordinary library tests covered the synthetic startup
+failures but skipped real managed construction and owned sync/async/borrowed
+instance lifetimes. The new step uses each host's existing admitted server and
+the unchanged locked/offline command
+([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+That exact command passes all three cases on Linux at released source
+`d10763417b3e3a083c9de7f5b0405be97688b21e` plus the CI/note changes, with the
+retained official PocketIC 16.1 binary and unchanged Host 0.17.8 graph. Selected
+actionlint 1.7.12, formatting and diff checks pass. Logs are retained under
+`/tmp/ic-testkit-0391-native-coverage/`. This is focused Linux evidence; delivery,
+full maintainer validation and both native macOS executions remain outstanding.
+Own package metadata stays at 0.39.0 and retained installations are unchanged.
+
 ## Pending 0.39.0: packaged CLI qualification
 
 Focused offline packaging of the current dirty source retains the published

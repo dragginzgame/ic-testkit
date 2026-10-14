@@ -4,8 +4,8 @@
 use candid::Principal;
 use ic_testkit::pic::{
     CandidCallErrorKind, CandidCallExt, CanisterDiagnosticFailure, CanisterDiagnosticsRequest,
-    CanisterInstallPhase, InstallSpec, PocketIc, PocketIcBuilder, PocketIcBuilderExt,
-    PocketIcDiagnosticsExt, PocketIcStartupConfig, StandaloneCanisterFixture,
+    CanisterInstallPhase, InstallSpec, PocketIc, PocketIcBuilder, PocketIcDiagnosticsExt,
+    PocketIcInstance, PocketIcStartupConfig, StandaloneCanisterFixture,
     is_dead_pocket_ic_transport_error,
 };
 use ic_testkit::pocket_ic::common::rest::{CreateInstanceResponse, RawCanisterId, Topology};
@@ -179,7 +179,8 @@ fn run_refused_operation_probe(name: &str) {
 #[test]
 #[ignore = "subprocess probe selected explicitly by the parent transport test"]
 fn refused_instance_request_probe() {
-    let pic = synthetic_instance();
+    let owned = synthetic_instance();
+    let pic = &owned.instance;
     std::io::stdin()
         .read_exact(&mut [0])
         .expect("parent releases refused call");
@@ -209,14 +210,14 @@ fn refused_instance_request_probe() {
         let error = std::io::Error::other(error);
         assert!(is_dead_pocket_ic_transport_error(&error));
     }
-    drop(pic);
+    drop(owned);
 }
 
 #[test]
 #[ignore = "subprocess probe selected explicitly by the parent install test"]
 fn refused_creation_probe() {
     let pic = synthetic_instance();
-    let instance_id = pic.instance_id();
+    let instance_id = pic.instance.instance_id();
     std::io::stdin()
         .read_exact(&mut [0])
         .expect("parent releases refused creation");
@@ -234,17 +235,19 @@ fn refused_creation_probe() {
     assert_eq!(error.install_error().label(), Some("unreachable-fixture"));
     assert!(is_dead_pocket_ic_transport_error(&error));
     let (pic, install_error) = error.into_parts();
-    assert_eq!(pic.instance_id(), instance_id);
+    assert_eq!(pic.instance.instance_id(), instance_id);
     assert!(install_error.operation_error().is_transport());
     drop(pic);
 }
 
-fn synthetic_instance() -> PocketIc {
+fn synthetic_instance() -> PocketIcInstance<PocketIc> {
     let url = std::env::var(PROBE_URL_ENV).expect("parent supplies synthetic peer URL");
-    PocketIcBuilder::new()
-        .with_application_subnet()
-        .with_max_request_time_ms(Some(1))
-        .try_build(PocketIcStartupConfig::connect(url, DEADLOCK_ESCAPE))
+    PocketIcStartupConfig::connect(url, DEADLOCK_ESCAPE)
+        .build_instance(
+            PocketIcBuilder::new()
+                .with_application_subnet()
+                .with_max_request_time_ms(Some(1)),
+        )
         .expect("construct synthetic instance through bounded startup")
 }
 

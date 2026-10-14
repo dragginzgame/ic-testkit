@@ -29,6 +29,9 @@ pocket-ic = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 
+[target.'cfg(all(unix, not(target_arch = "wasm32")))'.dev-dependencies]
+ic-host-process = { workspace = true, features = ["test-support"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 ic-build = { workspace = true }
 

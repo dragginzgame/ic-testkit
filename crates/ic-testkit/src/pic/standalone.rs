@@ -1,14 +1,14 @@
 use candid::Principal;
 use pocket_ic::PocketIc;
 
-use super::{CanisterInstallExt, InstallSpec, StandaloneCanisterInstallError};
+use super::{CanisterInstallExt, InstallSpec, PocketIcInstance, StandaloneCanisterInstallError};
 
-/// One caller-built PocketIC instance and one installed canister.
+/// One caller-built PocketIC instance/server owner and one installed canister.
 ///
-/// This fixture owns the instance directly. It does not impose process-wide
-/// synchronization or hide PocketIC methods behind a wrapper.
+/// This fixture retains the instance and its optional managed server together.
+/// It does not impose process-wide synchronization or hide PocketIC methods.
 pub struct StandaloneCanisterFixture {
-    pocket_ic: PocketIc,
+    instance: PocketIcInstance<PocketIc>,
     canister_id: Principal,
 }
 
@@ -19,26 +19,26 @@ impl StandaloneCanisterFixture {
     ///
     /// Panics with the contextual install error when installation fails.
     #[must_use]
-    pub fn install(pocket_ic: PocketIc, spec: InstallSpec) -> Self {
-        Self::try_install(pocket_ic, spec)
+    pub fn install(instance: PocketIcInstance<PocketIc>, spec: InstallSpec) -> Self {
+        Self::try_install(instance, spec)
             .unwrap_or_else(|err| panic!("failed to install standalone canister fixture: {err}"))
     }
 
     /// Fallible counterpart to [`install`](Self::install).
     ///
-    /// On failure, the error retains both the caller's PocketIC instance and
+    /// On failure, the error retains both the caller's instance/server ownership record and
     /// the structured install failure.
     pub fn try_install(
-        pocket_ic: PocketIc,
+        instance: PocketIcInstance<PocketIc>,
         spec: InstallSpec,
     ) -> Result<Self, StandaloneCanisterInstallError> {
-        let canister_id = match pocket_ic.try_create_and_install(spec) {
+        let canister_id = match instance.instance.try_create_and_install(spec) {
             Ok(canister_id) => canister_id,
-            Err(error) => return Err(StandaloneCanisterInstallError::new(pocket_ic, error)),
+            Err(error) => return Err(StandaloneCanisterInstallError::new(instance, error)),
         };
 
         Ok(Self {
-            pocket_ic,
+            instance,
             canister_id,
         })
     }
@@ -46,7 +46,7 @@ impl StandaloneCanisterFixture {
     /// Borrow the PocketIC instance that owns this standalone fixture.
     #[must_use]
     pub const fn pocket_ic(&self) -> &PocketIc {
-        &self.pocket_ic
+        &self.instance.instance
     }
 
     /// Read the installed canister id for this standalone fixture.
@@ -55,9 +55,8 @@ impl StandaloneCanisterFixture {
         self.canister_id
     }
 
-    /// Consume the fixture and return the owned PocketIC instance and canister id.
-    #[must_use]
-    pub fn into_parts(self) -> (PocketIc, Principal) {
-        (self.pocket_ic, self.canister_id)
+    /// Consume the fixture and return the instance/server ownership record and canister id.
+    pub fn into_parts(self) -> (PocketIcInstance<PocketIc>, Principal) {
+        (self.instance, self.canister_id)
     }
 }

@@ -8,13 +8,68 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.39.1]
+## [0.40.1]
 
 ### Fixed
 
 - Qualify common guards and package lifecycle tests once per native CI host;
   retain system Bash/path checks, isolated recovery tests and evidence round trips
   ([#81 — Partition overlapping native CI selections](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
+## [0.40.0] - 2026-10-14
+
+### Breaking
+
+- Keep the instance and optional server together using
+  `PocketIcStartupConfig::build_instance`. Remove `PocketIcBuilderExt::try_build`
+  and its detached successful-server reaper. Standalone install, install-error
+  recovery and cached baseline capture now transfer `PocketIcInstance<PocketIc>`;
+  dropping their retained owner deletes the instance before reaping its server
+  ([#79](https://github.com/dragginzgame/ic-testkit/issues/79)).
+
+### Changed
+
+- Share Host's regular-file opening and `tempfile`'s ephemeral test-directory
+  ownership while preserving bounded reads, private permissions and retained
+  CLI failure evidence
+  ([#79](https://github.com/dragginzgame/ic-testkit/issues/79)).
+
+Pass the returned owner record directly to `StandaloneCanisterFixture::install`
+or `try_install`, and to `CachedPocketIcBaseline::capture` or
+`capture_with_senders`. Both standalone `into_parts()` methods return that record,
+so recovery preserves the server. For caller-built instances on externally owned
+servers, construct `PocketIcInstance { instance, server: None }` explicitly.
+Retain a separate `PocketIcManagedServer` for shared servers and connect instances
+through its URL. Connect mode never takes server authority.
+
+There is no detached server lifetime after successful managed construction.
+Keep the owner live for the intended fixture or pool lifetime. The startup
+worker still bounds synchronous construction; upstream synchronous instance
+Drop still has no request deadline. Retained data and installations do not
+change, so no format migration or reset is required.
+
+### Testing
+
+- Set accepted sockets to blocking mode in the synthetic async startup peer,
+  retaining bounded reads and request/cancellation barriers. A controlled
+  initially nonblocking stream now proves that delayed bytes keep the peer
+  open, covering the Intel macOS premature-close failure
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+- Use Host 0.17.9's opt-in Unix test-support writer directly in native unit and
+  integration fixtures. Testkit no longer owns copies of the executable writer;
+  script content and fixture assertions remain local. The parent still holds
+  only a pipe while an owned child writes complete bytes before chmod/use,
+  protecting parallel fork/exec. Failures remain explicit at the test caller
+  ([#78](https://github.com/dragginzgame/ic-testkit/issues/78),
+  [Host #87](https://github.com/dragginzgame/ic-host-tooling/issues/87)).
+
+- Run the existing prepared-server startup tests explicitly in the native
+  concurrency matrix. The ignored cases cover real managed construction,
+  synchronous and asynchronous owned topology/lifetimes, and borrowed-server
+  ownership. Ordinary `cargo test` did not execute these cases. No public API,
+  startup policy or runtime format changes from this CI selection
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
 
 ## [0.39.0] - 2026-10-14
 

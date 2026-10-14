@@ -2,6 +2,8 @@
 
 mod support;
 
+use ic_host_process::testing::write_executable_script;
+
 use std::{
     fs,
     path::PathBuf,
@@ -13,48 +15,37 @@ use std::{
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-struct Fixture(PathBuf);
+struct Fixture(tempfile::TempDir);
 impl Fixture {
     fn new() -> Self {
-        let fixture = Self(std::env::temp_dir().join(format!(
-            "ic-testkit-server-runner-{}-{}",
-            std::process::id(),
-            SEQUENCE.fetch_add(1, Ordering::Relaxed)
-        )));
-        fs::create_dir(&fixture.0).unwrap();
-        support::executable::write_executable_script(
-            &fixture.0.join("server"),
+        let fixture = Self(support::unique_temp_directory("ic-testkit-server-runner-"));
+        write_executable_script(
+            &fixture.0.path().join("server"),
             format!(
                 "#!/bin/sh\nif [ \"$1\" = --version ]; then printf 'pocket-ic-server {}\\n'; exit 0; fi\nprintf '%s\\n' \"$$\" > \"$SERVER_PID_FILE\"\nif [ \"$1\" = --hard-ttl ]; then printf '%s' \"$2\" > \"$TTL_FILE\"; shift 2; fi\nif [ \"$1\" = --ttl ]; then printf '%s' \"$2\" > \"$IDLE_TTL_FILE\"; shift 2; fi\n[ \"$1\" = --port-file ] || exit 99\ndd if=/dev/zero bs=1024 count=20 2>/dev/null\nprintf stdout-end\ndd if=/dev/zero bs=1024 count=20 >&2 2>/dev/null\nprintf stderr-end >&2\nprintf '34567\\n' > \"$2\"\nexec sleep 30\n",
                 ic_testkit::pocket_ic::LATEST_SERVER_VERSION
             ),
-        );
+        ).expect("write executable test script");
         fixture
     }
     fn runner(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"));
         command
             .env_remove("IC_TESTKIT_POCKET_IC_URL")
-            .env("POCKET_IC_BIN", self.0.join("server"))
-            .env("SERVER_PID_FILE", self.0.join("server.pid"))
-            .env("TTL_FILE", self.0.join("ttl"))
-            .env("IDLE_TTL_FILE", self.0.join("idle-ttl"));
+            .env("POCKET_IC_BIN", self.0.path().join("server"))
+            .env("SERVER_PID_FILE", self.0.path().join("server.pid"))
+            .env("TTL_FILE", self.0.path().join("ttl"))
+            .env("IDLE_TTL_FILE", self.0.path().join("idle-ttl"));
         command
     }
     fn pid(&self, file: &str) -> u32 {
-        fs::read_to_string(self.0.join(file))
+        fs::read_to_string(self.0.path().join(file))
             .unwrap()
             .trim()
             .parse()
             .unwrap()
     }
 }
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
 fn stopped(pid: u32) -> bool {
     let output = Command::new("/bin/ps")
         .args(["-p", &pid.to_string(), "-o", "stat="])
@@ -98,9 +89,12 @@ fn owned_server_exports_url_passes_ttl_and_preserves_command_exit() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(output.stdout, b"http://127.0.0.1:34567/");
-    assert_eq!(fs::read_to_string(fixture.0.join("ttl")).unwrap(), "17");
     assert_eq!(
-        fs::read_to_string(fixture.0.join("idle-ttl")).unwrap(),
+        fs::read_to_string(fixture.0.path().join("ttl")).unwrap(),
+        "17"
+    );
+    assert_eq!(
+        fs::read_to_string(fixture.0.path().join("idle-ttl")).unwrap(),
         "42"
     );
     assert!(stopped(fixture.pid("server.pid")));
@@ -109,11 +103,11 @@ fn owned_server_exports_url_passes_ttl_and_preserves_command_exit() {
 #[test]
 fn runner_retains_complete_server_streams_after_command_failure() {
     let fixture = Fixture::new();
-    let stdout = fixture.0.join("stdout");
-    let stderr = fixture.0.join("stderr");
+    let stdout = fixture.0.path().join("stdout");
+    let stderr = fixture.0.path().join("stderr");
     let output = fixture
         .runner()
-        .current_dir(&fixture.0)
+        .current_dir(fixture.0.path())
         .args(["run", "--server-stdout"])
         .arg("stdout")
         .arg("--server-stderr")
@@ -151,7 +145,7 @@ fn external_server_precedence_borrows_ownership_and_rejects_owned_ttl() {
         .unwrap();
     assert!(output.status.success());
     assert_eq!(output.stdout, b"http://127.0.0.1:45678/");
-    assert!(!fixture.0.join("server.pid").exists());
+    assert!(!fixture.0.path().join("server.pid").exists());
     let output = fixture
         .runner()
         .env("IC_TESTKIT_POCKET_IC_URL", "http://127.0.0.1:45678/")
@@ -167,13 +161,13 @@ fn external_server_precedence_borrows_ownership_and_rejects_owned_ttl() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(!fixture.0.join("server.pid").exists());
+    assert!(!fixture.0.path().join("server.pid").exists());
 }
 
 #[test]
 fn invalid_configuration_and_version_failure_never_run_the_command() {
     let fixture = Fixture::new();
-    let marker = fixture.0.join("command-ran");
+    let marker = fixture.0.path().join("command-ran");
     for args in [
         vec!["run", "--ttl", "0", "--", "/bin/sh"],
         vec!["run", "--idle-ttl", "0", "--", "/bin/sh"],
@@ -217,23 +211,24 @@ fn invalid_configuration_and_version_failure_never_run_the_command() {
             .unwrap();
         assert!(!output.status.success());
     }
-    support::executable::write_executable_script(
-        &fixture.0.join("failed-version"),
+    write_executable_script(
+        &fixture.0.path().join("failed-version"),
         format!(
             "#!/bin/sh\nprintf 'pocket-ic-server {}\\n'\nexit 23\n",
             ic_testkit::pocket_ic::LATEST_SERVER_VERSION
         ),
-    );
+    )
+    .expect("write executable test script");
     let output = fixture
         .runner()
-        .env("POCKET_IC_BIN", fixture.0.join("failed-version"))
+        .env("POCKET_IC_BIN", fixture.0.path().join("failed-version"))
         .args(["run", "--", "/bin/sh", "-c", "touch \"$1\"", "test"])
         .arg(&marker)
         .output()
         .unwrap();
     assert!(!output.status.success());
     assert!(!marker.exists());
-    assert!(!fixture.0.join("server.pid").exists());
+    assert!(!fixture.0.path().join("server.pid").exists());
 }
 
 struct Running(Child);
@@ -261,7 +256,10 @@ fn command_completion_stops_remaining_owned_descendants() {
     let fixture = Fixture::new();
     let output = fixture
         .runner()
-        .env("DESCENDANT_PID_FILE", fixture.0.join("descendant.pid"))
+        .env(
+            "DESCENDANT_PID_FILE",
+            fixture.0.path().join("descendant.pid"),
+        )
         .args([
             "run",
             "--",
@@ -281,11 +279,11 @@ fn server_exit_returns_diagnostics_and_stops_the_pending_command_group() {
     use ic_testkit::pic::{PocketIcStartupConfig, PocketIcStartupFailure};
 
     let fixture = Fixture::new();
-    let binary = fixture.0.join("server");
-    support::executable::write_executable_script(
+    let binary = fixture.0.path().join("server");
+    write_executable_script(
         &binary,
         "#!/bin/sh\nprintf '%s' \"$$\" > \"$0.pid\"\nprintf '34567\\n' > \"$2\"\nwhile [ ! -s \"$0.descendant.pid\" ]; do sleep 0.02; done\nprintf 'server stopped\\n'\nprintf 'failure detail\\n' >&2\nexit 42\n",
-    );
+    ).expect("write executable test script");
     let started = Instant::now();
     let error = PocketIcStartupConfig::spawn(&binary, Duration::from_secs(2))
         .run_command(
@@ -339,17 +337,17 @@ fn real_server_runs_a_separate_process_using_environment_startup() {
 #[test]
 #[ignore = "invoked by the real server runner test in a separate process"]
 fn runner_environment_worker() {
-    use ic_testkit::pic::{PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig};
+    use ic_testkit::pic::{PocketIcBuilder, PocketIcStartupConfig};
     if std::env::var_os("IC_TESTKIT_TEST_PRECLIENT_DELAY").is_some() {
         thread::sleep(Duration::from_secs(65));
     }
     assert!(std::env::var_os("IC_TESTKIT_POCKET_IC_URL").is_some());
-    let pic = PocketIcBuilder::new()
-        .with_application_subnet()
-        .try_build(PocketIcStartupConfig::from_env(Duration::from_secs(30)).unwrap())
+    let pic = PocketIcStartupConfig::from_env(Duration::from_secs(30))
+        .unwrap()
+        .build_instance(PocketIcBuilder::new().with_application_subnet())
         .unwrap();
     assert_eq!(
-        pic.get_server_url().as_str(),
+        pic.instance.get_server_url().as_str(),
         std::env::var("IC_TESTKIT_POCKET_IC_URL").unwrap()
     );
     drop(pic);
@@ -450,24 +448,27 @@ fn interrupted_setup_terminates_downloader_descendants_and_retains_failure() {
     for signal in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
         for block_stderr in [false, true] {
             let fixture = Fixture::new();
-            let store = fixture.0.canonicalize().unwrap().join("store");
+            let store = fixture.0.path().canonicalize().unwrap().join("store");
             let obstruction = if block_stderr {
                 "/bin/mkdir \"${2%/*}/download.stderr\""
             } else {
                 ""
             };
-            support::executable::write_executable_script(
-                &fixture.0.join("curl"),
+            write_executable_script(
+                &fixture.0.path().join("curl"),
                 format!(
                     "#!/bin/sh\nwhile [ \"$1\" != --output ]; do shift; done\nprintf partial > \"$2\"\n{obstruction}\nprintf 'download diagnostic' >&2\nprintf '%s\\n' \"$$\" > \"$CURL_PID_FILE\"\n/bin/sleep 30 &\nprintf '%s\\n' \"$!\" > \"$DESCENDANT_PID_FILE\"\nwait\n"
                 ),
-            );
-            let diagnostic = fixture.0.join("diagnostic");
+            ).expect("write executable test script");
+            let diagnostic = fixture.0.path().join("diagnostic");
             let mut runner = Running(
                 Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"))
-                    .env("PATH", &fixture.0)
-                    .env("CURL_PID_FILE", fixture.0.join("curl.pid"))
-                    .env("DESCENDANT_PID_FILE", fixture.0.join("descendant.pid"))
+                    .env("PATH", fixture.0.path())
+                    .env("CURL_PID_FILE", fixture.0.path().join("curl.pid"))
+                    .env(
+                        "DESCENDANT_PID_FILE",
+                        fixture.0.path().join("descendant.pid"),
+                    )
                     .args(["setup", "--directory"])
                     .arg(&store)
                     .stdout(Stdio::null())
@@ -476,11 +477,12 @@ fn interrupted_setup_terminates_downloader_descendants_and_retains_failure() {
                     .unwrap(),
             );
             wait_until(|| {
-                fs::read_to_string(fixture.0.join("curl.pid")).is_ok_and(|pid| !pid.is_empty())
+                fs::read_to_string(fixture.0.path().join("curl.pid"))
+                    .is_ok_and(|pid| !pid.is_empty())
             });
             let downloader = DownloadGroup(fixture.pid("curl.pid"));
             wait_until(|| {
-                fs::read_to_string(fixture.0.join("descendant.pid"))
+                fs::read_to_string(fixture.0.path().join("descendant.pid"))
                     .is_ok_and(|pid| !pid.is_empty())
             });
             let descendant = fixture.pid("descendant.pid");
@@ -527,18 +529,18 @@ fn failed_download_retains_partial_archive_and_original_process_failure() {
         ("kill -TERM \"$$\"", true),
     ] {
         let fixture = Fixture::new();
-        let store = fixture.0.canonicalize().unwrap().join("store");
+        let store = fixture.0.path().canonicalize().unwrap().join("store");
         let obstruction = if block_stderr {
             "/bin/mkdir \"${2%/*}/download.stderr\""
         } else {
             ""
         };
-        support::executable::write_executable_script(
-            &fixture.0.join("curl"),
+        write_executable_script(
+            &fixture.0.path().join("curl"),
             format!(
                 "#!/bin/sh\nwhile [ \"$1\" != --output ]; do shift; done\nprintf partial > \"$2\"\n{obstruction}\nprintf 'download diagnostic' >&2\n{ending}\n"
             ),
-        );
+        ).expect("write executable test script");
         let expected = capture_group_command(
             Command::new("/bin/sh").args(["-c", ending]),
             OutputLimits {
@@ -553,7 +555,7 @@ fn failed_download_retains_partial_archive_and_original_process_failure() {
         .to_string();
         for count in 1..=2 {
             let output = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"))
-                .env("PATH", &fixture.0)
+                .env("PATH", fixture.0.path())
                 .args(["setup", "--directory"])
                 .arg(&store)
                 .output()
@@ -598,13 +600,13 @@ fn failed_download_retains_partial_archive_and_original_process_failure() {
 #[test]
 fn successful_download_stops_when_stderr_cannot_be_recorded() {
     let fixture = Fixture::new();
-    let store = fixture.0.canonicalize().unwrap().join("store");
-    support::executable::write_executable_script(
-        &fixture.0.join("curl"),
+    let store = fixture.0.path().canonicalize().unwrap().join("store");
+    write_executable_script(
+        &fixture.0.path().join("curl"),
         "#!/bin/sh\nwhile [ \"$1\" != --output ]; do shift; done\nprintf partial > \"$2\"\n/bin/mkdir \"${2%/*}/download.stderr\"\nprintf 'download diagnostic' >&2\n",
-    );
+    ).expect("write executable test script");
     let output = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"))
-        .env("PATH", &fixture.0)
+        .env("PATH", fixture.0.path())
         .args(["setup", "--directory"])
         .arg(&store)
         .output()
@@ -635,12 +637,13 @@ fn successful_download_stops_when_stderr_cannot_be_recorded() {
 fn line_break_store_paths_are_refused_before_setup_or_launch() {
     for line_break in ['\n', '\r'] {
         let fixture = Fixture::new();
-        let marker = fixture.0.join("download-ran");
-        support::executable::write_executable_script(
-            &fixture.0.join("curl"),
+        let marker = fixture.0.path().join("download-ran");
+        write_executable_script(
+            &fixture.0.path().join("curl"),
             "#!/bin/sh\nprintf ran > \"$DOWNLOAD_MARKER\"\nexit 23\n",
-        );
-        let absolute = fixture.0.canonicalize().unwrap();
+        )
+        .expect("write executable test script");
+        let absolute = fixture.0.path().canonicalize().unwrap();
         let ancestor = absolute.join(format!("ancestor{line_break}"));
         fs::create_dir(&ancestor).unwrap();
         for (cwd, directory) in [
@@ -677,7 +680,7 @@ fn line_break_store_paths_are_refused_before_setup_or_launch() {
 #[test]
 fn offline_check_and_run_refuse_missing_setup_without_executing_tools() {
     let fixture = Fixture::new();
-    let missing = fixture.0.join("missing");
+    let missing = fixture.0.path().join("missing");
     for action in ["check", "run"] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"));
         command
@@ -702,20 +705,23 @@ fn interruption_terminates_the_owned_server_command_and_descendants() {
     let fixture = Fixture::new();
     let mut command = fixture.runner();
     command
-        .env("COMMAND_PID_FILE", fixture.0.join("command.pid"))
-        .env("DESCENDANT_PID_FILE", fixture.0.join("descendant.pid"));
-    let stdout = fixture.0.join("stdout");
-    let stderr = fixture.0.join("stderr");
+        .env("COMMAND_PID_FILE", fixture.0.path().join("command.pid"))
+        .env(
+            "DESCENDANT_PID_FILE",
+            fixture.0.path().join("descendant.pid"),
+        );
+    let stdout = fixture.0.path().join("stdout");
+    let stderr = fixture.0.path().join("stderr");
     command
         .args(["run", "--server-stdout"])
         .arg(&stdout)
         .arg("--server-stderr")
         .arg(&stderr);
-    let diagnostic = fixture.0.join("runner-diagnostic");
+    let diagnostic = fixture.0.path().join("runner-diagnostic");
     let mut runner = Running(command.args(["--", "/bin/sh", "-c", "printf '%s' \"$$\" > \"$COMMAND_PID_FILE\"; sleep 30 & printf '%s' \"$!\" > \"$DESCENDANT_PID_FILE\"; wait"]).stdout(Stdio::null()).stderr(fs::File::create(&diagnostic).unwrap()).spawn().unwrap());
     wait_until(|| {
-        fixture.0.join("descendant.pid").exists()
-            && fs::metadata(fixture.0.join("descendant.pid"))
+        fixture.0.path().join("descendant.pid").exists()
+            && fs::metadata(fixture.0.path().join("descendant.pid"))
                 .unwrap()
                 .len()
                 > 0

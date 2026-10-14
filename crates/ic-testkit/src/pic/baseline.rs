@@ -1,16 +1,16 @@
 use super::{
-    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
-    SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcInstance,
+    PocketIcSnapshotExt, SnapshotRestoreFunding,
 };
 use candid::Principal;
 use pocket_ic::PocketIc;
 
-/// One owned PocketIC instance with captured snapshots and caller metadata.
+/// One owned PocketIC instance/server record with snapshots and caller metadata.
 ///
 /// The value contains no synchronization. A [`super::PocketIcBaselineRecipe`]
 /// can own it as its fixture in a [`super::CachedPocketIcBaselinePool`].
 pub struct CachedPocketIcBaseline<T> {
-    pocket_ic: PocketIc,
+    instance: PocketIcInstance<PocketIc>,
     snapshots: ControllerSnapshots,
     metadata: T,
 }
@@ -21,7 +21,7 @@ impl<T> CachedPocketIcBaseline<T> {
     /// Snapshot capture is ordered and transactional as documented by
     /// [`PocketIcSnapshotExt::capture_controller_snapshots`].
     pub fn capture<I>(
-        pocket_ic: PocketIc,
+        instance: PocketIcInstance<PocketIc>,
         controller_id: Principal,
         canister_ids: I,
         metadata: T,
@@ -29,10 +29,12 @@ impl<T> CachedPocketIcBaseline<T> {
     where
         I: IntoIterator<Item = Principal>,
     {
-        let snapshots = pocket_ic.capture_controller_snapshots(controller_id, canister_ids)?;
+        let snapshots = instance
+            .instance
+            .capture_controller_snapshots(controller_id, canister_ids)?;
 
         Ok(Self {
-            pocket_ic,
+            instance,
             snapshots,
             metadata,
         })
@@ -42,17 +44,17 @@ impl<T> CachedPocketIcBaseline<T> {
     ///
     /// This avoids fallback rejections in mixed-controller topologies.
     pub fn capture_with_senders<I>(
-        pocket_ic: PocketIc,
+        instance: PocketIcInstance<PocketIc>,
         targets: I,
         metadata: T,
     ) -> Result<Self, ControllerSnapshotError>
     where
         I: IntoIterator<Item = CanisterSnapshotTarget>,
     {
-        let snapshots = pocket_ic.capture_snapshots_with_senders(targets)?;
+        let snapshots = instance.instance.capture_snapshots_with_senders(targets)?;
 
         Ok(Self {
-            pocket_ic,
+            instance,
             snapshots,
             metadata,
         })
@@ -60,7 +62,8 @@ impl<T> CachedPocketIcBaseline<T> {
 
     /// Restore the captured snapshot set without adding cycles.
     pub fn restore(&self, controller_id: Principal) -> Result<(), ControllerSnapshotError> {
-        self.pocket_ic
+        self.instance
+            .instance
             .restore_controller_snapshots(controller_id, &self.snapshots)
     }
 
@@ -70,16 +73,15 @@ impl<T> CachedPocketIcBaseline<T> {
         controller_id: Principal,
         funding: SnapshotRestoreFunding,
     ) -> Result<(), ControllerSnapshotError> {
-        self.pocket_ic.restore_controller_snapshots_with_funding(
-            controller_id,
-            &self.snapshots,
-            funding,
-        )
+        self.instance
+            .instance
+            .restore_controller_snapshots_with_funding(controller_id, &self.snapshots, funding)
     }
 
     /// Restore with exactly the senders retained during snapshot capture.
     pub fn restore_with_captured_senders(&self) -> Result<(), ControllerSnapshotError> {
-        self.pocket_ic
+        self.instance
+            .instance
             .restore_snapshots_with_captured_senders(&self.snapshots)
     }
 
@@ -88,14 +90,15 @@ impl<T> CachedPocketIcBaseline<T> {
         &self,
         funding: SnapshotRestoreFunding,
     ) -> Result<(), ControllerSnapshotError> {
-        self.pocket_ic
+        self.instance
+            .instance
             .restore_snapshots_with_captured_senders_and_funding(&self.snapshots, funding)
     }
 
     /// Borrow the owned PocketIC instance behind this cached baseline.
     #[must_use]
     pub const fn pocket_ic(&self) -> &PocketIc {
-        &self.pocket_ic
+        &self.instance.instance
     }
 
     /// Return the number of canisters captured by this baseline.

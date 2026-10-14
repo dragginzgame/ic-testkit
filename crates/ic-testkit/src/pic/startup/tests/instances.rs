@@ -11,7 +11,7 @@ use super::super::{PocketIcManagedServerOutput, PocketIcStartupConfig, PocketIcS
 #[cfg(unix)]
 use super::{TestServerScript, process_state};
 #[cfg(unix)]
-use crate::test_executable::write_executable_script;
+use ic_host_process::testing::write_executable_script;
 #[cfg(unix)]
 use std::io::Write as _;
 
@@ -119,7 +119,7 @@ fn async_instance_wait_timeout_exit_and_cancellation_keep_ownership() {
                 "#!/bin/sh\nprintf '%s' \"$$\" > \"$0.pid\"\nprintf 'instance diagnostic' >&2\nprintf '{}\\n' > \"$2\"\n{body}\n",
                 http.port
             ),
-        );
+        ).expect("write executable test script");
         let stderr = script.path().with_extension("stderr");
         let stdout = script.path().with_extension("stdout");
         runtime.block_on(async {
@@ -200,12 +200,9 @@ struct PendingHttpServer {
 #[cfg(unix)]
 impl PendingHttpServer {
     fn new(exit_file: Option<PathBuf>, respond: bool) -> Self {
-        use std::{
-            io::Read as _,
-            sync::{
-                Arc,
-                atomic::{AtomicBool, Ordering},
-            },
+        use std::sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
         };
         let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -217,14 +214,10 @@ impl PendingHttpServer {
         let worker = std::thread::spawn(move || {
             while !stop_worker.load(Ordering::Acquire) {
                 match listener.accept() {
-                    Ok((mut stream, _)) => {
-                        stream
-                            .set_read_timeout(Some(Duration::from_secs(1)))
-                            .unwrap();
-                        let mut bytes = [0; 1024];
-                        if stream.read(&mut bytes).unwrap_or(0) == 0 {
+                    Ok((stream, _)) => {
+                        let Some(mut stream) = Self::read_request(stream) else {
                             continue;
-                        }
+                        };
                         request_received.store(true, Ordering::Release);
                         if let Some(path) = &exit_file {
                             fs::write(path, b"exit").unwrap();
@@ -251,6 +244,71 @@ impl PendingHttpServer {
             worker: Some(worker),
         }
     }
+
+    fn read_request(mut stream: std::net::TcpStream) -> Option<std::net::TcpStream> {
+        use std::io::Read as _;
+        // Darwin inherits the listener's nonblocking mode; the read timeout
+        // requires blocking I/O on the accepted stream, not on the listener.
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        let mut bytes = [0; 1024];
+        if stream.read(&mut bytes).unwrap_or(0) == 0 {
+            return None;
+        }
+        Some(stream)
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pending_http_reader_waits_for_bytes_on_an_initially_nonblocking_stream() {
+    use std::{io::Read as _, net::TcpListener, os::fd::AsRawFd as _, thread};
+
+    let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (stream, _) = listener.accept().unwrap();
+    // Exercise the inherited Darwin state on Linux too, before any request bytes.
+    stream.set_nonblocking(true).unwrap();
+    let observation = stream.try_clone().unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+
+    thread::scope(|scope| {
+        let reader = scope.spawn(move || {
+            let mut stream = PendingHttpServer::read_request(stream)
+                .expect("request must remain open until bytes arrive");
+            stream.write_all(b"read").unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            // SAFETY: observation retains this live descriptor; F_GETFL needs no argument.
+            let flags = unsafe { libc::fcntl(observation.as_raw_fd(), libc::F_GETFL) };
+            assert!(flags >= 0, "inspect accepted socket flags");
+            if flags & libc::O_NONBLOCK == 0 {
+                break;
+            }
+            assert!(
+                !reader.is_finished(),
+                "reader closed before request delivery"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "reader did not configure its socket"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        // The observed mode change is the barrier; no sleep supplies request bytes.
+        client
+            .write_all(b"POST /instances HTTP/1.1\r\n\r\n")
+            .unwrap();
+        let mut reply = [0; 4];
+        client.read_exact(&mut reply).unwrap();
+        assert_eq!(&reply, b"read");
+        reader.join().unwrap();
+    });
 }
 
 #[cfg(unix)]
@@ -326,4 +384,95 @@ fn owned_async_instance_and_borrowed_connections_preserve_lifetimes() {
         assert_eq!(process_state(pid), None);
         assert!(!directory.exists());
     });
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "requires POCKET_IC_BIN=<caller-provided PocketIC server binary>"]
+fn install_errors_fixtures_and_baselines_retain_the_owned_server() {
+    use crate::pic::{
+        CachedPocketIcBaseline, CanisterInstallPhase, InstallSpec, StandaloneCanisterFixture,
+    };
+    use candid::Principal;
+
+    let binary = PathBuf::from(std::env::var_os("POCKET_IC_BIN").unwrap());
+    let owned = PocketIcStartupConfig::spawn(&binary, Duration::from_secs(30))
+        .build_instance(PocketIcBuilder::new().with_application_subnet())
+        .unwrap();
+    let pid = owned.server.as_ref().unwrap().process_id();
+    let instance_id = owned.instance.instance_id();
+    let error = StandaloneCanisterFixture::try_install(
+        owned,
+        InstallSpec::new(vec![0xde, 0xad], vec![], 5_000_000_000_000).label("invalid-owned-wasm"),
+    )
+    .err()
+    .expect("invalid Wasm must fail installation");
+    assert_eq!(
+        error.install_error().phase(),
+        CanisterInstallPhase::InstallCode
+    );
+    assert_eq!(error.install_error().label(), Some("invalid-owned-wasm"));
+    assert!(
+        error
+            .install_error()
+            .message()
+            .contains("CanisterInvalidWasm")
+    );
+    error
+        .pocket_ic()
+        .canister_status(error.install_error().canister_id().unwrap(), None)
+        .expect("retained server must permit inspecting the failed canister");
+    let (owned, _) = error.into_parts();
+    assert_eq!(owned.instance.instance_id(), instance_id);
+    assert_eq!(owned.server.as_ref().unwrap().process_id(), pid);
+    assert!(process_state(pid).is_some());
+
+    let fixture = StandaloneCanisterFixture::install(
+        owned,
+        InstallSpec::new(b"\0asm\x01\0\0\0".to_vec(), vec![], 5_000_000_000_000),
+    );
+    let (owned, canister) = fixture.into_parts();
+    assert_eq!(owned.server.as_ref().unwrap().process_id(), pid);
+    let baseline =
+        CachedPocketIcBaseline::capture(owned, Principal::anonymous(), [canister], ()).unwrap();
+    baseline
+        .pocket_ic()
+        .uninstall_canister(canister, None)
+        .unwrap();
+    baseline.restore_with_captured_senders().unwrap();
+    assert!(
+        baseline
+            .pocket_ic()
+            .canister_status(canister, None)
+            .unwrap()
+            .module_hash
+            .is_some()
+    );
+    assert!(process_state(pid).is_some());
+    drop(baseline);
+    assert_eq!(
+        process_state(pid),
+        None,
+        "baseline drop must reap its server"
+    );
+
+    let owned = PocketIcStartupConfig::spawn(binary, Duration::from_secs(30))
+        .build_instance(PocketIcBuilder::new().with_application_subnet())
+        .unwrap();
+    let pid = owned.server.as_ref().unwrap().process_id();
+    let capture = CachedPocketIcBaseline::capture(
+        owned,
+        Principal::anonymous(),
+        [Principal::anonymous()],
+        (),
+    );
+    assert!(
+        capture.is_err(),
+        "missing canister must refuse snapshot capture"
+    );
+    assert_eq!(
+        process_state(pid),
+        None,
+        "failed capture must release its owner"
+    );
 }

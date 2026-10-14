@@ -9,7 +9,8 @@ use pocket_ic::CanisterSettings;
 
 #[test]
 fn diagnostics_use_independent_exact_senders_and_preserve_both_outcomes() {
-    let pocket_ic = support::pocket_ic();
+    let owned = support::pocket_ic();
+    let pocket_ic = &owned.instance;
     let status_sender = Principal::from_slice(&[41]);
     let log_sender = Principal::from_slice(&[42]);
     let outsider = Principal::from_slice(&[43]);

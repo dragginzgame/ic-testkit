@@ -15,7 +15,7 @@ use ic_testkit::pic::{
     BaselinePoolOutcome, BaselinePoolTimings, BaselinePreparationStage, CachedPocketIcBaseline,
     CachedPocketIcBaselinePool, CandidCallExt, CanisterRestoreReceipt, CycleResetPolicy,
     FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe, PocketIcBuilder,
-    PocketIcBuilderExt, PocketIcStartupConfig, PreparedBaseline, ReadinessReceipt, ResetReceipt,
+    PocketIcInstance, PocketIcStartupConfig, PreparedBaseline, ReadinessReceipt, ResetReceipt,
     ResetRequirements, ValidationReceipt,
 };
 use serde::Serialize;
@@ -53,17 +53,26 @@ fn recipe_error(error: impl Error + Send + Sync + 'static) -> RecipeError {
 
 impl Recipe {
     // Fresh construction intentionally does not pay for snapshot capture.
-    fn create(&self) -> std::result::Result<(PocketIc, [Principal; 2]), RecipeError> {
-        let pic = PocketIcBuilder::new()
-            .with_application_subnet()
-            .with_max_request_time_ms(Some(30_000))
-            .try_build(PocketIcStartupConfig::connect(&self.server_url, TIMEOUT))
+    fn create(
+        &self,
+    ) -> std::result::Result<(PocketIcInstance<PocketIc>, [Principal; 2]), RecipeError> {
+        let pic = PocketIcStartupConfig::connect(&self.server_url, TIMEOUT)
+            .build_instance(
+                PocketIcBuilder::new()
+                    .with_application_subnet()
+                    .with_max_request_time_ms(Some(30_000)),
+            )
             .map_err(recipe_error)?;
-        let ids = [pic.create_canister(), pic.create_canister()];
+        let ids = [
+            pic.instance.create_canister(),
+            pic.instance.create_canister(),
+        ];
         for id in ids {
-            pic.add_cycles(id, 5_000_000_000_000);
-            pic.install_canister(id, self.wasm.to_vec(), vec![], None);
-            pic.update_candid::<(), _>(id, "fixture_seed_state", (self.state_bytes,))
+            pic.instance.add_cycles(id, 5_000_000_000_000);
+            pic.instance
+                .install_canister(id, self.wasm.to_vec(), vec![], None);
+            pic.instance
+                .update_candid::<(), _>(id, "fixture_seed_state", (self.state_bytes,))
                 .map_err(recipe_error)?;
         }
         Ok((pic, ids))
@@ -205,7 +214,7 @@ fn fresh_sample(recipe: &Recipe, iteration: usize) -> Result<Sample> {
     let (pic, ids) = recipe.create()?;
     let build_ms = Some(ms(started.elapsed()));
     let validation_started = Instant::now();
-    recipe.validate_state(&pic, &ids, false)?;
+    recipe.validate_state(&pic.instance, &ids, false)?;
     let phases = Phases {
         build_ms,
         validation_ms: Some(ms(validation_started.elapsed())),
@@ -213,7 +222,7 @@ fn fresh_sample(recipe: &Recipe, iteration: usize) -> Result<Sample> {
         ..Phases::default()
     };
     let body = Instant::now();
-    recipe.exercise(&pic, &ids)?;
+    recipe.exercise(&pic.instance, &ids)?;
     let body_ms = ms(body.elapsed());
     let release = Instant::now();
     drop(pic);

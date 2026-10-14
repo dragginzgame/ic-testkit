@@ -33,9 +33,6 @@ pub mod pic;
 
 pub mod performance;
 
-#[cfg(all(test, unix, not(target_arch = "wasm32")))]
-mod test_executable;
-
 use candid::Principal;
 
 /// Deterministic principal generator for tests.

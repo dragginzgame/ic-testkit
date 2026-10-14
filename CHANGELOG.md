@@ -6,13 +6,49 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.39.1]
+## [0.40.1]
 
 ### Fixed
 
 - Qualify common guards and package lifecycle tests once per native CI host;
   retain system Bash/path checks, isolated recovery tests and evidence round trips
   ([#81 — Partition overlapping native CI selections](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
+## [0.40.0] - 2026-10-14
+
+### Breaking
+
+- Keep the instance and optional server together using
+  `PocketIcStartupConfig::build_instance`. Remove `PocketIcBuilderExt::try_build`
+  and its detached successful-server reaper. Standalone install, install-error
+  recovery and cached baseline capture now transfer `PocketIcInstance<PocketIc>`;
+  dropping their retained owner deletes the instance before reaping its server
+  ([#79](https://github.com/dragginzgame/ic-testkit/issues/79)).
+
+### Changed
+
+- Share Host's regular-file opening and `tempfile`'s ephemeral test-directory
+  ownership while preserving bounded reads, private permissions and retained
+  CLI failure evidence
+  ([#79](https://github.com/dragginzgame/ic-testkit/issues/79)).
+
+### Testing
+
+- Keep synthetic async startup connections open until request bytes arrive,
+  fixing Intel macOS cancellation qualification without changing startup policy
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+- Share Unix executable-script fixtures with Host 0.17.9, removing Testkit's
+  duplicate writers while preserving process cleanup and parallel execution
+  ([#78](https://github.com/dragginzgame/ic-testkit/issues/78),
+  [Host #87](https://github.com/dragginzgame/ic-host-tooling/issues/87)).
+
+- Run the real managed sync/async instance and borrowed-server lifetime tests
+  in CI on Linux and both macOS architectures, completing startup coverage
+  previously skipped by the ordinary test command
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0400)
 
 ## [0.39.0] - 2026-10-14
 

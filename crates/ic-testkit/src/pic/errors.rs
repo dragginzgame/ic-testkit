@@ -1,7 +1,7 @@
 use candid::Principal;
 use pocket_ic::{PocketIc, RejectResponse};
 
-use super::PocketIcOperationError;
+use super::{PocketIcInstance, PocketIcOperationError};
 
 /// Structured failure from a [`super::CandidCallExt`] operation.
 #[non_exhaustive]
@@ -79,9 +79,9 @@ pub struct CanisterInstallError {
     source: PocketIcOperationError,
 }
 
-/// Failed standalone install retaining the caller-created PocketIC instance.
+/// Failed standalone install retaining the caller-created instance and optional server.
 pub struct StandaloneCanisterInstallError {
-    pocket_ic: Box<PocketIc>,
+    instance: Box<PocketIcInstance<PocketIc>>,
     install_error: CanisterInstallError,
 }
 
@@ -308,9 +308,12 @@ impl std::error::Error for CanisterInstallError {
 }
 
 impl StandaloneCanisterInstallError {
-    pub(super) fn new(pocket_ic: PocketIc, install_error: CanisterInstallError) -> Self {
+    pub(super) fn new(
+        instance: PocketIcInstance<PocketIc>,
+        install_error: CanisterInstallError,
+    ) -> Self {
         Self {
-            pocket_ic: Box::new(pocket_ic),
+            instance: Box::new(instance),
             install_error,
         }
     }
@@ -318,7 +321,7 @@ impl StandaloneCanisterInstallError {
     /// Borrow the caller-created instance retained after the failed install.
     #[must_use]
     pub fn pocket_ic(&self) -> &PocketIc {
-        self.pocket_ic.as_ref()
+        &self.instance.instance
     }
 
     /// Inspect the structured install failure.
@@ -327,10 +330,9 @@ impl StandaloneCanisterInstallError {
         &self.install_error
     }
 
-    /// Recover ownership of the instance and install failure.
-    #[must_use]
-    pub fn into_parts(self) -> (PocketIc, CanisterInstallError) {
-        (*self.pocket_ic, self.install_error)
+    /// Recover the instance/server ownership record and install failure.
+    pub fn into_parts(self) -> (PocketIcInstance<PocketIc>, CanisterInstallError) {
+        (*self.instance, self.install_error)
     }
 }
 

@@ -103,7 +103,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.39"
+ic-testkit = "0.40"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -174,7 +174,7 @@ restored or validated.
 | Area | Main surface | Value added by ic-testkit |
 | --- | --- | --- |
 | PocketIC runtime | `pocket_ic`; `pic::{PocketIc, PocketIcBuilder}` | Complete upstream crate escape hatch plus focused convenience re-exports; no wrapper |
-| Startup | `PocketIcBuilderExt`, `PocketIcStartupConfig`, `PocketIcManagedServer` | Explicit bounded spawn/connect policy, owned shared-server lifecycle, and structured failures |
+| Startup | `PocketIcStartupConfig`, `PocketIcManagedServer` | Explicit bounded spawn/connect policy, owned shared-server lifecycle, and structured failures |
 | Calls | `CandidCallExt` | Candid encoding/decoding, contextual errors, preserved rejections |
 | Installation | `CanisterInstallExt`, `InstallSpec` | Generic install policy, diagnostics, structured rate-limit retry |
 | Standalone fixtures | `StandaloneCanisterFixture` | Owns one caller-built instance and one installed canister id |
@@ -262,18 +262,13 @@ deadline explicit:
 
 ```rust,no_run
 use ic_testkit::pic::{
-    PocketIc, PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig,
+    PocketIc, PocketIcBuilder, PocketIcInstance, PocketIcStartupConfig,
 };
 use std::{path::Path, time::Duration};
 
-fn build_test_ic(server_binary: &Path) -> Result<PocketIc, ic_testkit::pic::PocketIcStartupError> {
-    PocketIcBuilder::new()
-        .with_application_subnet()
-        .with_ii_subnet()
-        .try_build(PocketIcStartupConfig::spawn(
-            server_binary,
-            Duration::from_secs(30),
-        ))
+fn build_test_ic(server_binary: &Path) -> Result<PocketIcInstance<PocketIc>, ic_testkit::pic::PocketIcStartupError> {
+    PocketIcStartupConfig::spawn(server_binary, Duration::from_secs(30))
+        .build_instance(PocketIcBuilder::new().with_application_subnet().with_ii_subnet())
 }
 ```
 
@@ -292,16 +287,16 @@ matches on `error.failure()`. The CLI preserves a failed command's status when
 server teardown also fails and reports failure if a successful command's server
 cannot be cleaned up. No absolute hard TTL is applied
 by default; PocketIC's activity-based soft TTL still bounds orphaned servers.
-Call `with_server_hard_ttl` to opt into an absolute lifetime. After successful
-one-shot construction, an internal reaper owns the child until it exits.
+Call `with_server_hard_ttl` to opt into an absolute lifetime.
 
-For a fresh server whose lifetime should end with the fixture, use
+For a fresh server whose lifetime ends with the fixture, use
 `config.build_instance(builder)`. It returns `PocketIcInstance<PocketIc>` with
 public `instance` and `server` fields. Its field order deletes the synchronous
 instance before terminating and reaping the server. This replaces repeated
 start-server/connect/build composition while preserving the caller's topology,
-state paths, output files and lifetime policy. `try_build` retains its separate
-one-shot server-reaper behavior.
+state paths, output files and lifetime policy. Pass the whole ownership record to
+standalone installation or baseline capture; their retained owner keeps the server
+alive. Destructuring transfers responsibility for teardown ordering to the caller.
 
 Async consumers use `config.build_instance_async(builder).await` on a Tokio
 runtime with time enabled. The result exposes the upstream nonblocking instance
@@ -334,8 +329,7 @@ The synchronous upstream drop limitation below still applies.
 
 Use `PocketIcStartupConfig::connect(url, timeout)` for a caller-owned existing
 server. Both modes set the server URL on the builder, preventing its implicit,
-unbounded child-startup path. There is no zero-argument `try_build`, implicit
-binary fallback, or hidden retry.
+unbounded child-startup path. There is no implicit binary fallback or hidden retry.
 
 The deadline covers construction. After it returns, operations and instance
 teardown follow upstream PocketIC behavior. In PocketIC 16, dropping an
@@ -348,7 +342,7 @@ several bounded instances against it:
 
 ```rust,no_run
 use ic_testkit::pic::{
-    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig,
+    PocketIcBuilder, PocketIcStartupConfig,
 };
 use std::{path::Path, time::Duration};
 
@@ -356,12 +350,10 @@ fn run_serial_suite(server_binary: &Path) -> Result<(), ic_testkit::pic::PocketI
     let server = PocketIcStartupConfig::spawn(server_binary, Duration::from_secs(30))
         .start_managed_server()?;
     eprintln!("managed server PID: {}", server.process_id());
-    let first = PocketIcBuilder::new().with_application_subnet().try_build(
-        PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30)),
-    )?;
-    let second = PocketIcBuilder::new().with_application_subnet().try_build(
-        PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30)),
-    )?;
+    let first = PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30))
+        .build_instance(PocketIcBuilder::new().with_application_subnet())?;
+    let second = PocketIcStartupConfig::connect(server.url(), Duration::from_secs(30))
+        .build_instance(PocketIcBuilder::new().with_application_subnet())?;
     eprintln!("managed server stdout: {}", server.output().stdout());
     drop((first, second));
     Ok(())
@@ -386,11 +378,11 @@ dropped. For suites spanning several Cargo or test-runner processes, keep one
 runner-owned server and use the shared environment contract in each process:
 
 ```rust,no_run
-use ic_testkit::pic::{PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig};
+use ic_testkit::pic::{PocketIcBuilder, PocketIcStartupConfig};
 use std::time::Duration;
 
 let config = PocketIcStartupConfig::from_env(Duration::from_secs(30))?;
-let pocket_ic = PocketIcBuilder::new().with_application_subnet().try_build(config)?;
+let owned = config.build_instance(PocketIcBuilder::new().with_application_subnet())?;
 # Ok::<(), ic_testkit::pic::PocketIcStartupError>(())
 ```
 
@@ -502,17 +494,16 @@ the active endpoint.
 ```rust,no_run
 use candid::Principal;
 use ic_testkit::pic::{
-    CandidCallExt, InstallSpec, PocketIcBuilder, StandaloneCanisterFixture,
+    CandidCallExt, InstallSpec, PocketIcBuilder, PocketIcStartupConfig, StandaloneCanisterFixture,
 };
 
 fn install_counter(wasm: Vec<u8>, init_bytes: Vec<u8>)
     -> Result<StandaloneCanisterFixture, Box<dyn std::error::Error>>
 {
-    let pocket_ic = PocketIcBuilder::new()
-        .with_application_subnet()
-        .build();
+    let owned = PocketIcStartupConfig::from_env(std::time::Duration::from_secs(30))?
+        .build_instance(PocketIcBuilder::new().with_application_subnet())?;
     let fixture = StandaloneCanisterFixture::try_install(
-        pocket_ic,
+        owned,
         InstallSpec::new(wasm, init_bytes, 1_000_000_000_000)
             .install_sender(Principal::anonymous())
             .label("counter"),
@@ -523,12 +514,13 @@ fn install_counter(wasm: Vec<u8>, init_bytes: Vec<u8>)
 }
 ```
 
-The fixture owns exactly one `PocketIc`. `pocket_ic()` borrows it,
-`canister_id()` identifies the installed canister, and `into_parts()` returns
-both without changing instance ownership. Failed `try_install` returns a
-`StandaloneCanisterInstallError` containing both the caller's instance and the
-`CanisterInstallError`. Creation, cycle funding, and installation panics are
-captured as structured failures. `phase()` identifies the failed operation;
+The fixture owns one `PocketIcInstance<PocketIc>` record. `pocket_ic()` borrows
+its instance, `canister_id()` identifies the installed canister, and `into_parts()`
+returns the ownership record and ID. Failed `try_install` returns a
+`StandaloneCanisterInstallError` containing the same instance/server record and
+the `CanisterInstallError`. A caller-built instance on an externally owned server
+can be passed explicitly as `PocketIcInstance { instance, server: None }`.
+Creation, cycle funding, and installation panics are captured as structured failures. `phase()` identifies the failed operation;
 `canister_id()` returns `None` if creation failed and `Some(id)` afterward.
 The original operation error remains available through the error source chain,
 including its transport classification.

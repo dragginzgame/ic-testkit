@@ -18,9 +18,9 @@ use ic_testkit::pic::{
     BaselinePoolPreparationError, BaselinePreparationStage, CachedPocketIcBaseline,
     CachedPocketIcBaselinePool, CanisterRestoreReceipt, ControllerSnapshotError, CycleResetPolicy,
     ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId, PocketIcBaselineRecipe,
-    PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig, PocketIcStartupError,
-    PreparedBaseline, ReadinessReceipt, RebuildReason, ResetDomainPolicy, ResetReceipt,
-    ResetRequirements, TimeResetPolicy, ValidationReceipt, is_dead_pocket_ic_transport_error,
+    PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupError, PreparedBaseline,
+    ReadinessReceipt, RebuildReason, ResetDomainPolicy, ResetReceipt, ResetRequirements,
+    TimeResetPolicy, ValidationReceipt, is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -145,19 +145,20 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         let pocket_ic = if let Some(server_url) = first_server_url {
-            PocketIcBuilder::new()
-                .with_application_subnet()
-                .try_build(PocketIcStartupConfig::connect(
-                    server_url,
-                    OPERATION_TIMEOUT,
-                ))
+            PocketIcStartupConfig::connect(server_url, OPERATION_TIMEOUT)
+                .build_instance(PocketIcBuilder::new().with_application_subnet())
                 .map_err(TestRecipeError::Startup)?
         } else {
             support::pocket_ic()
         };
-        let canister_ids = [pocket_ic.create_canister(), pocket_ic.create_canister()];
+        let canister_ids = [
+            pocket_ic.instance.create_canister(),
+            pocket_ic.instance.create_canister(),
+        ];
         for canister_id in canister_ids {
-            pocket_ic.install_canister(canister_id, EMPTY_WASM.to_vec(), vec![], None);
+            pocket_ic
+                .instance
+                .install_canister(canister_id, EMPTY_WASM.to_vec(), vec![], None);
         }
 
         let mut baseline = CachedPocketIcBaseline::capture(

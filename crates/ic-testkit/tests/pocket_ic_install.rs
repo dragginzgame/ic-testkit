@@ -4,7 +4,8 @@ use ic_testkit::pic::{CanisterInstallExt, InstallSpec, StandaloneCanisterFixture
 
 #[test]
 fn fallible_install_preserves_the_original_failure_after_diagnostics() {
-    let pocket_ic = support::pocket_ic();
+    let owned = support::pocket_ic();
+    let pocket_ic = &owned.instance;
     let error = pocket_ic
         .try_create_and_install(InstallSpec::new(vec![0xde, 0xad], vec![], 0).label("invalid-wasm"))
         .expect_err("invalid Wasm should fail installation");

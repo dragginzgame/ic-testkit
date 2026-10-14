@@ -289,6 +289,8 @@ jobs:
           echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Prepare selected dependencies
         run: cargo fetch --locked
+      - name: Qualify real owned sync and async instance lifetimes
+        run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests -- --ignored
       - name: Qualify standalone pool failed recovery
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency standalone_dead_transport_preserves_failed_recovery_and_can_build_again -- --ignored --exact
       - name: Qualify baseline pool dedicated-server recovery

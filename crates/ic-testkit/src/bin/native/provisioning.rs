@@ -325,13 +325,13 @@ fn install(
 mod tests {
     use super::*;
     use ic_testkit::ic_host_artifacts::artifact::encode_gzip;
-    use std::os::unix::fs::symlink;
+    use std::os::unix::fs::{PermissionsExt as _, symlink};
     use std::sync::{Mutex, MutexGuard};
 
     static EXECUTABLE_FIXTURES: Mutex<()> = Mutex::new(());
 
     struct Fixture {
-        root: PathBuf,
+        root: tempfile::TempDir,
         _guard: MutexGuard<'static, ()>,
     }
     impl Fixture {
@@ -342,21 +342,15 @@ mod tests {
             let guard = EXECUTABLE_FIXTURES
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let root = std::env::temp_dir().canonicalize().unwrap().join(format!(
-                "testkit-provision-{}-{}",
-                std::process::id(),
-                SEQUENCE.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&root).unwrap();
+            let root = tempfile::Builder::new()
+                .prefix("testkit-provision-")
+                .permissions(fs::Permissions::from_mode(0o700))
+                .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
+                .unwrap();
             Self {
                 root,
                 _guard: guard,
             }
-        }
-    }
-    impl Drop for Fixture {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.root).unwrap();
         }
     }
     fn archive(version: &str) -> (Asset, Vec<u8>) {
@@ -376,39 +370,39 @@ mod tests {
     fn authenticated_setup_reuses_offline_and_refuses_changed_bytes_before_execution() {
         let root = Fixture::new();
         let (asset, bytes) = archive(POCKET_IC_SERVER_VERSION);
-        let executable = setup_with(&root.root, &asset, |path| {
+        let executable = setup_with(root.root.path(), &asset, |path| {
             fs::write(path, &bytes)?;
             Ok(())
         })
         .unwrap();
         let original = fs::read(&executable).unwrap();
         assert_eq!(
-            setup_with(&root.root, &asset, |_| panic!(
+            setup_with(root.root.path(), &asset, |_| panic!(
                 "verified reuse must not download"
             ))
             .unwrap(),
             executable
         );
-        let entries = fs::read_dir(&root.root).unwrap().count();
+        let entries = fs::read_dir(root.root.path()).unwrap().count();
         assert_eq!(
-            check_bundle(&bundle_path(&root.root, &asset), &asset).unwrap(),
+            check_bundle(&bundle_path(root.root.path(), &asset), &asset).unwrap(),
             executable
         );
-        assert_eq!(fs::read_dir(&root.root).unwrap().count(), entries);
-        let marker = root.root.join("executed");
+        assert_eq!(fs::read_dir(root.root.path()).unwrap().count(), entries);
+        let marker = root.root.path().join("executed");
         fs::write(
             &executable,
             format!("#!/bin/sh\ntouch '{}'\n", marker.display()),
         )
         .unwrap();
-        assert!(check_bundle(&bundle_path(&root.root, &asset), &asset).is_err());
+        assert!(check_bundle(&bundle_path(root.root.path(), &asset), &asset).is_err());
         assert!(!marker.exists());
         fs::write(&executable, original).unwrap();
-        assert!(check_bundle(&bundle_path(&root.root, &asset), &asset).is_ok());
-        let saved = root.root.join("saved");
+        assert!(check_bundle(&bundle_path(root.root.path(), &asset), &asset).is_ok());
+        let saved = root.root.path().join("saved");
         fs::rename(&executable, &saved).unwrap();
         symlink(&saved, &executable).unwrap();
-        assert!(check_bundle(&bundle_path(&root.root, &asset), &asset).is_err());
+        assert!(check_bundle(&bundle_path(root.root.path(), &asset), &asset).is_err());
     }
 
     #[test]
@@ -417,13 +411,13 @@ mod tests {
 
         let root = Fixture::new();
         let (mut asset, original) = archive(POCKET_IC_SERVER_VERSION);
-        let executable = setup_with(&root.root, &asset, |path| {
+        let executable = setup_with(root.root.path(), &asset, |path| {
             fs::write(path, &original)?;
             Ok(())
         })
         .unwrap();
         let installed = fs::read(&executable).unwrap();
-        let bundle = bundle_path(&root.root, &asset);
+        let bundle = bundle_path(root.root.path(), &asset);
         let path = bundle.join("archive.gz");
 
         // Both authentication and decoding would fail; authentication wins.
@@ -464,19 +458,19 @@ mod tests {
     #[test]
     fn failed_setup_retains_evidence_and_previous_bundles_then_can_retry() {
         let root = Fixture::new();
-        let previous = root.root.join("previous-version");
+        let previous = root.root.path().join("previous-version");
         fs::create_dir(&previous).unwrap();
         fs::write(previous.join("pocket-ic"), b"previous bytes").unwrap();
         let (asset, bytes) = archive(POCKET_IC_SERVER_VERSION);
         assert!(
-            setup_with(&root.root, &asset, |path| {
+            setup_with(root.root.path(), &asset, |path| {
                 fs::write(path, b"partial download")?;
                 Err("interrupted download".into())
             })
             .is_err()
         );
-        assert!(!bundle_path(&root.root, &asset).exists());
-        let failed = fs::read_dir(&root.root)
+        assert!(!bundle_path(root.root.path(), &asset).exists());
+        let failed = fs::read_dir(root.root.path())
             .unwrap()
             .find_map(|entry| {
                 let path = entry.unwrap().path();
@@ -489,22 +483,22 @@ mod tests {
         );
         assert!(
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _ = setup_with(&root.root, &asset, |path| {
+                let _ = setup_with(root.root.path(), &asset, |path| {
                     fs::write(path, b"interrupted candidate")?;
                     panic!("injected interruption before admission");
                 });
             }))
             .is_err()
         );
-        assert!(!bundle_path(&root.root, &asset).exists());
-        assert!(fs::read_dir(&root.root).unwrap().any(|entry| {
+        assert!(!bundle_path(root.root.path(), &asset).exists());
+        assert!(fs::read_dir(root.root.path()).unwrap().any(|entry| {
             fs::read(entry.unwrap().path().join("archive.gz"))
                 .ok()
                 .as_deref()
                 == Some(b"interrupted candidate")
         }));
         assert!(
-            setup_with(&root.root, &asset, |path| {
+            setup_with(root.root.path(), &asset, |path| {
                 fs::write(path, &bytes)?;
                 Ok(())
             })
@@ -530,13 +524,13 @@ mod tests {
                 asset.digest = Sha256Digest::compute(&bytes);
             }
             assert!(
-                setup_with(&root.root, &asset, |path| {
+                setup_with(root.root.path(), &asset, |path| {
                     fs::write(path, &bytes)?;
                     Ok(())
                 })
                 .is_err()
             );
-            assert!(!bundle_path(&root.root, &asset).exists());
+            assert!(!bundle_path(root.root.path(), &asset).exists());
         }
     }
 
@@ -544,9 +538,9 @@ mod tests {
     fn redirected_paths_are_refused_without_touching_the_target() {
         let root = Fixture::new();
         let (asset, _) = archive(POCKET_IC_SERVER_VERSION);
-        let target = root.root.join("target");
+        let target = root.root.path().join("target");
         fs::create_dir(&target).unwrap();
-        let redirected = root.root.join("redirected");
+        let redirected = root.root.path().join("redirected");
         symlink(&target, &redirected).unwrap();
         assert!(
             setup_with(&redirected.join("child"), &asset, |_| panic!(
@@ -555,9 +549,9 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
-        symlink(&target, root.root.join(".setup-v1.lock")).unwrap();
+        symlink(&target, root.root.path().join(".setup-v1.lock")).unwrap();
         assert!(
-            setup_with(&root.root, &asset, |_| panic!(
+            setup_with(root.root.path(), &asset, |_| panic!(
                 "redirected lock reached downloader"
             ))
             .is_err()
@@ -573,7 +567,7 @@ mod tests {
             let handles = (0..2)
                 .map(|_| {
                     scope.spawn(|| {
-                        setup_with(&root.root, &asset, |path| {
+                        setup_with(root.root.path(), &asset, |path| {
                             calls.fetch_add(1, Ordering::Relaxed);
                             fs::write(path, &bytes)?;
                             Ok(())
@@ -585,7 +579,7 @@ mod tests {
             for handle in handles {
                 assert_eq!(
                     handle.join().unwrap(),
-                    bundle_path(&root.root, &asset).join("pocket-ic")
+                    bundle_path(root.root.path(), &asset).join("pocket-ic")
                 );
             }
         });

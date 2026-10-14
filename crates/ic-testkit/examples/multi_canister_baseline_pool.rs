@@ -13,9 +13,9 @@ use ic_testkit::pic::{
     BaselinePoolContractError, BaselinePoolOutcome, BaselinePreparationStage,
     CachedPocketIcBaseline, CachedPocketIcBaselinePool, CanisterRestoreReceipt,
     ControllerSnapshotError, CycleResetPolicy, FailureDisposition, FixtureRecipeId,
-    PocketIcBaselineRecipe, PocketIcBuilder, PocketIcBuilderExt, PocketIcStartupConfig,
-    PocketIcStartupError, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt,
-    ResetRequirements, ValidationReceipt, is_dead_pocket_ic_transport_error,
+    PocketIcBaselineRecipe, PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupError,
+    PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt, ResetRequirements,
+    ValidationReceipt, is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -59,12 +59,16 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
     }
 
     fn build(&self) -> Result<CachedPocketIcBaseline<Self::Metadata>, Self::Error> {
-        let pocket_ic = PocketIcBuilder::new()
-            .with_application_subnet()
-            .try_build(PocketIcStartupConfig::from_env(Duration::from_secs(30))?)?;
-        let canister_ids = [pocket_ic.create_canister(), pocket_ic.create_canister()];
+        let pocket_ic = PocketIcStartupConfig::from_env(Duration::from_secs(30))?
+            .build_instance(PocketIcBuilder::new().with_application_subnet())?;
+        let canister_ids = [
+            pocket_ic.instance.create_canister(),
+            pocket_ic.instance.create_canister(),
+        ];
         for canister_id in canister_ids {
-            pocket_ic.install_canister(canister_id, EMPTY_WASM.to_vec(), vec![], None);
+            pocket_ic
+                .instance
+                .install_canister(canister_id, EMPTY_WASM.to_vec(), vec![], None);
         }
 
         CachedPocketIcBaseline::capture(

@@ -574,9 +574,10 @@ fn comparison_csv_distinguishes_named_all_suite_from_all_suites() {
     let spans = pair_benchmark_spans(&parse.events);
     let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
     let comparison = compare_benchmark_aggregates(&aggregates.rows, &aggregates.rows);
-    let root = unique_temp_dir("comparison-all-scope");
+    let root_directory = unique_temp_dir("comparison-all-scope");
+    let root = root_directory.path();
     write_metadata(
-        &root,
+        root,
         "2026-05-24T162600Z",
         "2026-05-24T162600Z-a1b2c3d-0001",
         None,
@@ -588,24 +589,24 @@ fn comparison_csv_distinguishes_named_all_suite_from_all_suites() {
         comparison: Some(comparison),
         metadata: read_benchmark_run_metadata(root.join("metadata.json")).unwrap(),
     };
-    write_benchmark_report_dir(&report, &root).expect("write comparison");
+    write_benchmark_report_dir(&report, root).expect("write comparison");
     let csv = fs::read_to_string(root.join("comparison.csv")).unwrap();
     assert!(csv.starts_with("scope,suite,span_label,"));
     assert!(csv.lines().any(|row| row.starts_with("suite,ALL,work,")));
     assert!(csv.lines().any(|row| row.starts_with("all,ALL,work,")));
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn previous_run_discovery_orders_five_digit_indices_numerically() {
-    let root = unique_temp_dir("previous-run-large-indices");
+    let root_directory = unique_temp_dir("previous-run-large-indices");
+    let root = root_directory.path();
     for suffix in ["", "001", "+0001", "00x1", "０００１", "4294967296"] {
         let name = format!("2026-05-24T162600Z-a1b2c3d-{suffix}");
         let path = root.join(&name);
         fs::create_dir_all(&path).unwrap();
         write_metadata(&path, "2026-05-24T162600Z", &name, Some("suite"));
         assert_eq!(
-            find_latest_previous_run(&root, &name, Some("suite"))
+            find_latest_previous_run(root, &name, Some("suite"))
                 .expect_err("invalid current indices must fail discovery")
                 .kind(),
             std::io::ErrorKind::InvalidInput,
@@ -618,7 +619,7 @@ fn previous_run_discovery_orders_five_digit_indices_numerically() {
         write_metadata(&path, "2026-05-24T162600Z", &name, Some("suite"));
     }
     let previous =
-        find_latest_previous_run(&root, "2026-05-24T162600Z-a1b2c3d-10001", Some("suite"))
+        find_latest_previous_run(root, "2026-05-24T162600Z-a1b2c3d-10001", Some("suite"))
             .unwrap()
             .unwrap();
     assert_eq!(
@@ -626,12 +627,11 @@ fn previous_run_discovery_orders_five_digit_indices_numerically() {
         "2026-05-24T162600Z-a1b2c3d-10000"
     );
     assert_eq!(
-        next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d"))
+        next_benchmark_run_directory(root, "2026-05-24T162600Z", Some("a1b2c3d"))
             .expect("ignore malformed indices when finding the next run")
             .run_index,
         10003,
     );
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -814,9 +814,10 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
             selected_previous_run: None,
         },
     };
-    let root = unique_temp_dir("ic-testkit-benchmark-report");
+    let root_directory = unique_temp_dir("ic-testkit-benchmark-report");
+    let root = root_directory.path();
 
-    write_benchmark_report_dir(&report, &root).expect("write report");
+    write_benchmark_report_dir(&report, root).expect("write report");
 
     assert!(root.join("raw-events.csv").exists());
     assert!(root.join("spans.csv").exists());
@@ -849,7 +850,8 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
 #[test]
 #[cfg(unix)]
 fn run_discovery_distinguishes_missing_roots_from_invalid_paths() {
-    let root = unique_temp_dir("ic-testkit-benchmark-root-errors");
+    let root_directory = unique_temp_dir("ic-testkit-benchmark-root-errors");
+    let root = root_directory.path();
     let timestamp = "2026-05-24T162600Z";
     let current = benchmark_run_directory_name(timestamp, None, 1);
     let missing = root.join("missing/nested");
@@ -884,17 +886,17 @@ fn run_discovery_distinguishes_missing_roots_from_invalid_paths() {
             expected,
         );
     }
-    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
 fn run_directory_helpers_choose_next_index_for_commit_and_timestamp() {
-    let root = unique_temp_dir("ic-testkit-benchmark-runs");
+    let root_directory = unique_temp_dir("ic-testkit-benchmark-runs");
+    let root = root_directory.path();
     fs::create_dir_all(root.join("2026-05-24T162600Z-a1b2c3d-0001")).expect("first dir");
     fs::create_dir_all(root.join("2026-05-24T162600Z-a1b2c3d-0002")).expect("second dir");
     fs::create_dir_all(root.join("2026-05-24T162600Z-deadbee-0009")).expect("other commit dir");
 
-    let next = next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d4e5f6"))
+    let next = next_benchmark_run_directory(root, "2026-05-24T162600Z", Some("a1b2c3d4e5f6"))
         .expect("next run dir");
 
     assert_eq!(
@@ -913,7 +915,7 @@ fn run_directory_helpers_choose_next_index_for_commit_and_timestamp() {
         )))
         .expect("create large-index directory");
         assert_eq!(
-            next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d"))
+            next_benchmark_run_directory(root, "2026-05-24T162600Z", Some("a1b2c3d"))
                 .expect("next large index")
                 .run_index,
             index + 1
@@ -926,7 +928,7 @@ fn run_directory_helpers_choose_next_index_for_commit_and_timestamp() {
     )))
     .expect("create final-index directory");
     assert_eq!(
-        next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some("a1b2c3d"))
+        next_benchmark_run_directory(root, "2026-05-24T162600Z", Some("a1b2c3d"))
             .expect_err("exhausted indices must not reuse a directory")
             .kind(),
         std::io::ErrorKind::InvalidData
@@ -937,16 +939,17 @@ fn run_directory_helpers_choose_next_index_for_commit_and_timestamp() {
 
 #[test]
 fn run_directory_helper_uses_unknown_commit_segment_without_git_metadata() {
-    let root = unique_temp_dir("ic-testkit-benchmark-runs-unknown");
+    let root_directory = unique_temp_dir("ic-testkit-benchmark-runs-unknown");
+    let root = root_directory.path();
     let next =
-        next_benchmark_run_directory(&root, "2026-05-24T162600Z", None).expect("next run dir");
+        next_benchmark_run_directory(root, "2026-05-24T162600Z", None).expect("next run dir");
 
     assert_eq!(next.directory_name, "2026-05-24T162600Z-unknown-0001");
     assert_eq!(next.git_commit_hash, None);
     assert_eq!(next.git_commit_short_hash, None);
 
     fs::create_dir_all(&next.path).expect("create first unknown-commit run");
-    let empty_commit = next_benchmark_run_directory(&root, "2026-05-24T162600Z", Some(""))
+    let empty_commit = next_benchmark_run_directory(root, "2026-05-24T162600Z", Some(""))
         .expect("empty commit uses the same unknown prefix");
     assert_eq!(
         empty_commit.directory_name,
@@ -960,7 +963,8 @@ fn run_directory_helper_uses_unknown_commit_segment_without_git_metadata() {
 
 #[test]
 fn previous_run_discovery_selects_latest_matching_metadata() {
-    let root = unique_temp_dir("ic-testkit-benchmark-previous");
+    let root_directory = unique_temp_dir("ic-testkit-benchmark-previous");
+    let root = root_directory.path();
     let older = root.join("2026-05-24T100000Z-a1b2c3d-0001");
     let latest = root.join("2026-05-24T110000Z-a1b2c3d-0001");
     let other_command = root.join("2026-05-24T120000Z-a1b2c3d-0001");
@@ -991,18 +995,18 @@ fn previous_run_discovery_selects_latest_matching_metadata() {
     fs::create_dir_all(root.join("2026-05-24T124000Z-a1b2c3d-0001")).expect("missing metadata dir");
 
     let previous =
-        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", Some("suite-a"))
+        find_latest_previous_run(root, "2026-05-24T130000Z-a1b2c3d-0001", Some("suite-a"))
             .expect("find previous")
             .expect("previous run");
 
     assert_eq!(previous, latest);
     assert_eq!(
-        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", None)
+        find_latest_previous_run(root, "2026-05-24T130000Z-a1b2c3d-0001", None)
             .expect("find previous without command filtering"),
         Some(other_command),
     );
     assert_eq!(
-        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", Some("absent"))
+        find_latest_previous_run(root, "2026-05-24T130000Z-a1b2c3d-0001", Some("absent"))
             .expect("find unmatched command"),
         None,
     );
@@ -1015,7 +1019,7 @@ fn previous_run_discovery_selects_latest_matching_metadata() {
         Some("suite-a"),
     );
     assert_eq!(
-        find_latest_previous_run(&root, "2026-05-24T130000Z-a1b2c3d-0001", Some("suite-a"))
+        find_latest_previous_run(root, "2026-05-24T130000Z-a1b2c3d-0001", Some("suite-a"))
             .expect("order eligible runs by metadata"),
         Some(older),
     );
@@ -1025,9 +1029,10 @@ fn previous_run_discovery_selects_latest_matching_metadata() {
 
 #[test]
 fn metadata_reader_round_trips_written_metadata() {
-    let root = unique_temp_dir("ic-testkit-benchmark-metadata");
+    let root_directory = unique_temp_dir("ic-testkit-benchmark-metadata");
+    let root = root_directory.path();
     write_metadata(
-        &root,
+        root,
         "2026-05-24T162600Z",
         "2026-05-24T162600Z-a1b2c3d-0001",
         Some("make benchmark"),
@@ -1051,8 +1056,9 @@ fn metadata_reader_round_trips_written_metadata() {
 
 #[test]
 fn metadata_reader_enforces_object_schema() {
-    let root = unique_temp_dir("ic-testkit-metadata-schema");
-    write_metadata(&root, "timestamp", "run", Some("benchmark"));
+    let root_directory = unique_temp_dir("ic-testkit-metadata-schema");
+    let root = root_directory.path();
+    write_metadata(root, "timestamp", "run", Some("benchmark"));
     let path = root.join("metadata.json");
     let valid: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let mut invalid = vec![
@@ -1123,8 +1129,6 @@ fn metadata_reader_enforces_object_schema() {
     assert!(metadata.git_commit_short_hash.is_none());
     assert!(metadata.benchmark_command.is_none());
     assert!(metadata.selected_previous_run.is_none());
-
-    fs::remove_dir_all(root).unwrap();
 }
 
 fn write_metadata(
