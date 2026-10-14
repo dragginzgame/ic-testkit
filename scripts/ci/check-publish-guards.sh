@@ -26,15 +26,21 @@ mkdir -p "$work_dir/bin" "$work_dir/state"
 export QUALIFICATION_CARGO
 QUALIFICATION_CARGO="$(command -v cargo)"
 version="$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable "$repo_root/Cargo.toml")"
-registry_event="registry https://crates.io/api/v1/crates/ic-testkit/$version"
+registry_event="registry https://crates.io/api/v1/crates/ic-testkit-candid/$version"
+main_registry_event="registry https://crates.io/api/v1/crates/ic-testkit/$version"
+codec_upload=$'cargo publish --locked --registry crates-io -p ic-testkit-candid\n'
+main_upload=$'cargo publish --locked --registry crates-io -p ic-testkit\n'
 cat > "$work_dir/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == --disable ]] || exit 98
 url="${!#}"
-[[ "$url" == "https://crates.io/api/v1/crates/ic-testkit/$EXPECTED_VERSION" ]] || exit 98
+package="${url%/*}"
+package="${package##*/}"
+case "$package" in ic-testkit|ic-testkit-candid) ;; *) exit 98 ;; esac
+[[ "$url" == "https://crates.io/api/v1/crates/$package/$EXPECTED_VERSION" ]] || exit 98
 printf 'registry %s\n' "$url" >> "$TRACE_FILE"
-if [[ -e "$STATE_DIR/ic-testkit" ]]; then selected=200; else selected=404; fi
+if [[ -e "$STATE_DIR/$package" ]]; then selected=200; else selected=404; fi
 printf '%s' "${HTTP_STATUS-$selected}"
 exit "${LOOKUP_STATUS:-0}"
 STUB
@@ -42,10 +48,14 @@ cat > "$work_dir/bin/cargo" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == locate-project ]]; then exec "$QUALIFICATION_CARGO" "$@"; fi
-[[ "$*" == 'publish --locked --registry crates-io -p ic-testkit' ]] || exit 98
+case "$*" in
+  'publish --locked --registry crates-io -p ic-testkit'|'publish --locked --registry crates-io -p ic-testkit-candid') ;;
+  *) exit 98 ;;
+esac
+package="${!#}"
 printf 'cargo %s\n' "$*" >> "$TRACE_FILE"
-[[ "${PUBLISH_STATUS:-0}" == 0 ]] || exit "$PUBLISH_STATUS"
-: > "$STATE_DIR/ic-testkit"
+if [[ "${PUBLISH_FAIL_PACKAGE:-$package}" == "$package" && "${PUBLISH_STATUS:-0}" != 0 ]]; then exit "$PUBLISH_STATUS"; fi
+: > "$STATE_DIR/$package"
 STUB
 chmod +x "$work_dir/bin/curl" "$work_dir/bin/cargo"
 run_publish() (
@@ -61,12 +71,12 @@ expect_trace() {
 }
 : > "$work_dir/trace"
 run_publish > "$work_dir/first.log"
-expect_trace "$registry_event"$'\ncargo publish --locked --registry crates-io -p ic-testkit\n'
+expect_trace "$registry_event"$'\n'"$codec_upload$main_registry_event"$'\n'"$main_upload"
 [[ -f "$work_dir/state/ic-testkit" ]] || fail 'publication did not reach Cargo'
 : > "$work_dir/trace"
 run_publish > "$work_dir/retry.log"
-expect_trace "$registry_event"$'\n'
-rm "$work_dir/state/ic-testkit"
+expect_trace "$registry_event"$'\n'"$main_registry_event"$'\n'
+rm "$work_dir/state/ic-testkit" "$work_dir/state/ic-testkit-candid"
 for http in 429 500 503 000 malformed ''; do
   : > "$work_dir/trace"
   status=0
@@ -92,8 +102,19 @@ expect_trace ''
 status=0
 PUBLISH_STATUS=47 run_publish > "$work_dir/publication-failure.log" 2>&1 || status=$?
 [[ "$status" == 47 ]] || fail 'Cargo publication failure was not preserved'
-expect_trace "$registry_event"$'\ncargo publish --locked --registry crates-io -p ic-testkit\n'
+expect_trace "$registry_event"$'\n'"$codec_upload"
 [[ ! -e "$work_dir/state/ic-testkit" ]] || fail 'failed publication was recorded as complete'
+# A second-package failure retains the first publication; retry observes and
+# skips the already published codec instead of repeating its upload.
+: > "$work_dir/trace"
+status=0
+PUBLISH_FAIL_PACKAGE=ic-testkit PUBLISH_STATUS=47 run_publish > "$work_dir/partial.log" 2>&1 || status=$?
+[[ "$status" == 47 && -e "$work_dir/state/ic-testkit-candid" && ! -e "$work_dir/state/ic-testkit" ]] || fail 'partial publication state lost'
+expect_trace "$registry_event"$'\n'"$codec_upload$main_registry_event"$'\n'"$main_upload"
+: > "$work_dir/trace"
+run_publish > "$work_dir/partial-retry.log"
+expect_trace "$registry_event"$'\n'"$main_registry_event"$'\n'"$main_upload"
+rm "$work_dir/state/ic-testkit" "$work_dir/state/ic-testkit-candid"
 echo 'Publication admission, retry and failure checks passed'
 
 real_make="$(command -v make)"
@@ -129,7 +150,7 @@ run_admitted_publish() (
 )
 : > "$work_dir/trace"
 run_admitted_publish > "$work_dir/annotated-tag.log" 2>&1
-expect_trace "$registry_event"$'\ncargo publish --locked --registry crates-io -p ic-testkit\n'
+expect_trace "$registry_event"$'\n'"$codec_upload$main_registry_event"$'\n'"$main_upload"
 rm "$work_dir/state/ic-testkit"
 for invalid in lightweight missing wrong-commit invalid-head failed-head failed-type failed-tag; do
   : > "$work_dir/trace"

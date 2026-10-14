@@ -15,6 +15,7 @@ trailing bytes. These are explicit current policies, not compatibility fallbacks
 Both return typed wire admission or original Candid failures without modifying
 input bytes. This crate does not change Testkit's existing PocketIC call defaults.
 
-The workspace owns this package's version and Rust 1.88 floor. Its separate
-publication is required before consumers adopt it from crates.io; adding a
-workspace member does not publish it or change consumer dependency graphs.
+The workspace owns this package's version and Rust 1.88 floor. The workspace
+publication adapter observes/publishes this package before Testkit, preserving
+partial-publication retry admission. Reviewed publication is required before
+consumers adopt it; adding a workspace member does not change their graphs.

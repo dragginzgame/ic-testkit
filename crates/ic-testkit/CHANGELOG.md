@@ -16,6 +16,8 @@ repository checkout. The complete historical changelog remains at
   reply decoding with explicit single-result and exact-single-result policies.
   It has no simulator dependency and preserves existing PocketIC call defaults
   ([#87](https://github.com/dragginzgame/ic-testkit/issues/87)).
+- Workspace packaging/publication includes the codec first and preserves
+  observation-based retry after a partial publication.
 
 ## [0.40.0] - 2026-10-14
 

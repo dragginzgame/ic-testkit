@@ -145,9 +145,11 @@ release-guards-check:
 	bash scripts/ci/check-release-guards.sh
 
 package:
+	+cargo package -p ic-testkit-candid --locked --allow-dirty
 	+cargo package -p ic-testkit --locked --allow-dirty
 
 publish-dry-run:
+	+cargo publish -p ic-testkit-candid --locked --dry-run --allow-dirty
 	+cargo publish -p ic-testkit --locked --dry-run --allow-dirty
 
 ci:
