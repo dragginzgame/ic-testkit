@@ -219,6 +219,10 @@ cargo test --test pocket_ic_e2e -- --test-threads=1
 Keep ordinary unit tests parallel. The thread count is downstream capacity
 tuning, not an ic-testkit correctness requirement.
 
+The separate [ic-testkit-candid](crates/ic-testkit-candid/README.md) package
+provides caller-bounded native/Wasm reply decoding without simulator dependencies.
+Consumers own budgets, transport, trust, raw evidence and error projection.
+
 ## Typed Candid calls
 
 `CandidCallExt` supplies anonymous and caller-aware query/update variants:

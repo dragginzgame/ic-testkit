@@ -32,13 +32,13 @@ server-check:
 	"$(SERVER_CLI)" check
 
 MSRV ?= 1.88.0
-CI_TARGETS := shared-tooling-check tools-check format-tools-check dependency-pins-check installation-check publish-guards-check \
+CI_TARGETS := candid-codec-check shared-tooling-check tools-check format-tools-check dependency-pins-check installation-check publish-guards-check \
 	release-guards-check git-hooks-check fmt-check check check-wasm clippy docs-check test \
 	package publish-dry-run
 
 RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 VALIDATION_INPUTS := Makefile Cargo.toml Cargo.lock rust-toolchain.toml \
-	crates/ic-testkit/Cargo.toml crates/ic_testkit_perf_probe/Cargo.toml \
+	crates/ic-testkit/Cargo.toml crates/ic-testkit-candid/Cargo.toml crates/ic_testkit_perf_probe/Cargo.toml \
 	ci/tool-versions.env ci/ic-tools.tsv .shared-tooling.snapshot
 
 help:
@@ -107,6 +107,13 @@ install-hooks: format-tools-check
 git-hooks-check: format-tools-check
 	bash scripts/ci/check-git-hooks.sh
 
+.PHONY: candid-codec-check
+candid-codec-check:
+	+cargo test -p ic-testkit-candid --locked
+	+cargo clippy -p ic-testkit-candid --all-targets --locked -- -D warnings
+	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit-candid --locked --no-deps
+	+cargo check -p ic-testkit-candid --locked --target wasm32-unknown-unknown
+
 check:
 	+cargo check -p ic-testkit --locked
 
@@ -122,6 +129,8 @@ docs-check:
 msrv:
 	rustc +$(MSRV) --version
 	cargo +$(MSRV) --version
+	+cargo +$(MSRV) check -p ic-testkit-candid --locked
+	+cargo +$(MSRV) check -p ic-testkit-candid --locked --target wasm32-unknown-unknown
 	+cargo +$(MSRV) check -p ic-testkit --locked
 	+cargo +$(MSRV) check -p ic-testkit --lib --target wasm32-unknown-unknown --locked
 	+cargo +$(MSRV) check -p ic_testkit_perf_probe --lib --target wasm32-unknown-unknown --locked

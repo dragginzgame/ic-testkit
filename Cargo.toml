@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ic-testkit", "crates/ic_testkit_perf_probe"]
+members = ["crates/ic-testkit", "crates/ic-testkit-candid", "crates/ic_testkit_perf_probe"]
 resolver = "2"
 
 [workspace.package]

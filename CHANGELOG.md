@@ -6,6 +6,15 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.40.1]
+
+### Added
+
+- Add the separate native/Wasm `ic-testkit-candid` package for caller-bounded
+  reply decoding with explicit single-result and exact-single-result policies.
+  It has no simulator dependency and preserves existing PocketIC call defaults
+  ([#87](https://github.com/dragginzgame/ic-testkit/issues/87)).
+
 ## [0.40.0] - 2026-10-14
 
 ### Breaking

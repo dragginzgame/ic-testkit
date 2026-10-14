@@ -170,7 +170,7 @@ new_fixture() {
     mkdir -p "$(dirname "$file")"
     cp "$repo_root/$file" "$file"
   done
-  for member in crates/ic-testkit crates/ic_testkit_perf_probe; do
+  for member in crates/ic-testkit crates/ic-testkit-candid crates/ic_testkit_perf_probe; do
     mkdir -p "$member/src"
     cp "$repo_root/$member/Cargo.toml" "$member/Cargo.toml"
     : > "$member/src/lib.rs"
@@ -439,6 +439,7 @@ printf '/.release-state/\n' > .git/info/exclude
 "$REAL_GIT" add -- .gitignore Cargo.toml Cargo.lock CHANGELOG.md \
   crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md \
   rust-toolchain.toml crates/ic-testkit/Cargo.toml crates/ic-testkit/src/lib.rs \
+  crates/ic-testkit-candid/Cargo.toml crates/ic-testkit-candid/src/lib.rs \
   crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs \
   artifact gate-trace gate-environment tool-trace preparation-trace rejected.log scripts ci
 printf 'interrupted root staging bytes\n' > .release-metadata.fixture
