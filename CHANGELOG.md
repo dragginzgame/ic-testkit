@@ -6,6 +6,14 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.39.1]
+
+### Fixed
+
+- Qualify common guards and package lifecycle tests once per native CI host;
+  retain system Bash/path checks, isolated recovery tests and evidence round trips
+  ([#81 — Partition overlapping native CI selections](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
 ## [0.39.0] - 2026-10-14
 
 ### Breaking

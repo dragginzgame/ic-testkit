@@ -8,6 +8,14 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.39.1]
+
+### Fixed
+
+- Qualify common guards and package lifecycle tests once per native CI host;
+  retain system Bash/path checks, isolated recovery tests and evidence round trips
+  ([#81 — Partition overlapping native CI selections](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
 ## [0.39.0] - 2026-10-14
 
 ### Breaking
