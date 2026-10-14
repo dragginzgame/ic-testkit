@@ -8,7 +8,7 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.40.1]
+## [0.41.1]
 
 ### Added
 
@@ -18,6 +18,46 @@ repository checkout. The complete historical changelog remains at
   ([#87](https://github.com/dragginzgame/ic-testkit/issues/87)).
 - Workspace packaging/publication includes the codec first and preserves
   observation-based retry after a partial publication.
+
+
+## [0.41.0] - 2026-10-14
+
+### Breaking
+
+- Use `average(scale)` and `compare_benchmark_aggregates(current, previous, scale)`
+  for fallible integer projections through IC Metrics 0.9.4. Current/previous
+  scaled means replace approximate percentage-change fields. Aggregate CSV/text
+  uses whole original units; comparison CSV carries each side's scale. Keep
+  retained reports separate and write the changed columns to new directories
+  ([#84](https://github.com/dragginzgame/ic-testkit/issues/84)).
+
+### Added
+
+- Capture bounded raw native requests with `testing::read_http_request` for
+  synthetic peers. Response policy and failure injection remain caller-owned
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+### Testing
+
+- Share bounded synthetic HTTP request capture across startup and teardown
+  fixtures, retaining one read deadline and explicit macOS blocking socket mode
+  ([#68](https://github.com/dragginzgame/ic-testkit/issues/68)).
+
+- Run shared guards, formatting and ordinary startup, teardown and concurrency
+  tests through the existing complete CI gate once on each supported native host.
+  That gate now uses system Bash with the portable CDPATH and temporary-directory
+  context. Portable installer and release-runner fixtures, benchmark examples,
+  ignored real sync/async instance lifetime and recovery cases, CLI provisioning,
+  idle-lifetime evidence and hosted archive readback retain their distinct steps.
+  The full release aggregate is unchanged
+  ([#81](https://github.com/dragginzgame/ic-testkit/issues/81)).
+
+- Run each synthetic release network-policy case in its own subshell. The
+  unset case no longer exposes an inherited `CARGO_NET_OFFLINE=true`; existing
+  unset/false/true/1 cache and gate assertions still apply. Production fetch
+  continues to honor the operator's policy, and real fixture Cargo calls stay
+  offline
+  ([#83](https://github.com/dragginzgame/ic-testkit/issues/83)).
 
 ## [0.40.0] - 2026-10-14
 

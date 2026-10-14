@@ -103,7 +103,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.40"
+ic-testkit = "0.41"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -953,13 +953,23 @@ path.
 An authored suite named `ALL` remains distinct from the internal cross-suite
 aggregate. Use `BenchmarkAggregateRow::is_all_suites()` to distinguish them.
 Aggregate and comparison rows, and aggregate errors, expose their authoritative
-label through `suite()`. Read aggregate averages with `average()`; they are
-derived from the row's totals and run count rather than stored separately.
-Totals and run counts remain exact integers. Averages and percentage changes
-use approximate `f64` arithmetic: distinct integers above 2^53 can report the
-same average and zero change. Use totals and run counts for exact comparisons.
-CSV preserves these approximate means; text reports also round to whole numbers.
-These accessors replace the former `suite` and `average` fields.
+label through `suite()`. Use `average(scale)` for checked, floor-rounded `u128`
+means derived from exact totals and run counts through IC Metrics. For example,
+scale ten projects totals 3 and 4 across two runs to 35 (mean 3.5). Projection
+returns a typed error for zero runs or an unrepresentable scaled result.
+`compare_benchmark_aggregates(current, previous, scale)` returns a fallible report
+with current/previous means and run counts; missing rows remain distinct from
+measured zero. Percentage-change fields are removed in the 0.41 hard cut.
+CSV/text aggregates report integer means at scale one in original counter units;
+comparison CSV carries both sides' scales and values. Exact totals remain available
+when floor rounding would hide a fraction. Marker framing, metadata discovery and
+retained prior report files are unchanged; new reports must use unique destinations
+rather than reinterpret or overwrite an older report under the changed columns.
+
+Native synthetic peers can use `testing::read_http_request` with an explicit
+read budget and header/body byte bounds. It returns one raw request, selects
+blocking reads on accepted sockets and rejects ambiguous framing. Callers own
+responses and transport-failure injection.
 
 ## Deterministic principals
 

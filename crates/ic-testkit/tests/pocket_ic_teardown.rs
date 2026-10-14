@@ -12,7 +12,7 @@ use ic_testkit::pocket_ic::common::rest::{CreateInstanceResponse, RawCanisterId,
 #[cfg(unix)]
 use std::os::fd::AsRawFd as _;
 use std::{
-    io::{BufRead as _, BufReader, Read as _, Write as _},
+    io::{Read as _, Write as _},
     net::{TcpListener, TcpStream},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
@@ -154,10 +154,8 @@ fn request_reader_handles_an_initially_nonblocking_stream() {
             .expect("send request after reader starts");
         let (stream, request) = reader.join().expect("read initially empty socket");
         assert_eq!(request, "POST /probe HTTP/1.1");
-        assert_eq!(
-            stream.read_timeout().expect("read timeout"),
-            Some(DEADLOCK_ESCAPE)
-        );
+        let read_timeout = stream.read_timeout().expect("read timeout").unwrap();
+        assert!(!read_timeout.is_zero() && read_timeout <= DEADLOCK_ESCAPE);
         assert_eq!(
             stream.write_timeout().expect("write timeout"),
             Some(DEADLOCK_ESCAPE)
@@ -300,44 +298,17 @@ fn accept_stream(listener: &TcpListener) -> TcpStream {
     }
 }
 
-fn read_request(stream: TcpStream) -> (TcpStream, String) {
-    // macOS inherits the listener's nonblocking mode; request timeouts need
-    // blocking I/O even though the accept loop itself must remain nonblocking.
-    stream
-        .set_nonblocking(false)
-        .expect("use blocking request and response I/O");
-    stream
-        .set_read_timeout(Some(DEADLOCK_ESCAPE))
-        .expect("bound request read");
+fn read_request(mut stream: TcpStream) -> (TcpStream, String) {
     stream
         .set_write_timeout(Some(DEADLOCK_ESCAPE))
         .expect("bound response write");
-    let mut reader = BufReader::new(stream);
-    let mut request = String::new();
-    reader
-        .read_line(&mut request)
-        .expect("read HTTP request line");
-    let mut body_len = 0;
-    let mut header_bytes = request.len();
-    loop {
-        let mut header = String::new();
-        assert!(reader.read_line(&mut header).expect("read HTTP header") > 0);
-        header_bytes += header.len();
-        assert!(header_bytes <= 65_536, "bound synthetic request headers");
-        if header == "\r\n" {
-            break;
-        }
-        if let Some((name, value)) = header.split_once(':')
-            && name.eq_ignore_ascii_case("content-length")
-        {
-            body_len = value.trim().parse().expect("request content length");
-        }
-    }
-    assert!(body_len <= 65_536, "bound synthetic request body");
-    reader
-        .read_exact(&mut vec![0; body_len])
-        .expect("drain request body");
-    (reader.into_inner(), request.trim_end().to_owned())
+    let bytes =
+        ic_testkit::testing::read_http_request(&mut stream, DEADLOCK_ESCAPE, 65_536, 65_536)
+            .expect("capture complete synthetic request");
+    let line = std::str::from_utf8(bytes.split(|byte| *byte == b'\r').next().unwrap())
+        .expect("HTTP request line")
+        .to_owned();
+    (stream, line)
 }
 
 fn respond(stream: &mut TcpStream, body: &str) {

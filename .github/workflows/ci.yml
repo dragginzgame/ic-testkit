@@ -107,9 +107,14 @@ jobs:
           key: cargo-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.cargo-tool-cache-key.outputs.key }}
       - name: Prepare selected dependencies
         run: cargo fetch --locked
-      - name: Run complete CI gate
-        shell: bash
-        run: make ci 2>&1 | tee "$RUNNER_TEMP/ic-testkit-validation.log"
+      - name: Run complete CI gate with portable shell and path context
+        shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ic-testkit-check-fixtures"
+          export TMPDIR="$RUNNER_TEMP/ic-testkit-check-fixtures"
+          export CDPATH="$PWD"
+          export PATH="/bin:$PATH"
+          make ci 2>&1 | tee "$RUNNER_TEMP/ic-testkit-validation.log"
       - name: Archive failed validation and installer evidence
         if: failure()
         id: checks-evidence
@@ -198,19 +203,12 @@ jobs:
           TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
         run: |
           mkdir -p "$TMPDIR"
-          /bin/bash scripts/ci/verify-shared-tooling-snapshot.sh
-          make tools-check dependency-pins-check
           /bin/bash scripts/ci/test-host-tools.sh
           /bin/bash scripts/ci/test-ic-tools.sh
           /bin/bash scripts/ci/test-rust-tools.sh
           /bin/bash scripts/ci/test-cargo-tool-versions.sh
           /bin/bash scripts/ci/test-dependency-pins.sh
-          CDPATH="$PWD" /bin/bash scripts/ci/check-release-guards.sh
           CDPATH="$PWD" /bin/bash scripts/ci/test-release-runner.sh
-          CDPATH="$PWD" /bin/bash scripts/ci/check-installation-version.sh
-          CDPATH="$PWD" /bin/bash scripts/ci/check-publish-guards.sh
-          CDPATH="$PWD" /bin/bash scripts/ci/check-git-hooks.sh
-          make fmt-check
       - name: Qualify failure evidence archives
         shell: /bin/bash --noprofile --norc -e -u -o pipefail {0}
         env:
@@ -242,10 +240,6 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
         run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh verify-upload "$RUNNER_TEMP/ic-testkit-archive-downloaded"
-      - name: Check native managed-server lifecycle
-        run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests
-      - name: Check synthetic PocketIC transport and teardown
-        run: cargo test -p ic-testkit --locked --offline --test pocket_ic_teardown
       - name: Check native fixture benchmark driver and sampler
         run: cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
       - name: Archive failed portable and installer evidence
@@ -295,8 +289,6 @@ jobs:
           echo "POCKET_IC_BIN=$server" >> "$GITHUB_ENV"
       - name: Prepare selected dependencies
         run: cargo fetch --locked
-      - name: Run PocketIC ownership concurrency tests
-        run: cargo test -p ic-testkit --locked --offline --test pocket_ic_concurrency -- --nocapture
       - name: Qualify real owned sync and async instance lifetimes
         run: cargo test -p ic-testkit --locked --offline --lib pic::startup::tests -- --ignored
       - name: Qualify standalone pool failed recovery
@@ -305,8 +297,6 @@ jobs:
         run: cargo test -p ic-testkit --locked --offline --test pocket_ic_baseline_pool killed_dedicated_server_rebuilds_on_a_fresh_server -- --ignored --exact
       - name: Qualify provisioning and managed launch without consumer pins
         run: cargo test -p ic-testkit --locked --offline --test server_runner provisioned_cli_runs_a_real_instance_without_consumer_server_selection -- --ignored --exact
-      - name: Qualify real managed-server CLI execution
-        run: cargo test -p ic-testkit --locked --offline --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
       - name: Qualify idle lifetime during pre-client work
         run: cargo test -p ic-testkit --locked --offline --test server_runner managed_idle_ttl_allows_preclient_work_beyond_server_default -- --ignored --exact
       - name: Retain idle lifetime evidence

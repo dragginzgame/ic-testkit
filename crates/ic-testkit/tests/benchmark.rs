@@ -335,7 +335,7 @@ ICTK|app/a:end|300|60|90|120
 
     assert_eq!(app.runs, 2);
     assert_eq!(app.total.instructions, 300);
-    assert!((app.average().instructions - 150.0).abs() < f64::EPSILON);
+    assert_eq!(app.average(1).unwrap().instructions, 150);
     assert_eq!(app.min.instructions, 100);
     assert_eq!(app.max.instructions, 200);
     assert_eq!(all.runs, 2);
@@ -352,19 +352,20 @@ fn updated_aggregate_totals_and_runs_drive_averages_and_comparisons() {
     for row in &mut current.rows {
         row.total.instructions = 300;
         row.runs = 2;
-        assert_eq!(row.average().instructions, 150.0);
+        assert_eq!(row.average(1).unwrap().instructions, 150);
     }
-    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows);
+    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows, 1).unwrap();
     assert!(
         comparison
             .rows
             .iter()
-            .all(|row| row.instructions_avg_change_percent == Some(50.0))
+            .all(|row| row.current_average.unwrap().instructions == 150
+                && row.previous_average.unwrap().instructions == 100)
     );
 }
 
 #[test]
-fn wide_averages_are_approximate_while_aggregate_totals_remain_exact() {
+fn wide_means_preserve_integer_differences_and_explicit_projection_errors() {
     for values in [
         [1_u128 << 53, (1_u128 << 53) + 1],
         [u128::MAX - 1, u128::MAX],
@@ -373,37 +374,43 @@ fn wide_averages_are_approximate_while_aggregate_totals_remain_exact() {
             let spans = boundary_spans(counter, values);
             let previous = aggregate_benchmark_spans(&spans[..1]).unwrap();
             let current = aggregate_benchmark_spans(&spans[1..]).unwrap();
-            for (before, after) in previous.rows.iter().zip(&current.rows) {
-                assert_ne!(before.total, after.total);
-                assert_eq!(before.average(), after.average());
-                let mean = after.average();
-                assert!(
+            for row in compare_benchmark_aggregates(&current.rows, &previous.rows, 1)
+                .unwrap()
+                .rows
+            {
+                let before = row.previous_average.unwrap();
+                let after = row.current_average.unwrap();
+                let fields = |m: ic_testkit::benchmark::BenchmarkAverages| {
                     [
-                        mean.instructions,
-                        mean.heap_bytes,
-                        mean.memory_bytes,
-                        mean.total_allocation,
+                        m.instructions,
+                        m.heap_bytes,
+                        m.memory_bytes,
+                        m.total_allocation,
                     ]
-                    .into_iter()
-                    .all(f64::is_finite)
-                );
-            }
-            for row in compare_benchmark_aggregates(&current.rows, &previous.rows).rows {
-                let changes = [
-                    row.instructions_avg_change_percent,
-                    row.heap_bytes_avg_change_percent,
-                    row.memory_bytes_avg_change_percent,
-                    row.total_allocation_avg_change_percent,
-                ];
-                assert_eq!(changes[counter], Some(0.0));
-                for (index, change) in changes.into_iter().enumerate() {
-                    if index != counter {
-                        assert_eq!(change, None);
-                    }
-                }
+                };
+                assert_eq!(fields(after)[counter], values[1]);
+                assert_eq!(fields(before)[counter], values[0]);
             }
         }
     }
+    let spans = boundary_spans(0, [3, 4]);
+    let mut aggregate = aggregate_benchmark_spans(&spans).unwrap();
+    let row = &mut aggregate.rows[0];
+    assert_eq!(row.average(10).unwrap().instructions, 35);
+    assert_eq!(row.average(1).unwrap().instructions, 3);
+    row.runs = 0;
+    assert_eq!(
+        row.average(1),
+        Err(ic_metrics::MeasurementRatioError::ZeroDenominator)
+    );
+    assert!(compare_benchmark_aggregates(&aggregate.rows, &[], 1).is_err());
+    let row = &mut aggregate.rows[0];
+    row.runs = 1;
+    row.total.instructions = u128::MAX;
+    assert_eq!(
+        row.average(2),
+        Err(ic_metrics::MeasurementRatioError::Overflow)
+    );
 }
 
 fn boundary_spans(
@@ -573,7 +580,7 @@ fn comparison_csv_distinguishes_named_all_suite_from_all_suites() {
     );
     let spans = pair_benchmark_spans(&parse.events);
     let aggregates = aggregate_benchmark_spans(&spans.spans).expect("aggregate benchmark spans");
-    let comparison = compare_benchmark_aggregates(&aggregates.rows, &aggregates.rows);
+    let comparison = compare_benchmark_aggregates(&aggregates.rows, &aggregates.rows, 1).unwrap();
     let root_directory = unique_temp_dir("comparison-all-scope");
     let root = root_directory.path();
     write_metadata(
@@ -665,15 +672,17 @@ ICTK|app/a:end|150|50|100|100
     )
     .expect("aggregate benchmark spans");
 
-    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows);
+    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows, 1).unwrap();
     let app = comparison
         .rows
         .iter()
         .find(|row| row.suite() == "app" && row.span_label == "app/a")
         .expect("comparison row");
 
-    assert_eq!(app.instructions_avg_change_percent, Some(50.0));
-    assert_eq!(app.heap_bytes_avg_change_percent, Some(-50.0));
+    assert_eq!(app.current_average.unwrap().instructions, 150);
+    assert_eq!(app.previous_average.unwrap().instructions, 100);
+    assert_eq!(app.current_average.unwrap().heap_bytes, 50);
+    assert_eq!(app.previous_average.unwrap().heap_bytes, 100);
 }
 
 #[test]
@@ -705,7 +714,7 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
         .clone();
     duplicate.total.instructions = 300;
     current.rows.push(duplicate);
-    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows);
+    let comparison = compare_benchmark_aggregates(&current.rows, &previous.rows, 1).unwrap();
 
     assert_eq!(
         comparison
@@ -723,25 +732,31 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
         ],
     );
     assert_eq!(
-        comparison.rows[0].instructions_avg_change_percent,
-        Some(200.0)
+        comparison.rows[0].current_average.unwrap().instructions,
+        300
     );
     assert_eq!(
-        comparison.rows[3].instructions_avg_change_percent,
-        Some(50.0)
+        comparison.rows[3].current_average.unwrap().instructions,
+        150
     );
     for row in &comparison.rows {
-        assert_eq!(row.heap_bytes_avg_change_percent, None);
+        assert_eq!(
+            row.current_average
+                .or(row.previous_average)
+                .unwrap()
+                .heap_bytes,
+            0
+        );
         match row.span_label.as_str() {
             "current" => {
                 assert_eq!(row.current_runs, Some(1));
                 assert_eq!(row.previous_runs, None);
-                assert_eq!(row.instructions_avg_change_percent, None);
+                assert_eq!(row.previous_average, None);
             }
             "previous" => {
                 assert_eq!(row.current_runs, None);
                 assert_eq!(row.previous_runs, Some(1));
-                assert_eq!(row.instructions_avg_change_percent, None);
+                assert_eq!(row.current_average, None);
             }
             _ => {}
         }
@@ -756,18 +771,18 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
     duplicate.total.instructions = 600;
     duplicate.runs = 2;
     duplicated_previous.push(duplicate);
-    let comparison = compare_benchmark_aggregates(&current.rows, &duplicated_previous);
+    let comparison = compare_benchmark_aggregates(&current.rows, &duplicated_previous, 1).unwrap();
     assert_eq!(comparison.rows[0].previous_runs, Some(2));
     assert_eq!(
-        comparison.rows[0].instructions_avg_change_percent,
-        Some(0.0)
+        comparison.rows[0].previous_average.unwrap().instructions,
+        300
     );
     assert_eq!(
-        comparison.rows[3].instructions_avg_change_percent,
-        Some(50.0)
+        comparison.rows[3].current_average.unwrap().instructions,
+        150
     );
     assert_eq!(
-        compare_benchmark_aggregates(&[], &[]).rows,
+        compare_benchmark_aggregates(&[], &[], 1).unwrap().rows,
         [] as [ic_testkit::benchmark::BenchmarkComparisonRow; 0],
     );
 }
@@ -795,7 +810,8 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
     let previous_spans = pair_benchmark_spans(&previous_parse.events);
     let previous_aggregates =
         aggregate_benchmark_spans(&previous_spans.spans).expect("aggregate benchmark spans");
-    let comparison = compare_benchmark_aggregates(&aggregates.rows, &previous_aggregates.rows);
+    let comparison =
+        compare_benchmark_aggregates(&aggregates.rows, &previous_aggregates.rows, 1).unwrap();
     let report = BenchmarkRunReport {
         parse,
         spans,
@@ -829,11 +845,10 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
 
     let comparison_csv = fs::read_to_string(root.join("comparison.csv")).expect("read comparison");
     assert!(comparison_csv.contains("app/myfunc/something"));
-    assert!(comparison_csv.contains("34.0000"));
+    assert!(comparison_csv.contains("234200000,174776119"));
 
     let summary = fs::read_to_string(root.join("bench-summary.md")).expect("read summary");
-    assert!(summary.contains("| app/myfunc/something | 1 | 0.2342B (+34%)"));
-    assert!(summary.contains("+4.0 MB (-23%)"));
+    assert!(summary.contains("| app/myfunc/something | 1 | 234200000 | 1 | 4194304 | 2 |"));
 
     let metadata = fs::read_to_string(root.join("metadata.json")).expect("read metadata");
     assert!(metadata.contains("\"run_directory_name\": \"2026-05-24T162600Z-a1b2c3d-0001\""));

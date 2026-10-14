@@ -31,6 +31,32 @@ fn ordinary_and_exact_result_policies_are_explicit() {
 }
 
 #[test]
+fn exact_result_policy_requires_one_wire_argument() {
+    let empty = candid::encode_args(()).unwrap();
+    assert!(matches!(
+        decode_exactly_one::<Option<u64>>(&empty, limits(empty.len())),
+        Err(DecodeError::Candid(_))
+    ));
+    assert!(matches!(
+        decode_exactly_one::<()>(&empty, limits(empty.len())),
+        Err(DecodeError::Candid(_))
+    ));
+    assert_eq!(
+        decode_one::<Option<u64>>(&empty, limits(empty.len())).unwrap(),
+        None
+    );
+    decode_one::<()>(&empty, limits(empty.len())).unwrap();
+
+    let optional = candid::encode_one(None::<u64>).unwrap();
+    assert_eq!(
+        decode_exactly_one::<Option<u64>>(&optional, limits(optional.len())).unwrap(),
+        None
+    );
+    let null = candid::encode_one(()).unwrap();
+    decode_exactly_one::<()>(&null, limits(null.len())).unwrap();
+}
+
+#[test]
 fn refusals_preserve_original_bytes_and_decoder_causes() {
     let mut trailing = candid::encode_one(42_u64).unwrap();
     trailing.push(0);

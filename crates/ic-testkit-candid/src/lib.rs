@@ -100,10 +100,10 @@ pub fn decode_one<'a, T: Deserialize<'a> + CandidType>(
     candid::decode_one_with_config(bytes, &config(bytes, limits)?).map_err(DecodeError::Candid)
 }
 
-/// Decode exactly one typed Candid result, rejecting additional values or bytes.
+/// Decode exactly one typed Candid result, rejecting missing or additional values or bytes.
 ///
 /// # Errors
-/// Refuses wire/work ceilings, wrong result shape, extra values and trailing bytes.
+/// Refuses wire/work ceilings, wrong result shape/arity and trailing bytes.
 pub fn decode_exactly_one<'a, T: Deserialize<'a> + CandidType>(
     bytes: &'a [u8],
     limits: DecodeLimits,
@@ -111,6 +111,11 @@ pub fn decode_exactly_one<'a, T: Deserialize<'a> + CandidType>(
     let config = config(bytes, limits)?;
     let mut decoder =
         IDLDeserialize::new_with_config(bytes, &config).map_err(DecodeError::Candid)?;
+    if decoder.is_done() {
+        return Err(DecodeError::Candid(candid::Error::msg(
+            "expected exactly one Candid result",
+        )));
+    }
     let value = decoder.get_value::<T>().map_err(DecodeError::Candid)?;
     if !decoder.is_done() {
         return Err(DecodeError::Candid(candid::Error::msg(

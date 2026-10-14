@@ -850,8 +850,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic-metrics"
+version = "0.9.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d65678222f2c60563768da53a4d03b39c963180dd85e3dd2894237b3ccb7a0fe"
+
+[[package]]
 name = "ic-testkit"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "candid",
  "ic-build",
@@ -859,6 +865,7 @@ dependencies = [
  "ic-host-artifacts",
  "ic-host-fs",
  "ic-host-process",
+ "ic-metrics",
  "libc",
  "pocket-ic",
  "serde",
@@ -869,7 +876,7 @@ dependencies = [
 
 [[package]]
 name = "ic-testkit-candid"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "candid",
  "serde",
@@ -914,7 +921,7 @@ dependencies = [
 
 [[package]]
 name = "ic_testkit_perf_probe"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "candid",
  "ic-cdk",
