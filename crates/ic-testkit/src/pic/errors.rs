@@ -163,7 +163,7 @@ impl CandidCallError {
         source: impl std::fmt::Display,
     ) -> Self {
         let message = format!(
-            "candid decode_one failed (operation={}, canister={}, caller={}, method={}, bytes={}): {source}",
+            "candid decode failed (operation={}, canister={}, caller={}, method={}, bytes={}): {source}",
             context.operation, context.canister_id, context.caller, context.method, bytes
         );
 

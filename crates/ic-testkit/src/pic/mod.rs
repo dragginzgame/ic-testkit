@@ -46,7 +46,7 @@ pub use baseline_pool::{
     ResetDomainPolicy, ResetReceipt, ResetRequirements, StateResetPolicy, TimeResetPolicy,
     ValidationReceipt,
 };
-pub use calls::CandidCallExt;
+pub use calls::{CandidCallExt, query_candid_args, update_candid_args};
 pub use diagnostics::{
     CanisterDiagnosticFailure, CanisterDiagnosticLogRecord, CanisterDiagnosticLogs,
     CanisterDiagnosticsBatchContractError, CanisterDiagnosticsBatchEntry,

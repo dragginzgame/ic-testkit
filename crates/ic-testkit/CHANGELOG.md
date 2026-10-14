@@ -8,6 +8,20 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.40.1]
+
+### Added
+
+- Decode multiple top-level Candid reply arguments through `query_candid_args`
+  and `update_candid_args`, with explicit callers and the existing typed
+  rejection, transport and codec error context. Single-value and tuple-valued
+  reply semantics remain unchanged; decode diagnostics use a codec-neutral label.
+
+Pass a tuple of reply types, such as `(u128, u128)`, to these functions.
+That tuple describes two top-level results; the existing `CandidCallExt` methods
+continue to decode one result. No probe wire change or dependency is required.
+Both paths share argument encoding and transport/error handling.
+
 ## [0.40.0] - 2026-10-14
 
 ### Breaking

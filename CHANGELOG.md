@@ -6,6 +6,17 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.40.1]
+
+### Added
+
+- Decode multiple top-level Candid reply arguments through `query_candid_args`
+  and `update_candid_args`, with explicit callers and the existing typed
+  rejection, transport and codec error context. Single-value and tuple-valued
+  reply semantics remain unchanged; decode diagnostics use a codec-neutral label.
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0401)
+
 ## [0.40.0] - 2026-10-14
 
 ### Breaking

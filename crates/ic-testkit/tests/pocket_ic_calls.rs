@@ -3,7 +3,10 @@ mod support;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use candid::Principal;
-use ic_testkit::pic::{CandidCallErrorKind, CandidCallExt, ErrorCode, RejectCode};
+use ic_testkit::pic::{
+    CandidCallErrorKind, CandidCallExt, ErrorCode, RejectCode, query_candid_args,
+    update_candid_args,
+};
 
 #[test]
 fn candid_call_errors_preserve_live_pocket_ic_rejections() {
@@ -36,6 +39,16 @@ fn candid_call_errors_preserve_live_pocket_ic_rejections() {
         ),
         (
             pocket_ic.update_candid_as::<(), _>(removed_canister, sender, "missing", ()),
+            "update_call",
+            sender,
+        ),
+        (
+            query_candid_args::<(), _>(pocket_ic, removed_canister, sender, "missing", ()),
+            "query_call",
+            sender,
+        ),
+        (
+            update_candid_args::<(), _>(pocket_ic, removed_canister, sender, "missing", ()),
             "update_call",
             sender,
         ),
