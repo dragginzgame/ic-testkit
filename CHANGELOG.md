@@ -6,6 +6,13 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.46.1]
+
+- Add an opt-in native one-request HTTP fixture with caller-selected request
+  limits and a single accept/read/write deadline. Finishing retains the raw
+  request; dropping cancels the exchange and joins its worker. Payloads and
+  protocol assertions remain caller-owned; no PocketIC server is started.
+
 ## [0.46.0] - 2026-10-15
 
 ### Breaking
