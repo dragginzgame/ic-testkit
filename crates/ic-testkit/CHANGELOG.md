@@ -8,6 +8,11 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.43.1]
+
+- Include MIT license text in published crates and align package declarations
+  with the repository license.
+
 ## [0.43.0] - 2026-10-14
 
 ### Breaking

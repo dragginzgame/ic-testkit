@@ -6,6 +6,11 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.43.1]
+
+- Include MIT license text in published crates and align package declarations
+  with the repository license.
+
 ## [0.43.0] - 2026-10-14
 
 ### Breaking
