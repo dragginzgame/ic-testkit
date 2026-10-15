@@ -246,12 +246,15 @@ mod tests {
 
         let err = decode_call_result::<u64>(&[0xde, 0xad], context).expect_err("decode fails");
 
-        assert!(err.message().contains("candid decode_one failed"));
-        assert!(err.message().contains("operation=query_call"));
-        assert!(err.message().contains("method=get"));
-        assert!(err.message().contains("bytes=2"));
-        assert_eq!(err.kind(), CandidCallErrorKind::Decode);
-        assert_eq!(err.context().expect("decode error context").method(), "get");
+        assert!(err.message.contains("candid decode_one failed"));
+        assert!(err.message.contains("operation=query_call"));
+        assert!(err.message.contains("method=get"));
+        assert!(err.message.contains("bytes=2"));
+        assert_eq!(err.kind, CandidCallErrorKind::Decode);
+        assert_eq!(
+            err.context.as_deref().expect("decode error context").method,
+            "get"
+        );
     }
 
     #[test]
@@ -267,8 +270,8 @@ mod tests {
         })
         .unwrap_err();
 
-        assert_eq!(error.kind(), crate::pic::CandidCallErrorKind::Transport);
-        assert!(error.reject_response().is_none());
+        assert_eq!(error.kind, crate::pic::CandidCallErrorKind::Transport);
+        assert!(error.reject_response.is_none());
     }
 
     #[test]

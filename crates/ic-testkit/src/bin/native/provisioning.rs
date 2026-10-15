@@ -18,7 +18,6 @@ use std::{
     ffi::OsString,
     fs::{self, File},
     io::{self, Write as _},
-    os::unix::fs::DirBuilderExt as _,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -261,7 +260,7 @@ fn setup_with(
         std::process::id(),
         SEQUENCE.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::DirBuilder::new().mode(0o700).create(&attempt)?;
+    let staging_directory = durable::create_private_directory(&attempt)?;
     eprintln!("PocketIC setup evidence: {}", attempt.display());
     let result = install(&attempt, asset, download);
     if let Err(error) = result {
@@ -274,6 +273,8 @@ fn setup_with(
     }
     // A complete immutable bundle is visible only after all admission succeeds.
     // No previous version, failed attempt or installed selection is removed.
+    durable::admit_directory(&attempt, &staging_directory)?;
+    staging_directory.sync_all()?;
     fs::rename(&attempt, &bundle)?;
     eprintln!("PocketIC setup evidence retained: {}", bundle.display());
     File::open(&root)?.sync_all()?;
@@ -556,6 +557,28 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn replaced_staging_directory_is_not_published() {
+        let root = Fixture::new();
+        let (asset, bytes) = archive(POCKET_IC_SERVER_VERSION);
+        let retained = root.root.path().join("retained-original-stage");
+        let error = setup_with(root.root.path(), &asset, |archive| {
+            fs::write(archive, &bytes)?;
+            let stage = archive.parent().unwrap();
+            fs::rename(stage, &retained)?;
+            fs::create_dir(stage)?;
+            fs::write(archive, &bytes)?;
+            Ok(())
+        })
+        .expect_err("replacement must not inherit the held directory claim");
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::InvalidInput,
+        );
+        assert!(!bundle_path(root.root.path(), &asset).exists());
+        assert_eq!(fs::read(retained.join("archive.gz")).unwrap(), bytes);
     }
 
     #[test]

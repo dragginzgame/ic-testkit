@@ -185,7 +185,7 @@ fn refused_instance_request_probe() {
     let error = pic
         .query_candid::<u64, _>(Principal::anonymous(), "get", ())
         .expect_err("peer is gone");
-    assert_eq!(error.kind(), CandidCallErrorKind::Transport);
+    assert_eq!(error.kind, CandidCallErrorKind::Transport);
     assert!(is_dead_pocket_ic_transport_error(&error));
     let error = std::io::Error::other(error);
     assert!(is_dead_pocket_ic_transport_error(&error));

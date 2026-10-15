@@ -3,10 +3,10 @@ use std::io;
 use candid::Principal;
 
 use super::{
-    CachedPocketIcBaseline, CanisterRestoreReceipt, CycleResetPolicy, FailureDisposition,
-    FixtureRecipeId, PocketIcBaselineRecipe, PreparedBaseline, ReadinessReceipt, RebuildReason,
-    ResetReceipt, ResetRequirements, SnapshotRestoreFunding, StandaloneCanisterFixture,
-    ValidationReceipt, is_dead_pocket_ic_transport_error,
+    CachedPocketIcBaseline, CanisterRestoreReceipt, CanisterSnapshotTarget, CycleResetPolicy,
+    FailureDisposition, FixtureRecipeId, PocketIcBaselineRecipe, PreparedBaseline,
+    ReadinessReceipt, RebuildReason, ResetReceipt, ResetRequirements, SnapshotRestoreFunding,
+    StandaloneCanisterFixture, ValidationReceipt, is_dead_pocket_ic_transport_error,
 };
 
 /// Snapshot-only recipe for one caller-built, installed canister.
@@ -68,17 +68,19 @@ where
 
     fn build(&self) -> Result<CachedPocketIcBaseline<Principal>, io::Error> {
         let (pocket_ic, canister_id) = (self.build)().into_parts();
-        CachedPocketIcBaseline::capture(pocket_ic, canister_id, [canister_id], canister_id)
-            .map_err(io::Error::other)
+        CachedPocketIcBaseline::capture(
+            pocket_ic,
+            [CanisterSnapshotTarget::new(canister_id, None)],
+            canister_id,
+        )
+        .map_err(io::Error::other)
     }
 
     fn restore_canisters(
         &self,
         baseline: &CachedPocketIcBaseline<Principal>,
     ) -> Result<CanisterRestoreReceipt, io::Error> {
-        baseline
-            .restore_with_captured_senders_and_funding(self.funding)
-            .map_err(io::Error::other)?;
+        baseline.restore(self.funding).map_err(io::Error::other)?;
         CanisterRestoreReceipt::try_from_baseline(baseline, self.requirements.cycle_policy())
             .map_err(io::Error::other)
     }

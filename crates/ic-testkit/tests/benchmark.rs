@@ -3,7 +3,7 @@ mod support;
 use ic_testkit::benchmark::{
     BenchmarkAggregateReport, BenchmarkCounter, BenchmarkCounters, BenchmarkEventKind,
     BenchmarkEventSource, BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata,
-    BenchmarkRunReport, BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation,
+    BenchmarkRunReport, BenchmarkScope, BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation,
     UnpairedBenchmarkMarkerKind, aggregate_benchmark_spans, benchmark_run_directory_name,
     compare_benchmark_aggregates, find_latest_previous_run, format_marker,
     next_benchmark_run_directory, pair_benchmark_spans, parse_benchmark_events,
@@ -325,12 +325,15 @@ ICTK|app/a:end|300|60|90|120
     let app = aggregates
         .rows
         .iter()
-        .find(|row| !row.is_all_suites() && row.suite() == "app" && row.span_label == "app/a")
+        .find(|row| {
+            matches!(&row.scope, BenchmarkScope::Suite(suite) if suite == "app")
+                && row.span_label == "app/a"
+        })
         .expect("app aggregate");
     let all = aggregates
         .rows
         .iter()
-        .find(|row| row.is_all_suites() && row.span_label == "app/a")
+        .find(|row| matches!(row.scope, BenchmarkScope::All) && row.span_label == "app/a")
         .expect("ALL aggregate");
 
     assert_eq!(app.runs, 2);
@@ -466,16 +469,14 @@ fn aggregate_counter_overflow_is_rejected_for_every_counter_and_scope() {
             }
             let error = aggregate_benchmark_spans(&spans).expect_err("reject suite overflow");
             assert_eq!(error.counter, counter);
-            assert_eq!(error.suite(), "ALL");
+            assert_eq!(error.scope, BenchmarkScope::Suite("ALL".into()));
             assert_eq!(error.span_label, "probe/run");
-            assert!(!error.is_all_suites());
 
             spans[1].suite = "other".into();
             let error = aggregate_benchmark_spans(&spans).expect_err("reject cross-suite overflow");
             assert_eq!(error.counter, counter);
-            assert_eq!(error.suite(), "ALL");
+            assert_eq!(error.scope, BenchmarkScope::All);
             assert_eq!(error.span_label, "probe/run");
-            assert!(error.is_all_suites());
         }
     }
 }
@@ -556,15 +557,15 @@ ICTK|benchmark:end|100|20|30|40
     let authored = aggregates
         .rows
         .iter()
-        .find(|row| !row.is_all_suites())
+        .find(|row| matches!(row.scope, BenchmarkScope::Suite(_)))
         .expect("authored ALL suite");
     let all = aggregates
         .rows
         .iter()
-        .find(|row| row.is_all_suites())
+        .find(|row| matches!(row.scope, BenchmarkScope::All))
         .expect("cross-suite ALL aggregate");
-    assert_eq!(authored.suite(), "ALL");
-    assert_eq!(all.suite(), "ALL");
+    assert_eq!(authored.scope, BenchmarkScope::Suite("ALL".into()));
+    assert_eq!(all.scope, BenchmarkScope::All);
     assert_eq!(authored.runs, 1);
     assert_eq!(all.runs, 1);
 }
@@ -676,7 +677,10 @@ ICTK|app/a:end|150|50|100|100
     let app = comparison
         .rows
         .iter()
-        .find(|row| row.suite() == "app" && row.span_label == "app/a")
+        .find(|row| {
+            matches!(&row.scope, BenchmarkScope::Suite(suite) if suite == "app")
+                && row.span_label == "app/a"
+        })
         .expect("comparison row");
 
     assert_eq!(app.current_average.unwrap().instructions, 150);
@@ -709,7 +713,7 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
     let mut duplicate = current
         .rows
         .iter()
-        .find(|row| !row.is_all_suites() && row.span_label == "common")
+        .find(|row| matches!(row.scope, BenchmarkScope::Suite(_)) && row.span_label == "common")
         .unwrap()
         .clone();
     duplicate.total.instructions = 300;
@@ -720,15 +724,15 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
         comparison
             .rows
             .iter()
-            .map(|row| (row.is_all_suites(), row.suite(), row.span_label.as_str()))
+            .map(|row| (row.scope.clone(), row.span_label.as_str()))
             .collect::<Vec<_>>(),
         [
-            (false, "ALL", "common"),
-            (false, "ALL", "current"),
-            (false, "ALL", "previous"),
-            (true, "ALL", "common"),
-            (true, "ALL", "current"),
-            (true, "ALL", "previous"),
+            (BenchmarkScope::Suite("ALL".into()), "common"),
+            (BenchmarkScope::Suite("ALL".into()), "current"),
+            (BenchmarkScope::Suite("ALL".into()), "previous"),
+            (BenchmarkScope::All, "common"),
+            (BenchmarkScope::All, "current"),
+            (BenchmarkScope::All, "previous"),
         ],
     );
     assert_eq!(
@@ -765,7 +769,7 @@ fn comparisons_preserve_order_missing_rows_and_last_duplicate() {
     let mut duplicated_previous = previous.rows;
     let mut duplicate = duplicated_previous
         .iter()
-        .find(|row| !row.is_all_suites() && row.span_label == "common")
+        .find(|row| matches!(row.scope, BenchmarkScope::Suite(_)) && row.span_label == "common")
         .unwrap()
         .clone();
     duplicate.total.instructions = 600;

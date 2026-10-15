@@ -103,7 +103,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.43"
+ic-testkit = "0.44"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -553,65 +553,45 @@ returns all non-rate-limit rejections unchanged.
 
 ## Snapshots and cached baselines
 
-Snapshot capture validates duplicate ids before doing work, stores entries in
-deterministic principal order, and cleans up earlier snapshots if a later
-capture fails:
+Snapshot capture requires one exact management-call sender per canister. It
+validates duplicate ids before doing work, captures in deterministic principal
+order, and cleans up earlier snapshots if a later capture fails. Restore reuses
+those captured senders and requires an explicit cycle-funding policy:
 
 ```rust,no_run
 use candid::Principal;
-use ic_testkit::pic::{PocketIc, PocketIcSnapshotExt, SnapshotRestoreFunding};
+use ic_testkit::pic::{
+    CanisterSnapshotTarget, PocketIc, PocketIcSnapshotExt, SnapshotRestoreFunding,
+};
 
-fn restore_pair(pocket_ic: &PocketIc, controller_id: Principal, canisters: [Principal; 2])
-    -> Result<(), ic_testkit::pic::ControllerSnapshotError>
-{
-    let snapshots = pocket_ic.capture_controller_snapshots(controller_id, canisters)?;
-
-    // Default: do not add cycles.
-    pocket_ic.restore_controller_snapshots(controller_id, &snapshots)?;
-
-    // Optional explicit fixture policy.
-    pocket_ic.restore_controller_snapshots_with_funding(
-        controller_id,
+fn restore_pair(
+    pocket_ic: &PocketIc, root_canister: Principal, root_controller: Principal,
+    child_canister: Principal,
+) -> Result<(), ic_testkit::pic::ControllerSnapshotError> {
+    let snapshots = pocket_ic.capture_snapshots([
+        CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
+        CanisterSnapshotTarget::new(child_canister, None),
+    ])?;
+    pocket_ic.restore_snapshots(&snapshots, SnapshotRestoreFunding::Preserve)?;
+    pocket_ic.restore_snapshots(
         &snapshots,
-        SnapshotRestoreFunding::TopUpTo {
-            minimum_cycles: 200_000_000_000_000,
-        },
+        SnapshotRestoreFunding::TopUpTo { minimum_cycles: 200_000_000_000_000 },
     )?;
     Ok(())
 }
 ```
 
-`ControllerSnapshotError` preserves rejected sender attempts, panic context,
-and any cleanup failures. Restore never adds cycles unless `TopUpTo` is
-explicitly selected. Callers must satisfy upstream snapshot preconditions;
-these helpers do not stop or restart canisters.
+`None` explicitly selects PocketIC's default anonymous sender. Rejections return
+the exact sender and complete upstream response; no other sender is attempted.
+`ControllerSnapshotError` also preserves panic context and partial-capture cleanup
+failures. Restore never adds cycles unless `TopUpTo` is selected. Callers must
+satisfy upstream snapshot preconditions; these helpers do not stop or restart
+canisters. A restore failure does not undo canisters already restored.
 
-Mixed-controller topologies can avoid expected rejected fallback calls by
-selecting the exact sender for each canister:
-
-```rust,no_run
-use candid::Principal;
-use ic_testkit::pic::{
-    CanisterSnapshotTarget, PocketIc, PocketIcSnapshotExt,
-};
-
-fn restore_with_exact_senders(
-    pocket_ic: &PocketIc, root_canister: Principal, root_controller: Principal,
-    child_canister: Principal,
-) -> Result<(), ic_testkit::pic::ControllerSnapshotError> {
-    let snapshots = pocket_ic.capture_snapshots_with_senders([
-        CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
-        CanisterSnapshotTarget::new(child_canister, None),
-    ])?;
-    pocket_ic.restore_snapshots_with_captured_senders(&snapshots)
-}
-```
-
-The existing controller-based method remains useful when its ordered sender
-fallback is desired. `CachedPocketIcBaseline::capture_with_senders` exposes the
-same exact-sender policy for pooled baselines, and
-`restore_with_captured_senders` restores it without requiring or attempting a
-fallback controller.
+Use `CachedPocketIcBaseline::capture(instance, targets, metadata)` for the same
+capture contract in a pooled baseline, then `baseline.restore(funding)` to reuse
+its captured senders. A changed controller set requires caller reconciliation or
+a new baseline rather than an implicit authority fallback.
 
 `CachedPocketIcBaseline<T>` stores one owned instance, its snapshots, and
 caller metadata. Use it as the fixture owned by a `PocketIcBaselineRecipe` in
@@ -936,8 +916,7 @@ exhausted; previous-run discovery orders the indices numerically.
 `aggregate_benchmark_spans` returns `Result<BenchmarkAggregateReport,
 BenchmarkAggregateError>`. Counter totals and run counts use checked arithmetic;
 overflow rejects the complete aggregation rather than returning partial or
-wrapped totals. The error identifies the suite, span label and counter, and
-`is_all_suites()` distinguishes a cross-suite failure from a named suite `ALL`.
+wrapped totals. The error identifies the typed scope, span label and counter.
 
 The report writer emits raw events, spans, aggregates, comparisons, malformed
 and unpaired markers, `bench-summary.md`, and `metadata.json`. Run-directory
@@ -945,10 +924,11 @@ helpers discover compatible previous runs but do not reserve paths. Concurrent
 writers must use unique destinations or synchronize only the shared output
 path.
 
-An authored suite named `ALL` remains distinct from the internal cross-suite
-aggregate. Use `BenchmarkAggregateRow::is_all_suites()` to distinguish them.
-Aggregate and comparison rows, and aggregate errors, expose their authoritative
-label through `suite()`. Use `average(scale)` for checked, floor-rounded `u128`
+Aggregate and comparison rows, and aggregate errors, expose their identity as
+`scope: BenchmarkScope`. Match `BenchmarkScope::Suite(name)` or
+`BenchmarkScope::All`; a suite literally named `ALL` remains a distinct value.
+CSV and text labels and columns remain unchanged. Use `average(scale)` for
+checked, floor-rounded `u128`
 means derived from exact totals and run counts through IC Metrics. For example,
 scale ten projects totals 3 and 4 across two runs to 35 (mean 3.5). Projection
 returns a typed error for zero runs or an unrepresentable scaled result.

@@ -591,7 +591,7 @@ impl CanisterRestoreReceipt {
     ///
     /// This is the preferred constructor after successfully calling
     /// [`CachedPocketIcBaseline::restore`] or
-    /// [`CachedPocketIcBaseline::restore_with_funding`]. Deriving the set from
+    /// [`CachedPocketIcBaseline::restore`]. Deriving the set from
     /// the baseline avoids duplicating canister ids in recipe metadata solely
     /// to satisfy the pool contract.
     pub fn try_from_baseline<M>(

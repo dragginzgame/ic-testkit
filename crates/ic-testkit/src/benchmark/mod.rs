@@ -25,13 +25,16 @@ use serde_json::Value;
 pub const DEFAULT_PREFIX: &str = "ICTK";
 const ALL_SUITES_LABEL: &str = "ALL";
 
+/// Structural identity of one suite or the cross-suite aggregate.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum AggregateScope {
+pub enum BenchmarkScope {
+    /// One caller-authored suite, including a suite literally named `ALL`.
     Suite(String),
+    /// Aggregate across every suite.
     All,
 }
 
-impl AggregateScope {
+impl BenchmarkScope {
     fn label(&self) -> &str {
         match self {
             Self::Suite(suite) => suite,
@@ -232,7 +235,8 @@ pub struct BenchmarkAggregateRow {
     pub min: BenchmarkCounters,
     pub max: BenchmarkCounters,
     pub peak_end: BenchmarkCounters,
-    scope: AggregateScope,
+    /// Suite identity or the cross-suite aggregate.
+    pub scope: BenchmarkScope,
 }
 
 /// Floor-rounded scaled means of exact aggregate totals and run counts.
@@ -268,21 +272,8 @@ pub enum BenchmarkCounter {
 pub struct BenchmarkAggregateError {
     pub span_label: String,
     pub counter: BenchmarkCounter,
-    scope: AggregateScope,
-}
-
-impl BenchmarkAggregateError {
-    /// Suite label, or `ALL` for the cross-suite aggregate.
-    #[must_use]
-    pub fn suite(&self) -> &str {
-        self.scope.label()
-    }
-
-    /// Whether the overflow belongs to the cross-suite aggregate.
-    #[must_use]
-    pub const fn is_all_suites(&self) -> bool {
-        matches!(self.scope, AggregateScope::All)
-    }
+    /// Suite identity or the cross-suite aggregate.
+    pub scope: BenchmarkScope,
 }
 
 impl std::fmt::Display for BenchmarkAggregateError {
@@ -305,7 +296,8 @@ pub struct BenchmarkComparisonRow {
     pub previous_runs: Option<u64>,
     pub current_average: Option<BenchmarkAverages>,
     pub previous_average: Option<BenchmarkAverages>,
-    scope: AggregateScope,
+    /// Suite identity or the cross-suite aggregate.
+    pub scope: BenchmarkScope,
 }
 
 impl BenchmarkAggregateRow {
@@ -319,32 +311,6 @@ impl BenchmarkAggregateRow {
             memory_bytes: checked_scaled_ratio(self.total.memory_bytes, self.runs, scale)?,
             total_allocation: checked_scaled_ratio(self.total.total_allocation, self.runs, scale)?,
         })
-    }
-
-    /// Suite label, or `ALL` for the cross-suite aggregate.
-    #[must_use]
-    pub fn suite(&self) -> &str {
-        self.scope.label()
-    }
-
-    /// Report whether this row aggregates matching spans across every suite.
-    #[must_use]
-    pub const fn is_all_suites(&self) -> bool {
-        matches!(self.scope, AggregateScope::All)
-    }
-}
-
-impl BenchmarkComparisonRow {
-    /// Suite label, or `ALL` for the cross-suite aggregate.
-    #[must_use]
-    pub fn suite(&self) -> &str {
-        self.scope.label()
-    }
-
-    /// Report whether this row compares the aggregate across every suite.
-    #[must_use]
-    pub const fn is_all_suites(&self) -> bool {
-        matches!(self.scope, AggregateScope::All)
     }
 }
 
@@ -628,11 +594,11 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
 pub fn aggregate_benchmark_spans(
     spans: &[BenchmarkSpan],
 ) -> Result<BenchmarkAggregateReport, BenchmarkAggregateError> {
-    let mut rows: BTreeMap<(AggregateScope, &str), AggregateBuilder> = BTreeMap::new();
+    let mut rows: BTreeMap<(BenchmarkScope, &str), AggregateBuilder> = BTreeMap::new();
 
     for span in spans {
-        add_span_to_aggregate(&mut rows, AggregateScope::Suite(span.suite.clone()), span)?;
-        add_span_to_aggregate(&mut rows, AggregateScope::All, span)?;
+        add_span_to_aggregate(&mut rows, BenchmarkScope::Suite(span.suite.clone()), span)?;
+        add_span_to_aggregate(&mut rows, BenchmarkScope::All, span)?;
     }
 
     Ok(BenchmarkAggregateReport {
@@ -691,14 +657,14 @@ pub fn write_benchmark_report_dir(
             .aggregates
             .rows
             .iter()
-            .filter(|row| !row.is_all_suites()),
+            .filter(|row| matches!(row.scope, BenchmarkScope::Suite(_))),
     )?;
     let all_aggregates = aggregates_csv(
         report
             .aggregates
             .rows
             .iter()
-            .filter(|row| row.is_all_suites()),
+            .filter(|row| matches!(row.scope, BenchmarkScope::All)),
     )?;
     let summary = benchmark_summary_markdown(report)?;
     fs::create_dir_all(path)?;
@@ -925,7 +891,7 @@ impl AggregateBuilder {
         Ok(())
     }
 
-    const fn finish(self, scope: AggregateScope, span_label: String) -> BenchmarkAggregateRow {
+    const fn finish(self, scope: BenchmarkScope, span_label: String) -> BenchmarkAggregateRow {
         BenchmarkAggregateRow {
             span_label,
             runs: self.runs,
@@ -939,8 +905,8 @@ impl AggregateBuilder {
 }
 
 fn add_span_to_aggregate<'a>(
-    rows: &mut BTreeMap<(AggregateScope, &'a str), AggregateBuilder>,
-    scope: AggregateScope,
+    rows: &mut BTreeMap<(BenchmarkScope, &'a str), AggregateBuilder>,
+    scope: BenchmarkScope,
     span: &'a BenchmarkSpan,
 ) -> Result<(), BenchmarkAggregateError> {
     match rows.entry((scope, span.span_label.as_str())) {
@@ -1065,7 +1031,7 @@ fn aggregates_csv<'a>(rows: impl Iterator<Item = &'a BenchmarkAggregateRow>) -> 
         let _ = writeln!(
             out,
             "{},{},{},{},{},{},{},{},{},{},{}",
-            csv_cell(row.suite()),
+            csv_cell(row.scope.label()),
             csv_cell(&row.span_label),
             row.runs,
             row.total.instructions,
@@ -1095,8 +1061,12 @@ fn comparison_csv(comparison: Option<&BenchmarkComparisonReport>) -> String {
             let _ = writeln!(
                 out,
                 "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-                if row.is_all_suites() { "all" } else { "suite" },
-                csv_cell(row.suite()),
+                if matches!(row.scope, BenchmarkScope::All) {
+                    "all"
+                } else {
+                    "suite"
+                },
+                csv_cell(row.scope.label()),
                 csv_cell(&row.span_label),
                 optional_u64_cell(row.current_runs),
                 optional_u64_cell(row.previous_runs),
@@ -1124,7 +1094,7 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> io::Result<String>
         .aggregates
         .rows
         .iter()
-        .filter(|row| !row.is_all_suites())
+        .filter(|row| matches!(row.scope, BenchmarkScope::Suite(_)))
     {
         let average = row.average(1).map_err(io::Error::other)?;
         let _ = writeln!(

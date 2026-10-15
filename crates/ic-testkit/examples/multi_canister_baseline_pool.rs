@@ -12,10 +12,11 @@ use candid::Principal;
 use ic_testkit::pic::{
     BaselinePoolContractError, BaselinePoolOutcome, BaselinePreparationStage,
     CachedPocketIcBaseline, CachedPocketIcBaselinePool, CanisterRestoreReceipt,
-    ControllerSnapshotError, CycleResetPolicy, FailureDisposition, FixtureRecipeId,
-    PocketIcBaselineRecipe, PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupError,
-    PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt, ResetRequirements,
-    ValidationReceipt, is_dead_pocket_ic_transport_error,
+    CanisterSnapshotTarget, ControllerSnapshotError, CycleResetPolicy, FailureDisposition,
+    FixtureRecipeId, PocketIcBaselineRecipe, PocketIcBuilder, PocketIcStartupConfig,
+    PocketIcStartupError, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetReceipt,
+    ResetRequirements, SnapshotRestoreFunding, ValidationReceipt,
+    is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -73,8 +74,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
 
         CachedPocketIcBaseline::capture(
             pocket_ic,
-            Principal::anonymous(),
-            canister_ids,
+            canister_ids.map(|id| CanisterSnapshotTarget::new(id, None)),
             TopologyMetadata { canister_ids },
         )
         .map_err(Into::into)
@@ -84,7 +84,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
         &self,
         baseline: &CachedPocketIcBaseline<Self::Metadata>,
     ) -> Result<CanisterRestoreReceipt, Self::Error> {
-        baseline.restore(Principal::anonymous())?;
+        baseline.restore(SnapshotRestoreFunding::Preserve)?;
         CanisterRestoreReceipt::try_from_baseline(baseline, CycleResetPolicy::PreserveCurrent)
             .map_err(Into::into)
     }

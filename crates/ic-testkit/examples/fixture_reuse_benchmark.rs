@@ -15,10 +15,10 @@ use candid::Principal;
 use fixture_reuse_report::{Phases, Sample, WorkerReport};
 use ic_testkit::pic::{
     BaselinePoolOutcome, BaselinePoolTimings, BaselinePreparationStage, CachedPocketIcBaseline,
-    CachedPocketIcBaselinePool, CandidCallExt, CanisterRestoreReceipt, CycleResetPolicy,
-    FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe, PocketIcBuilder,
-    PocketIcInstance, PocketIcStartupConfig, PreparedBaseline, ReadinessReceipt, ResetReceipt,
-    ResetRequirements, ValidationReceipt,
+    CachedPocketIcBaselinePool, CandidCallExt, CanisterRestoreReceipt, CanisterSnapshotTarget,
+    CycleResetPolicy, FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe,
+    PocketIcBuilder, PocketIcInstance, PocketIcStartupConfig, PreparedBaseline, ReadinessReceipt,
+    ResetReceipt, ResetRequirements, SnapshotRestoreFunding, ValidationReceipt,
 };
 use serde::Serialize;
 
@@ -124,7 +124,12 @@ impl PocketIcBaselineRecipe for Recipe {
 
     fn build(&self) -> std::result::Result<CachedPocketIcBaseline<Self::Metadata>, Self::Error> {
         let (pic, ids) = self.create()?;
-        CachedPocketIcBaseline::capture(pic, Principal::anonymous(), ids, ids).map_err(recipe_error)
+        CachedPocketIcBaseline::capture(
+            pic,
+            ids.map(|id| CanisterSnapshotTarget::new(id, None)),
+            ids,
+        )
+        .map_err(recipe_error)
     }
 
     fn restore_canisters(
@@ -132,7 +137,7 @@ impl PocketIcBaselineRecipe for Recipe {
         baseline: &CachedPocketIcBaseline<Self::Metadata>,
     ) -> std::result::Result<CanisterRestoreReceipt, Self::Error> {
         baseline
-            .restore_with_captured_senders()
+            .restore(SnapshotRestoreFunding::Preserve)
             .map_err(recipe_error)?;
         CanisterRestoreReceipt::try_from_baseline(baseline, CycleResetPolicy::PreserveCurrent)
             .map_err(recipe_error)
