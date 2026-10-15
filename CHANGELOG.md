@@ -6,7 +6,7 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.41.1]
+## [0.43.1]
 
 ### Added
 
@@ -15,7 +15,57 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   rejection, transport and codec error context. Single-value and tuple-valued
   reply semantics remain unchanged; decode diagnostics use a codec-neutral label.
 
-[Integration details](crates/ic-testkit/CHANGELOG.md#0411)
+[Integration details](crates/ic-testkit/CHANGELOG.md#0431)
+
+## [0.43.0] - 2026-10-14
+
+### Breaking
+
+- Remove the redundant `PocketIcTimeExt` trait and its prelude export. Read
+  nanoseconds directly with `pic.get_time().as_nanos_since_unix_epoch()`;
+  update trait imports and call sites. Simulated polling remains unchanged.
+  Jobs caller preparation is in [PR #49](https://github.com/dragginzgame/ic-jobs/pull/49);
+  Canic caller preparation is in [PR #565](https://github.com/dragginzgame/canic/pull/565).
+
+### Changed
+
+- Share the fixture benchmark worker/driver report types and decode borrowed
+  JSON without cloning the complete report. Preserve raw worker fields, required
+  phases, workload matching and driver-owned sampling admission.
+- Render benchmark terminal columns through IC Host Text 0.18.2 with computed
+  widths and escaped cells. Numeric formatting and JSON reports remain local.
+- Serialize benchmark metadata directly from its typed record, retaining JSON
+  fields and the trailing newline; key presentation follows record order.
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0430)
+
+## [0.42.0] - 2026-10-14
+
+### Breaking
+
+- Adopt the exposed IC Host 0.18 filesystem contract: following reads/hashes
+  open before admitting descriptor type and size. Callers must handle native
+  open failures before metadata refusals.
+
+### Changed
+
+- Adopt Shared Tooling 0.12.7 and use its exact local-lockfile projection during
+  release preparation, retaining saved-graph cache preparation and interruption
+  recovery ([#73 — Adopt snapshot-owned common tool catalogs](https://github.com/dragginzgame/ic-testkit/issues/73)).
+
+### Added
+
+- Capture a bounded request line and complete its original HTTP request through
+  one caller deadline, preserving incomplete synthetic peer connections
+  ([Blob #70](https://github.com/dragginzgame/ic-blob-storage/issues/70)).
+
+### Fixed
+
+- Keep idle-lifetime qualification evidence in collision-free directories so
+  restored CI caches cannot prevent the real server check from starting
+  ([#91](https://github.com/dragginzgame/ic-testkit/issues/91)).
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0420)
 
 ## [0.41.0] - 2026-10-14
 

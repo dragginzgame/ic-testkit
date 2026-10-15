@@ -28,6 +28,7 @@ use ic_build::artifacts::{
     WasmBuildError, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
     workspace_root_for,
 };
+use ic_host_text::table::{self, Alignment};
 use ic_testkit::{
     ic_host_artifacts::artifact::ArtifactError,
     ic_host_fs::{
@@ -307,9 +308,7 @@ fn build_command(command: &mut Command) -> Result<(), Error> {
 }
 
 fn print_summary(summaries: &BTreeMap<String, Summary>, labels: &[String]) -> Result<(), Error> {
-    println!(
-        "Mode        work ms   incl. setup/drop ms   tasks/s   restore mean ms   wait mean ms   peak RSS MiB"
-    );
+    let mut rows = Vec::with_capacity(labels.len());
     for label in labels {
         let summary = &summaries[label];
         let (Some(work), Some(fixture), Some(rate), Some(peak), Some(wait)) = (
@@ -324,15 +323,44 @@ fn print_summary(summaries: &BTreeMap<String, Summary>, labels: &[String]) -> Re
         let restore = summary.phases_ms["restore_ms"]
             .as_ref()
             .map_or_else(|| "-".into(), |restore| format!("{:.2}", restore.mean));
-        println!(
-            "{label:10} {:9.2} {:21.2} {:9.2} {restore:>17} {:14.2} {:14.2}",
-            work.p50,
-            fixture.p50,
-            rate.p50,
-            wait.mean,
-            peak.p50 / 1024.0 / 1024.0
-        );
+        rows.push([
+            label.clone(),
+            format!("{:.2}", work.p50),
+            format!("{:.2}", fixture.p50),
+            format!("{:.2}", rate.p50),
+            restore,
+            format!("{:.2}", wait.mean),
+            format!("{:.2}", peak.p50 / 1024.0 / 1024.0),
+        ]);
     }
+    println!(
+        "{}",
+        table::render(
+            &[
+                "Mode",
+                "work ms",
+                "incl. setup/drop ms",
+                "tasks/s",
+                "restore mean ms",
+                "wait mean ms",
+                "peak RSS MiB"
+            ],
+            &rows,
+            &[
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right
+            ],
+            table::Options {
+                column_gap: 2,
+                header_separator: false
+            },
+        )
+    );
     Ok(())
 }
 

@@ -761,6 +761,14 @@ saved-source renderer must not be replaced by the mutating adapter below solely
 to share version mechanics
 ([#159](https://github.com/dragginzgame/shared-tooling/issues/159)).
 
+Dependency-selector edits and candidate comparison remain separate consumer
+contracts. An exact saved-byte comparison must not become parsed-TOML equality
+merely to share code; a consumer admitting harmless formatting differences must
+not silently gain byte-exact rejection either. Keep independent parsed-candidate
+checks where they protect the renderer boundary. The shared scalar renderer
+does not replace those checks or generalize into a selector/comparator framework
+without another demonstrated matching contract.
+
 Select this helper as a snapshot entrypoint when invoking it directly. Commit
 and qualify its owner before adopting it; a dirty producer draft is not an
 immutable consumer export.

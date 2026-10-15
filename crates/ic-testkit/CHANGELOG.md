@@ -8,7 +8,7 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.41.1]
+## [0.43.1]
 
 ### Added
 
@@ -21,6 +21,61 @@ Pass a tuple of reply types, such as `(u128, u128)`, to these functions.
 That tuple describes two top-level results; the existing `CandidCallExt` methods
 continue to decode one result. No probe wire change or dependency is required.
 Both paths share argument encoding and transport/error handling.
+
+## [0.43.0] - 2026-10-14
+
+### Breaking
+
+- Remove the redundant `PocketIcTimeExt` trait and its prelude export. Read
+  nanoseconds directly with `pic.get_time().as_nanos_since_unix_epoch()`;
+  update trait imports and call sites. Simulated polling remains unchanged.
+  Jobs caller preparation is in [PR #49](https://github.com/dragginzgame/ic-jobs/pull/49);
+  Canic caller preparation is in [PR #565](https://github.com/dragginzgame/canic/pull/565).
+
+### Changed
+
+- Share the fixture benchmark worker/driver report types and decode borrowed
+  JSON without cloning the complete report. Preserve raw worker fields, required
+  phases, workload matching and driver-owned sampling admission.
+- Render benchmark terminal columns through IC Host Text 0.18.2 with computed
+  widths and escaped cells. Numeric formatting and JSON reports remain local.
+- Serialize benchmark metadata directly from its typed record, retaining JSON
+  fields and the trailing newline; key presentation follows record order.
+
+## [0.42.0] - 2026-10-14
+
+### Breaking
+
+- The public IC Host reexports now select 0.18. Following file reads/hashes
+  admit their opened descriptor instead of checking metadata before opening.
+  Native open failures therefore precede type/size refusal; callers relying on
+  error precedence must update their handling. No stored-format migration is
+  required for this library contract change.
+
+### Changed
+
+- Select reviewed Shared Tooling 0.12.7 and its local-lockfile rewriter for
+  release preparation. Only exact unsourced workspace package versions and
+  local dependency references change; all external selections remain intact.
+  Saved manifests still support cache preparation after interrupted metadata
+  installation, and final locked Cargo admission remains independent
+  ([#73 — Adopt snapshot-owned common tool catalogs](https://github.com/dragginzgame/ic-testkit/issues/73)).
+
+### Added
+
+- Use `testing::read_http_request_line` to classify a synthetic request without
+  waiting for headers/body, then `read_http_request_with_line` on that same
+  socket to complete it under the original absolute deadline. Both phases
+  retain caller-selected bounds, response policy and failure injection; the
+  existing whole-request helper remains available for complete peers
+  ([Blob #70](https://github.com/dragginzgame/ic-blob-storage/issues/70)).
+
+### Fixed
+
+- Allocate retained idle-lifetime evidence atomically with a randomized temporary
+  directory under `target/`. Previous logs remain intact when CI restores its
+  cache; the server lifetime and evidence upload paths retain their contracts
+  ([#91](https://github.com/dragginzgame/ic-testkit/issues/91)).
 
 ## [0.41.0] - 2026-10-14
 

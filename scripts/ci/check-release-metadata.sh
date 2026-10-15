@@ -162,7 +162,7 @@ new_fixture() {
   # inputs. Only the complete validation gate and Git effects are substituted.
   mkdir -p scripts/release scripts/ci ci
   cp "$repo_root/scripts/release/metadata.sh" scripts/release/
-  for helper in check-release-source.sh read-cargo-workspace-version.sh next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk render-cargo-workspace-version.pl; do
+  for helper in check-release-source.sh read-cargo-workspace-version.sh next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk render-cargo-workspace-version.pl rewrite-local-lock-versions.pl; do
     cp "$repo_root/scripts/ci/$helper" scripts/ci/
   done
   cp "$repo_root/ci/tool-versions.env" ci/
@@ -272,6 +272,7 @@ done
 # A subshell isolates each policy from the caller and other fixtures. Unsetting
 # a local variable can otherwise reveal the caller's exported offline policy.
 check_network_policy() (
+  # shellcheck disable=SC2030 # Each policy override is deliberately subshell-local.
   local policy="$1" ADAPTER_FETCH_TEST=true ADAPTER_REGISTRY_CHECK=true
   export ADAPTER_FETCH_TEST ADAPTER_REGISTRY_CHECK
   if [[ "$policy" == unset ]]; then unset CARGO_NET_OFFLINE;
@@ -819,6 +820,7 @@ receipt=".release-state/$RELEASE_VERSION.validation"
 cp "$retained/ready" cache-ready
 cp "$receipt" cache-receipt
 cp "$retained/old/Cargo.toml" Cargo.toml
+# shellcheck disable=SC2031 # This recovery case selects its policy independently.
 export ADAPTER_FETCH_TEST=true ADAPTER_FETCH_STATUS=23
 CARGO_NET_OFFLINE=false expect_failure preflight
 [[ "$(cat fetch-trace)" == "fetch --manifest-path $retained/new/Cargo.toml --locked" ]] || fail 'recovery fetched the mixed live workspace'

@@ -1,6 +1,7 @@
 //! Workload for the fixture_reuse_benchmark_driver example; not an ordinary test.
 //! See docs/fixture-reuse-benchmark.md for the workload and measurement boundaries.
 
+mod fixture_reuse_report;
 use std::{
     error::Error,
     fmt, fs, io,
@@ -11,6 +12,7 @@ use std::{
 };
 
 use candid::Principal;
+use fixture_reuse_report::{Phases, Sample, WorkerReport};
 use ic_testkit::pic::{
     BaselinePoolOutcome, BaselinePoolTimings, BaselinePreparationStage, CachedPocketIcBaseline,
     CachedPocketIcBaselinePool, CandidCallExt, CanisterRestoreReceipt, CycleResetPolicy,
@@ -171,17 +173,6 @@ impl PocketIcBaselineRecipe for Recipe {
     }
 }
 
-#[derive(Default, Serialize)]
-struct Phases {
-    wait_ms: f64,
-    build_ms: Option<f64>,
-    restore_ms: Option<f64>,
-    reset_ms: Option<f64>,
-    readiness_ms: Option<f64>,
-    validation_ms: Option<f64>,
-    acquisition_ms: f64,
-}
-
 impl From<BaselinePoolTimings> for Phases {
     fn from(timings: BaselinePoolTimings) -> Self {
         Self {
@@ -197,12 +188,14 @@ impl From<BaselinePoolTimings> for Phases {
 }
 
 #[derive(Serialize)]
-struct Sample {
-    iteration: usize,
-    phases: Phases,
-    body_ms: f64,
-    release_ms: f64,
-    total_ms: f64,
+struct WorkloadReport {
+    #[serde(flatten)]
+    measurements: WorkerReport,
+    server_startup_ms: f64,
+    cold_preparation: Vec<Phases>,
+    preparation_wall_ms: f64,
+    pool_teardown_ms: f64,
+    server_teardown_ms: f64,
 }
 
 fn ms(duration: Duration) -> f64 {
@@ -357,23 +350,27 @@ fn main() -> Result<()> {
     let teardown = Instant::now();
     drop(server);
     let server_teardown_ms = ms(teardown.elapsed());
-    println!(
-        "{}",
-        serde_json::json!({
-            "mode": mode,
-            "capacity": if mode == "fresh" { workers.get() } else { capacity.get() },
-            "iterations": iterations.get(),
-            "workers": workers.get(),
-            "state_bytes_per_canister": state_bytes,
-            "server_startup_ms": server_startup_ms,
-            "cold_preparation": cold,
-            "preparation_wall_ms": preparation_wall_ms,
-            "wall_ms": wall_ms,
-            "pool_teardown_ms": pool_teardown_ms,
-            "fixture_wall_ms": fixture_wall_ms,
-            "server_teardown_ms": server_teardown_ms,
-            "samples": samples,
-        })
-    );
+    let report = WorkloadReport {
+        measurements: WorkerReport {
+            mode: mode.into(),
+            capacity: if mode == "fresh" {
+                workers.get()
+            } else {
+                capacity.get()
+            },
+            iterations: iterations.get(),
+            workers: workers.get(),
+            state_bytes_per_canister: state_bytes,
+            wall_ms,
+            fixture_wall_ms,
+            samples,
+        },
+        server_startup_ms,
+        cold_preparation: cold,
+        preparation_wall_ms,
+        pool_teardown_ms,
+        server_teardown_ms,
+    };
+    println!("{}", serde_json::to_string(&report)?);
     Ok(())
 }

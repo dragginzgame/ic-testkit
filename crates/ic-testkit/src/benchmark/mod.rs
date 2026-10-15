@@ -1142,9 +1142,7 @@ fn benchmark_summary_markdown(report: &BenchmarkRunReport) -> io::Result<String>
 }
 
 fn metadata_json(metadata: &BenchmarkRunMetadata) -> String {
-    let value = serde_json::to_value(metadata).expect("metadata JSON must serialize");
-
-    let mut output = serde_json::to_string_pretty(&value).expect("metadata JSON must serialize");
+    let mut output = serde_json::to_string_pretty(metadata).expect("metadata JSON must serialize");
     output.push('\n');
     output
 }

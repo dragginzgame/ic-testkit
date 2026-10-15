@@ -133,6 +133,7 @@ publish-guards-check:
 	bash scripts/ci/check-publish-guards.sh
 
 release-guards-check:
+	perl scripts/ci/test-local-lock-versions.pl
 	bash scripts/ci/check-release-guards.sh
 
 package:

@@ -103,7 +103,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.41"
+ic-testkit = "0.43"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -181,7 +181,6 @@ restored or validated.
 | Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline` | Ordered transactional capture, explicit restore funding, scoped caching |
 | Fixture pools | `CachedPocketIcBaselinePool`, `StandaloneCanisterRecipe` | One bounded lifecycle for single- and multi-canister recipes |
 | Diagnostics | `PocketIcDiagnosticsExt` | Controller-aware structured status and bounded log reporting |
-| Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
 | Readiness progression | `tick_until` | Bounded advance/tick rounds with a caller-owned predicate |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
@@ -835,13 +834,13 @@ panics are captured per operation, and install-failure diagnostics remain
 wrapped so a dead instance or failed renderer cannot replace the original
 install error.
 
-`PocketIcTimeExt` intentionally contains one convenience:
+Read nanoseconds since the Unix epoch directly from PocketIC:
 
 ```rust,no_run
-use ic_testkit::pic::{PocketIc, PocketIcTimeExt};
+use ic_testkit::pic::PocketIc;
 
 let pocket_ic = PocketIc::new();
-let now_ns = pocket_ic.current_time_nanos();
+let now_ns = pocket_ic.get_time().as_nanos_since_unix_epoch();
 ```
 
 Use PocketIC's inherent `get_time`, `set_time`, `set_certified_time`,
