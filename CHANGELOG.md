@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   compiler-floor, package and family-publication checks. Publication retries skip
   every already-published package while preserving registry uncertainty refusal.
 
+[Integration details](crates/ic-testkit/CHANGELOG.md#0461)
+
 ## [0.46.0] - 2026-10-15
 
 ### Breaking
