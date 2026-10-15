@@ -35,6 +35,7 @@ ic-host-process = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 ic-build = { workspace = true }
+ic-host-text = { workspace = true }
 
 [lints]
 workspace = true

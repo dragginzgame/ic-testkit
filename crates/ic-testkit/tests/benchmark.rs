@@ -854,10 +854,8 @@ ICTK|app/myfunc/something:end|174776119|1|5447148|2
     assert!(metadata.contains("\"run_directory_name\": \"2026-05-24T162600Z-a1b2c3d-0001\""));
     let read_metadata =
         read_benchmark_run_metadata(root.join("metadata.json")).expect("round-trip metadata");
-    assert_eq!(
-        read_metadata.benchmark_command.as_deref(),
-        Some("make \"test\"\nagain")
-    );
+    assert_eq!(read_metadata, report.metadata);
+    assert!(metadata.ends_with('\n'));
 
     fs::remove_dir_all(root).expect("clean temp dir");
 }

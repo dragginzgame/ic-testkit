@@ -8,12 +8,9 @@ use std::{
     fs,
     path::PathBuf,
     process::{Child, Command, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
 };
-
-static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct Fixture(tempfile::TempDir);
 impl Fixture {
@@ -384,12 +381,11 @@ fn managed_idle_ttl_allows_preclient_work_beyond_server_default() {
         .join("../..")
         .canonicalize()
         .unwrap();
-    let evidence = workspace.join("target").join(format!(
-        "idle-lifetime-{}-{}",
-        std::process::id(),
-        SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir(&evidence).unwrap();
+    let evidence = tempfile::Builder::new()
+        .prefix("idle-lifetime-")
+        .tempdir_in(workspace.join("target"))
+        .unwrap()
+        .keep();
     eprintln!("Idle lifetime evidence retained at {}", evidence.display());
     let output = Command::new(env!("CARGO_BIN_EXE_ic-testkit-server"))
         .current_dir(workspace)
