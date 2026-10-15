@@ -9,7 +9,9 @@ use std::{cell::Cell, rc::Rc};
 /// Safe and unsafe read attempts share read totals; unsafe reads are also
 /// counted separately. Writes count attempts before delegation. Growth counts
 /// completed calls, with requested pages counted only when growth succeeds.
-/// Size queries do not count as IO. Counters saturate at u64::MAX.
+/// Size queries do not count as IO. Counters saturate at u64::MAX and set a
+/// sticky overflow flag on actual overflow. Measurement callers must reject
+/// overflowed counts rather than reporting clipped values as exact totals.
 ///
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -30,6 +32,8 @@ pub struct MemoryIoCounts {
     pub grows: u64,
     /// Requested pages of successful growth calls.
     pub grown_pages: u64,
+    /// At least one counter overflowed since the last reset.
+    pub overflowed: bool,
 }
 
 ///
@@ -75,11 +79,15 @@ impl<M: Memory> MeteredMemory<M> {
 
     fn record_read(&self, bytes: usize, unsafe_read: bool) {
         let mut counts = self.counts.get();
-        counts.reads = counts.reads.saturating_add(1);
-        counts.read_bytes = counts.read_bytes.saturating_add(bytes as u64);
+        add_count(&mut counts.reads, 1, &mut counts.overflowed);
+        add_count(&mut counts.read_bytes, bytes as u64, &mut counts.overflowed);
         if unsafe_read {
-            counts.unsafe_reads = counts.unsafe_reads.saturating_add(1);
-            counts.unsafe_read_bytes = counts.unsafe_read_bytes.saturating_add(bytes as u64);
+            add_count(&mut counts.unsafe_reads, 1, &mut counts.overflowed);
+            add_count(
+                &mut counts.unsafe_read_bytes,
+                bytes as u64,
+                &mut counts.overflowed,
+            );
         }
         self.counts.set(counts);
     }
@@ -108,9 +116,9 @@ impl<M: Memory> Memory for MeteredMemory<M> {
     fn grow(&self, pages: u64) -> i64 {
         let result = self.memory.grow(pages);
         let mut counts = self.counts.get();
-        counts.grows = counts.grows.saturating_add(1);
+        add_count(&mut counts.grows, 1, &mut counts.overflowed);
         if result >= 0 {
-            counts.grown_pages = counts.grown_pages.saturating_add(pages);
+            add_count(&mut counts.grown_pages, pages, &mut counts.overflowed);
         }
         self.counts.set(counts);
         result
@@ -129,11 +137,21 @@ impl<M: Memory> Memory for MeteredMemory<M> {
 
     fn write(&self, offset: u64, src: &[u8]) {
         let mut counts = self.counts.get();
-        counts.writes = counts.writes.saturating_add(1);
-        counts.write_bytes = counts.write_bytes.saturating_add(src.len() as u64);
+        add_count(&mut counts.writes, 1, &mut counts.overflowed);
+        add_count(
+            &mut counts.write_bytes,
+            src.len() as u64,
+            &mut counts.overflowed,
+        );
         self.counts.set(counts);
         self.memory.write(offset, src);
     }
+}
+
+const fn add_count(value: &mut u64, increment: u64, overflowed: &mut bool) {
+    let (sum, overflow) = value.overflowing_add(increment);
+    *value = if overflow { u64::MAX } else { sum };
+    *overflowed |= overflow;
 }
 
 #[cfg(test)]

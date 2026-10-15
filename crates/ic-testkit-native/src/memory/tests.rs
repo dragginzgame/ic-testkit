@@ -75,3 +75,121 @@ fn specialized_unsafe_reads_and_refused_growth_preserve_backing_contracts() {
         }
     );
 }
+
+#[test]
+fn actual_counter_overflow_is_sticky_until_shared_reset() {
+    for (index, counts) in [
+        MemoryIoCounts {
+            reads: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            read_bytes: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            unsafe_reads: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            unsafe_read_bytes: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            writes: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            write_bytes: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            grows: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+        MemoryIoCounts {
+            grown_pages: u64::MAX,
+            ..MemoryIoCounts::default()
+        },
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let memory = MeteredMemory::<VectorMemory>::default();
+        memory.grow(1);
+        memory.write(0, b"X");
+        memory.counts.set(counts);
+        let alias = memory.clone();
+        let mut byte = [0];
+        match index {
+            0 | 1 => memory.read(0, &mut byte),
+            2 | 3 => {
+                // SAFETY: The local byte is writable and disjoint from backing.
+                unsafe { memory.read_unsafe(0, byte.as_mut_ptr(), 1) };
+            }
+            4 | 5 => memory.write(0, b"X"),
+            6 => {
+                memory.grow(0);
+            }
+            7 => {
+                memory.grow(1);
+            }
+            _ => unreachable!(),
+        }
+        let counts = alias.counts();
+        assert!(counts.overflowed, "counter {index}");
+        assert_eq!(
+            [
+                counts.reads,
+                counts.read_bytes,
+                counts.unsafe_reads,
+                counts.unsafe_read_bytes,
+                counts.writes,
+                counts.write_bytes,
+                counts.grows,
+                counts.grown_pages,
+            ][index],
+            u64::MAX
+        );
+        memory.read(0, &mut []);
+        assert!(alias.counts().overflowed);
+        alias.reset();
+        assert_eq!(memory.counts(), MemoryIoCounts::default());
+        memory.backing().read(0, &mut byte);
+        assert_eq!(byte, *b"X");
+        assert_eq!(memory.counts(), MemoryIoCounts::default());
+    }
+}
+
+#[test]
+fn zero_deltas_at_counter_limit_do_not_signal_overflow() {
+    let memory = MeteredMemory::<VectorMemory>::default();
+    memory.grow(1);
+    memory.counts.set(MemoryIoCounts {
+        read_bytes: u64::MAX,
+        unsafe_read_bytes: u64::MAX,
+        write_bytes: u64::MAX,
+        grown_pages: u64::MAX,
+        ..MemoryIoCounts::default()
+    });
+    memory.read(0, &mut []);
+    let mut bytes = [];
+    // SAFETY: An empty slice supplies a valid disjoint zero-length destination.
+    unsafe { memory.read_unsafe(0, bytes.as_mut_ptr(), 0) };
+    memory.write(0, &[]);
+    assert_eq!(memory.grow(0), 1);
+    assert_eq!(
+        memory.counts(),
+        MemoryIoCounts {
+            reads: 2,
+            read_bytes: u64::MAX,
+            unsafe_reads: 1,
+            unsafe_read_bytes: u64::MAX,
+            writes: 1,
+            write_bytes: u64::MAX,
+            grows: 1,
+            grown_pages: u64::MAX,
+            overflowed: false,
+        }
+    );
+}

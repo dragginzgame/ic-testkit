@@ -10,8 +10,9 @@ repository checkout. The complete historical changelog remains at
 
 ## [0.41.1]
 
-- Add opt-in stable-memory IO counters with shared clone/reset observation and
-  specialized unsafe reads. Caller workloads and failure injection stay local
+- Add opt-in stable-memory IO counters with shared clone/reset observation,
+  specialized unsafe reads and sticky overflow reporting. Callers must reject
+  overflowed measurements; workloads and failure injection stay local
   ([#95 — Own native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95)).
 
 ### Added

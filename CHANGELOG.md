@@ -11,7 +11,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - Add opt-in stable-memory IO counters with shared clone/reset observation,
-  specialized unsafe reads and caller-owned backings; no PocketIC graph is added
+  specialized unsafe reads, sticky overflow reporting and caller-owned backings;
+  callers must reject overflowed measurements. No PocketIC graph is added
   ([#95 — Own native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95)).
 
 - Add the default-feature dependency-free `ic-testkit-native` package for scoped native allocation

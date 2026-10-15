@@ -22,4 +22,7 @@ window without clearing memory. `counts()` reports read/write attempts and
 completed growth calls, counting requested growth pages only on success.
 Unsafe reads preserve specialized backing IO and have separate counters as well
 as contributing to read totals. Direct `backing()` inspection does not count IO.
-Counters saturate; workloads and refusal injection remain with the caller.
+Counters saturate and set `overflowed` only on actual overflow; adding zero to a
+counter at its limit does not signal overflow. The flag stays set until shared
+reset. Reporting callers must reject overflowed measurements. Workloads and
+refusal injection remain with the caller.
