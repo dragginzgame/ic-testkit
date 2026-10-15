@@ -137,3 +137,15 @@ For 0.39, invoke Candid extensions on `fixture.pocket_ic()` with
 `fixture.canister_id()` explicitly; the standalone fixture owns installation
 and lifetime, while `CandidCallExt` owns encoding, invocation and decoding.
 See the [packaged migration notes](CHANGELOG.md#0390).
+
+### Small HTTP transport fixtures
+
+`testing::http::HttpFixture` serves one HTTP 200 response on an explicitly
+returned IPv4 loopback endpoint. Supply response bytes, a Content-Type and
+`HttpFixtureLimits` with the total deadline, header budget and body budget.
+The deadline starts at fixture construction and covers waiting for a client,
+request admission and writing the complete response. `finish()` joins the worker
+and returns the unmodified raw request, including headers. Dropping an unfinished
+fixture shuts down an active socket and joins its worker. The caller owns client
+timeouts, Candid/CBOR encoding and assertions; no PocketIC server is provisioned.
+Use a caller-owned server for multi-request sequencing or malformed HTTP responses.

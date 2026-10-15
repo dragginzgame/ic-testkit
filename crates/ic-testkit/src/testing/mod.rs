@@ -1,5 +1,7 @@
 //! Small native helpers for synthetic transport tests.
 
+pub mod http;
+
 use std::{
     io::{self, Read as _},
     net::TcpStream,
