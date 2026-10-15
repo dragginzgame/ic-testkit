@@ -14,7 +14,7 @@ if [[ "${CARGO_NET_OFFLINE:-false}" == true || "${CARGO_NET_OFFLINE:-false}" == 
   echo 'publication admission requires registry HTTP access; offline policy is preserved' >&2
   exit 2
 fi
-for package in ic-testkit-candid ic-testkit; do
+for package in ic-testkit-candid ic-testkit ic-testkit-native; do
   status=0
   bash "$release_dir/../ci/check-crates-io-version.sh" "$package" "$version" || status=$?
   case "$status" in

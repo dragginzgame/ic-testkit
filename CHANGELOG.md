@@ -6,6 +6,19 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.46.1]
+
+### Added
+
+- Add the dependency-free `ic-testkit-native` package for native allocation
+  measurement. Callers retain workloads, reports and exact assertions.
+  [#86 — Own lightweight native allocation measurement](https://github.com/dragginzgame/ic-testkit/issues/86).
+- Include the independent native package in existing test, lint, documentation,
+  compiler-floor, package and family-publication checks. Publication retries skip
+  every already-published package while preserving registry uncertainty refusal.
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0461)
+
 ## [0.46.0] - 2026-10-15
 
 ### Breaking

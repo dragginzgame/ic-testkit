@@ -2,6 +2,7 @@
 members = [
     "crates/ic-testkit",
     "crates/ic-testkit-candid",
+    "crates/ic-testkit-native",
     "crates/ic_testkit_perf_probe",
 ]
 resolver = "2"
