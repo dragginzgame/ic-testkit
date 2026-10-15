@@ -110,10 +110,10 @@ git-hooks-check: format-tools-check
 
 .PHONY: native-measurement-check
 native-measurement-check:
-	+cargo test -p ic-testkit-native --locked
-	+cargo clippy -p ic-testkit-native --all-targets --locked -- -D warnings
-	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit-native --locked --no-deps
-	+cargo check -p ic-testkit-native --all-targets --locked --target wasm32-unknown-unknown
+	+cargo test -p ic-testkit-native --all-features --locked
+	+cargo clippy -p ic-testkit-native --all-targets --all-features --locked -- -D warnings
+	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit-native --all-features --locked --no-deps
+	+cargo check -p ic-testkit-native --all-targets --all-features --locked --target wasm32-unknown-unknown
 
 check:
 	+cargo check -p ic-testkit -p ic-testkit-candid --locked
@@ -130,8 +130,8 @@ docs-check:
 msrv:
 	rustc +$(MSRV) --version
 	cargo +$(MSRV) --version
-	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --locked
-	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --locked --target wasm32-unknown-unknown
+	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --all-features --locked
+	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --all-features --locked --target wasm32-unknown-unknown
 	+cargo +$(MSRV) check -p ic-testkit-candid --all-targets --locked
 	+cargo +$(MSRV) check -p ic-testkit-candid --all-targets --locked --target wasm32-unknown-unknown
 	+cargo +$(MSRV) check -p ic-testkit --locked

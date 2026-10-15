@@ -29,6 +29,7 @@ ic-host-fs = "0.19"
 ic-host-process = "0.19"
 ic-host-text = { version = "0.19", default-features = false }
 ic-metrics = "0.10"
+ic-stable-structures = "0.7.2"
 ic-testkit = { path = "crates/ic-testkit" }
 libc = "0.2"
 pocket-ic = "16.1"

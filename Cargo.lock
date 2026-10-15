@@ -902,6 +902,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c420eeed28236735e3dc6c88baf25b27d5a9357555f75248556b0117476f9ac"
 
 [[package]]
+name = "ic-stable-structures"
+version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ee3372ddc0cf2a747fc26ce2d075a240ed6bfab151e63bc70109e8967f7ce6f"
+dependencies = [
+ "ic_principal",
+]
+
+[[package]]
 name = "ic-testkit"
 version = "0.46.0"
 dependencies = [
@@ -969,6 +978,9 @@ dependencies = [
 [[package]]
 name = "ic-testkit-native"
 version = "0.46.0"
+dependencies = [
+ "ic-stable-structures",
+]
 
 [[package]]
 name = "ic_testkit_perf_probe"

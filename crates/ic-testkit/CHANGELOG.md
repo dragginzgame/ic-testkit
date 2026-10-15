@@ -12,7 +12,12 @@ repository checkout. The complete historical changelog remains at
 
 ### Added
 
-- Add the dependency-free `ic-testkit-native` package for native allocation
+- Add opt-in stable-memory IO counters with shared clone/reset observation,
+  specialized unsafe reads and sticky overflow reporting. Callers must reject
+  overflowed measurements; workloads and failure injection stay local.
+  [#95 — Own opt-in native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95).
+
+- Add the default-feature dependency-free `ic-testkit-native` package for native allocation
   measurement. Callers retain workloads, reports and exact assertions.
   [#86 — Own lightweight native allocation measurement](https://github.com/dragginzgame/ic-testkit/issues/86).
 - Include the independent native package in existing test, lint, documentation,
