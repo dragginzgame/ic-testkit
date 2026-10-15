@@ -1,3 +1,5 @@
+#![cfg(target_arch = "wasm32")]
+
 use ic_cdk::{query, update};
 use ic_testkit::performance::Performance;
 use std::cell::RefCell;

@@ -240,6 +240,8 @@ jobs:
         env:
           TMPDIR: ${{ runner.temp }}/ic-testkit-portable-fixtures
         run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh verify-upload "$RUNNER_TEMP/ic-testkit-archive-downloaded"
+      - name: Check standalone Candid reply decoding
+        run: cargo test -p ic-testkit-candid --locked --offline
       - name: Check native fixture benchmark driver and sampler
         run: cargo test -p ic-testkit --locked --offline --example fixture_reuse_benchmark_driver
       - name: Archive failed portable and installer evidence

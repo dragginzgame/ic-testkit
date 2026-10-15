@@ -50,6 +50,8 @@ new_fixture() {
     git checkout-index --all
     # Project the reviewed adoption, including files not yet committed locally.
     for path in Makefile make/consumer.mk make/tools.mk make/release.mk make/rust-format.mk make/execution.mk Cargo.toml crates/ic-testkit/Cargo.toml \
+        crates/ic-testkit-candid/Cargo.toml crates/ic-testkit-candid/src/lib.rs \
+        crates/ic-testkit-candid/src/tests.rs crates/ic-testkit-candid/README.md \
         crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs ci/tool-versions.env \
         scripts/ci/check-format-tools.sh scripts/ci/check-make-execution.sh scripts/ci/run-formatting.sh .githooks/pre-commit \
         scripts/dev/install-git-hooks.sh; do

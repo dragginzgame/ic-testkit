@@ -28,20 +28,19 @@ use ic_build::artifacts::{
     WasmBuildError, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
     workspace_root_for,
 };
-use ic_host_text::table::{self, Alignment};
-use ic_testkit::{
-    ic_host_artifacts::artifact::ArtifactError,
-    ic_host_fs::{
-        durable::{NamedWriteError, PublicationMode, WriteOptions, write_at_validated_with},
-        read::{hash_file, read_opened_file},
-    },
-    ic_host_process::{
-        sampling,
-        tool::{ResolutionError, resolve_executable},
-    },
+use ic_host_artifacts::artifact::ArtifactError;
+use ic_host_fs::{
+    durable::{NamedWriteError, PublicationMode, WriteOptions, write_at_validated_with},
+    read::{hash_file, read_opened_file},
 };
+use ic_host_process::{
+    sampling,
+    tool::{ResolutionError, resolve_executable},
+};
+use ic_host_text::table::{self, Alignment};
 use serde_json::{Map, Value, json};
 
+use crate::fixture_reuse_protocol::{Mode, WorkerArguments};
 use arguments::{HELP, Options, parse_arguments};
 use report::{MeasuredRun, Summary, summarize};
 
@@ -514,7 +513,7 @@ fn provenance(
         "rss_sample_interval_ms": SAMPLE_INTERVAL.as_millis(), "rss_sampler": sampling::source(),
         "iterations": options.iterations.get(), "workers": options.workers.get(), "repeats": options.repeats.get(),
         "state_bytes_per_canister": options.state_bytes, "modes": options.modes.iter().map(|mode| mode.as_str()).collect::<Vec<_>>(),
-        "pool_capacities": if options.modes.contains(&arguments::Mode::Pooled) { options.capacities.iter().map(|capacity| capacity.get()).collect::<Vec<_>>() } else { vec![] },
+        "pool_capacities": if options.modes.contains(&Mode::Pooled) { options.capacities.iter().map(|capacity| capacity.get()).collect::<Vec<_>>() } else { vec![] },
     }))
 }
 
@@ -545,17 +544,18 @@ pub fn run() -> Result<(), Error> {
         {
             check_interrupted()?;
             eprintln!("Run {}/{}: {}", repeat + 1, options.repeats, case.label);
+            let invocation = WorkerArguments {
+                mode: case.mode,
+                capacity: case.capacity,
+                iterations: options.iterations,
+                workers: options.workers,
+                state_bytes: options.state_bytes,
+                wasm: inputs.wasm.record().artifacts()[0].clone(),
+                server: inputs.server.clone(),
+            };
             let captured = measure(
                 Command::new(&inputs.worker)
-                    .args([
-                        case.mode.as_str().to_owned(),
-                        case.capacity.to_string(),
-                        options.iterations.to_string(),
-                        options.workers.to_string(),
-                        options.state_bytes.to_string(),
-                    ])
-                    .arg(&inputs.wasm.record().artifacts()[0])
-                    .arg(&inputs.server)
+                    .args(<[OsString; 7]>::from(invocation))
                     .current_dir(&inputs.root),
             )?;
             let measured = MeasuredRun::from_worker(captured.raw, &options, case, captured.rss)?;
@@ -1007,7 +1007,7 @@ esac
         assert!(matches!(
             result,
             Err(Error::Artifact(
-                ic_testkit::ic_host_artifacts::artifact::ArtifactError::LimitExceeded { .. }
+                ic_host_artifacts::artifact::ArtifactError::LimitExceeded { .. }
             ))
         ));
         assert_eq!(fs::metadata(input).unwrap().len(), REPORT_LIMIT + 1);

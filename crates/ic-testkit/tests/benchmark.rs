@@ -1,14 +1,16 @@
 mod support;
 
+use ic_testkit::benchmark::report::{
+    benchmark_run_directory_name, find_latest_previous_run, next_benchmark_run_directory,
+    read_benchmark_run_metadata, write_benchmark_report_dir,
+};
 use ic_testkit::benchmark::{
     BenchmarkAggregateReport, BenchmarkCounter, BenchmarkCounters, BenchmarkEventKind,
     BenchmarkEventSource, BenchmarkParseReport, BenchmarkParserConfig, BenchmarkRunMetadata,
     BenchmarkRunReport, BenchmarkScope, BenchmarkSpanReport, DEFAULT_PREFIX, SuiteDerivation,
-    UnpairedBenchmarkMarkerKind, aggregate_benchmark_spans, benchmark_run_directory_name,
-    compare_benchmark_aggregates, find_latest_previous_run, format_marker,
-    next_benchmark_run_directory, pair_benchmark_spans, parse_benchmark_events,
+    UnpairedBenchmarkMarkerKind, aggregate_benchmark_spans, compare_benchmark_aggregates,
+    format_marker, pair_benchmark_spans, parse_benchmark_events,
     parse_benchmark_events_from_captured_output, parse_benchmark_events_from_source,
-    read_benchmark_run_metadata, write_benchmark_report_dir,
 };
 use serde_json::{Value, json};
 use std::{fmt::Write as _, fs};

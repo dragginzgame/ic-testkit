@@ -371,10 +371,11 @@ fn install_errors_fixtures_and_baselines_retain_the_owned_server() {
     assert_eq!(owned.server.as_ref().unwrap().process_id(), pid);
     assert!(process_state(pid).is_some());
 
-    let fixture = StandaloneCanisterFixture::install(
+    let fixture = StandaloneCanisterFixture::try_install(
         owned,
         InstallSpec::new(b"\0asm\x01\0\0\0".to_vec(), vec![], 5_000_000_000_000),
-    );
+    )
+    .expect("install standalone fixture");
     let (owned, canister) = fixture.into_parts();
     assert_eq!(owned.server.as_ref().unwrap().process_id(), pid);
     let baseline = CachedPocketIcBaseline::capture(

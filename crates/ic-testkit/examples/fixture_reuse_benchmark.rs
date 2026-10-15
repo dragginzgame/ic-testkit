@@ -1,7 +1,9 @@
 //! Workload for the fixture_reuse_benchmark_driver example; not an ordinary test.
 //! See docs/fixture-reuse-benchmark.md for the workload and measurement boundaries.
 
+mod fixture_reuse_protocol;
 mod fixture_reuse_report;
+use fixture_reuse_protocol::{Mode, WorkerArguments};
 use std::{
     error::Error,
     fmt, fs, io,
@@ -261,7 +263,7 @@ fn pooled_sample(
 fn run_tasks(
     pool: &CachedPocketIcBaselinePool<Recipe>,
     recipe: &Recipe,
-    mode: &str,
+    mode: Mode,
     iterations: NonZeroUsize,
     workers: NonZeroUsize,
 ) -> Result<(Vec<Sample>, f64)> {
@@ -275,7 +277,7 @@ fn run_tasks(
                     (worker..iterations.get())
                         .step_by(workers.get())
                         .map(|iteration| {
-                            if mode == "fresh" {
+                            if mode == Mode::Fresh {
                                 fresh_sample(recipe, iteration)
                             } else {
                                 pooled_sample(pool, recipe, iteration)
@@ -300,36 +302,30 @@ fn run_tasks(
 }
 
 fn main() -> Result<()> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args.len() != 7 {
-        return Err(io::Error::other(
-            "usage: fixture_reuse_benchmark MODE CAPACITY ITERATIONS WORKERS STATE_BYTES WASM SERVER",
-        )
-        .into());
-    }
-    let mode = &args[0];
-    let capacity: NonZeroUsize = args[1].parse()?;
-    let iterations: NonZeroUsize = args[2].parse()?;
-    let workers: NonZeroUsize = args[3].parse()?;
-    let state_bytes = args[4].parse()?;
-    if !matches!(mode.as_str(), "fresh" | "pooled") || workers.get() > iterations.get() {
-        return Err(io::Error::other("invalid mode or workers exceeds iterations").into());
-    }
+    let WorkerArguments {
+        mode,
+        capacity,
+        iterations,
+        workers,
+        state_bytes,
+        wasm,
+        server,
+    } = WorkerArguments::try_from(std::env::args_os().skip(1).collect::<Vec<_>>())?;
     let startup = Instant::now();
-    let server = PocketIcStartupConfig::spawn(&args[6], TIMEOUT).start_managed_server()?;
+    let server = PocketIcStartupConfig::spawn(&server, TIMEOUT).start_managed_server()?;
     let server_startup_ms = ms(startup.elapsed());
     let recipe = Recipe {
         id: FixtureRecipeId::try_new("benchmark/two-stateful-canisters/v1")?,
         requirements: ResetRequirements::try_new(CycleResetPolicy::PreserveCurrent, [])?,
         server_url: server.url().to_owned(),
-        wasm: fs::read(&args[5])?.into(),
+        wasm: fs::read(&wasm)?.into(),
         state_bytes,
     };
     let pool = CachedPocketIcBaselinePool::new(capacity, recipe.clone());
     let fixture_started = Instant::now();
     let preparation = Instant::now();
     let mut cold = Vec::new();
-    if mode == "pooled" {
+    if mode == Mode::Pooled {
         // Hold every lease until all slots exist; do not accidentally measure
         // an initial cold build as a warm acquisition.
         let mut held = Vec::new();
@@ -357,8 +353,8 @@ fn main() -> Result<()> {
     let server_teardown_ms = ms(teardown.elapsed());
     let report = WorkloadReport {
         measurements: WorkerReport {
-            mode: mode.into(),
-            capacity: if mode == "fresh" {
+            mode: mode.as_str().into(),
+            capacity: if mode == Mode::Fresh {
                 workers.get()
             } else {
                 capacity.get()

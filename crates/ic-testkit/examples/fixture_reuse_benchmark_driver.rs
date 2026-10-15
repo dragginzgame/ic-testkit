@@ -2,6 +2,7 @@
 //! Builds and measures the existing workload; library APIs own no benchmark policy.
 
 mod fixture_reuse_driver;
+mod fixture_reuse_protocol;
 mod fixture_reuse_report;
 
 use std::process::ExitCode;

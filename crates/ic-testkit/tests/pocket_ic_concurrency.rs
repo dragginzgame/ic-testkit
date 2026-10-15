@@ -1,6 +1,7 @@
 mod support;
 
 use std::{
+    io,
     num::NonZeroUsize,
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
@@ -24,8 +25,9 @@ const READY_TIMEOUT: Duration = Duration::from_secs(60);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
 
-type SingleCanisterPool =
-    CachedPocketIcBaselinePool<StandaloneCanisterRecipe<fn() -> StandaloneCanisterFixture>>;
+type SingleCanisterPool = CachedPocketIcBaselinePool<
+    StandaloneCanisterRecipe<fn() -> io::Result<StandaloneCanisterFixture>>,
+>;
 
 static STANDALONE_RESTORE_POOL: LazyLock<SingleCanisterPool> = LazyLock::new(|| {
     single_canister_pool(
@@ -51,7 +53,7 @@ fn single_canister_pool<B>(
     build: B,
 ) -> CachedPocketIcBaselinePool<StandaloneCanisterRecipe<B>>
 where
-    B: Fn() -> StandaloneCanisterFixture + Send + Sync + 'static,
+    B: Fn() -> io::Result<StandaloneCanisterFixture> + Send + Sync + 'static,
 {
     CachedPocketIcBaselinePool::new(
         capacity,
@@ -123,10 +125,11 @@ fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
                 .with_ii_subnet(),
         )
         .expect("build explicitly configured custom topology");
-    let fixture = StandaloneCanisterFixture::install(
+    let fixture = StandaloneCanisterFixture::try_install(
         caller_built,
         InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
-    );
+    )
+    .expect("install standalone fixture");
     let (owned, canister_id) = fixture.into_parts();
     let pocket_ic = &owned.instance;
 
@@ -461,12 +464,13 @@ fn standalone_dead_transport_preserves_failed_recovery_and_can_build_again() {
     let builder_count = Arc::clone(&builds);
     let pool = single_canister_pool(NonZeroUsize::new(1).unwrap(), move || {
         match builder_count.fetch_add(1, Ordering::SeqCst) {
-            0 => StandaloneCanisterFixture::install(
+            0 => StandaloneCanisterFixture::try_install(
                 PocketIcStartupConfig::connect(&url, READY_TIMEOUT)
                     .build_instance(PocketIcBuilder::new().with_application_subnet())
                     .unwrap(),
                 InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
-            ),
+            )
+            .map_err(io::Error::other),
             1 => build_deleted_standalone_fixture(),
             _ => build_empty_standalone_fixture(),
         }
@@ -504,20 +508,21 @@ fn standalone_dead_transport_preserves_failed_recovery_and_can_build_again() {
     drop(fixture);
 }
 
-fn build_empty_standalone_fixture() -> StandaloneCanisterFixture {
-    StandaloneCanisterFixture::install(
+fn build_empty_standalone_fixture() -> io::Result<StandaloneCanisterFixture> {
+    StandaloneCanisterFixture::try_install(
         support::pocket_ic(),
         InstallSpec::new(EMPTY_WASM.to_vec(), vec![], 0),
     )
+    .map_err(io::Error::other)
 }
 
-fn build_counted_empty_standalone_fixture() -> StandaloneCanisterFixture {
+fn build_counted_empty_standalone_fixture() -> io::Result<StandaloneCanisterFixture> {
     STANDALONE_PANIC_BUILDS.fetch_add(1, Ordering::SeqCst);
     build_empty_standalone_fixture()
 }
 
-fn build_deleted_standalone_fixture() -> StandaloneCanisterFixture {
-    let fixture = build_empty_standalone_fixture();
+fn build_deleted_standalone_fixture() -> io::Result<StandaloneCanisterFixture> {
+    let fixture = build_empty_standalone_fixture()?;
     fixture
         .pocket_ic()
         .stop_canister(fixture.canister_id(), None)
@@ -526,7 +531,7 @@ fn build_deleted_standalone_fixture() -> StandaloneCanisterFixture {
         .pocket_ic()
         .delete_canister(fixture.canister_id(), None)
         .expect("delete fixture canister before snapshot capture");
-    fixture
+    Ok(fixture)
 }
 
 fn assert_two_instances_overlap<F>(build: F)

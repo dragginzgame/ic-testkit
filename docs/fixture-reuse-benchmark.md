@@ -71,6 +71,9 @@ Worker stdout is captured in an explicitly private temporary file held through
 worker completion and bounded reading, without a named scratch directory.
 Each worker report is bounded to 16 MiB and checked against the requested
 mode, capacity, task count, worker count, state size and phase measurements.
+The worker and driver share the typed invocation and mode contract, preserving
+native path bytes. The worker validates its invocation before starting the server;
+the driver independently checks the returned workload and measurements.
 The worker and driver share the typed report fields; optional phase timings
 remain explicit JSON nulls. The driver borrows the JSON when decoding and retains
 extra worker fields in the raw report. Human-readable columns use IC Host Text's

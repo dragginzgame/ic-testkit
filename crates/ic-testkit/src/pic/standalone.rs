@@ -15,17 +15,6 @@ pub struct StandaloneCanisterFixture {
 impl StandaloneCanisterFixture {
     /// Install one canister into a caller-configured PocketIC instance.
     ///
-    /// # Panics
-    ///
-    /// Panics with the contextual install error when installation fails.
-    #[must_use]
-    pub fn install(instance: PocketIcInstance<PocketIc>, spec: InstallSpec) -> Self {
-        Self::try_install(instance, spec)
-            .unwrap_or_else(|err| panic!("failed to install standalone canister fixture: {err}"))
-    }
-
-    /// Fallible counterpart to [`install`](Self::install).
-    ///
     /// On failure, the error retains both the caller's instance/server ownership record and
     /// the structured install failure.
     pub fn try_install(

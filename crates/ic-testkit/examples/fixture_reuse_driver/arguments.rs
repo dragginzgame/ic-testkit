@@ -3,6 +3,7 @@
 use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
 
 use super::Error;
+use crate::fixture_reuse_protocol::Mode;
 
 pub(super) const HELP: &str = "Fixture reuse benchmark (Linux/macOS)
 Required: --server PATH (exact PocketIC 16 binary)
@@ -17,21 +18,6 @@ Options:
   --output PATH        Save provenance, raw runs, and summaries as JSON
   --help               Show this help
 Builds use the selected lockfile and prepared offline caches; no server download.";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Mode {
-    Fresh,
-    Pooled,
-}
-
-impl Mode {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Fresh => "fresh",
-            Self::Pooled => "pooled",
-        }
-    }
-}
 
 pub(super) struct Options {
     pub(super) server: PathBuf,
@@ -90,13 +76,9 @@ fn positive(value: &OsString) -> Result<NonZeroUsize, Error> {
 fn parse_modes(values: &[OsString]) -> Result<Vec<Mode>, Error> {
     let modes = values
         .iter()
-        .map(|value| match value.to_str() {
-            Some("fresh") => Ok(Mode::Fresh),
-            Some("pooled") => Ok(Mode::Pooled),
-            _ => Err(Error::InvalidArgument(format!(
-                "invalid mode: {}",
-                value.display()
-            ))),
+        .map(|value| {
+            Mode::parse(value)
+                .ok_or_else(|| Error::InvalidArgument(format!("invalid mode: {}", value.display())))
         })
         .collect::<Result<Vec<_>, _>>()?;
     for (index, value) in modes.iter().enumerate() {

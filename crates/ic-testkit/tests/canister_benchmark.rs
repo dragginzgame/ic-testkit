@@ -1,12 +1,12 @@
 mod support;
 use candid::Principal;
 use ic_build::artifacts::{WasmBuildSpec, build_wasm_canisters_cached, workspace_root_for};
+use ic_host_fs::read::read_file;
 use ic_testkit::{
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
-    ic_host_fs::read::read_file,
     pic::{CandidCallExt, InstallSpec, StandaloneCanisterFixture},
 };
 use support::unique_temp_directory as unique_temp_dir;
@@ -35,8 +35,11 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
         .first()
         .expect("perf probe build returns its retained Wasm");
     let wasm = read_file(wasm_path, 128 * 1024 * 1024).expect("read retained bounded Wasm");
-    let fixture =
-        StandaloneCanisterFixture::install(support::pocket_ic(), InstallSpec::new(wasm, vec![], 0));
+    let fixture = StandaloneCanisterFixture::try_install(
+        support::pocket_ic(),
+        InstallSpec::new(wasm, vec![], 0),
+    )
+    .expect("install standalone fixture");
     let result: u64 = fixture
         .pocket_ic()
         .update_candid(fixture.canister_id(), "benchmark_once", ())

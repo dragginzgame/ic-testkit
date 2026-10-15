@@ -6,7 +6,7 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.45.0]
+## [0.46.0]
 
 ### Breaking
 
@@ -14,6 +14,56 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   Native fixture callers select optional or required Content-Length framing and
   retain partial bytes with typed failure causes. The phased request-line helper
   remains available and now shares the same framing engine.
+
+## [0.45.0] - 2026-10-15
+
+### Breaking
+
+- Use fallible Candid query/update methods and choose caller-side `expect` where
+  desired; remove the four `_or_panic` convenience methods.
+- Import native benchmark directory, metadata and report-output APIs from
+  `benchmark::report`. Parsing, counters and aggregation remain portable;
+  filesystem reporting and Testkit's JSON dependency are native-only.
+- Return `std::io::Result<StandaloneCanisterFixture>` from standalone recipe
+  builders. Setup failures retain their causes and build-stage timings through
+  the existing pool error path.
+
+- Restrict `performance::Performance` and the direct IC CDK dependency to Wasm;
+  native callers emit supplied counters through `benchmark::format_marker`.
+- Use only `try_create_and_install`, `try_create_and_install_many` and
+  `StandaloneCanisterFixture::try_install`. Handle the result or choose an explicit
+  caller-side `expect`; remove the panic-only installation entry points.
+- Construct retry policies with `RetryPolicy::new(NonZeroUsize, cooldown)`;
+  `max_attempts()` returns that non-zero value. Remove `RetryPolicyError`.
+  Caller preparations: [Canic PR #572](https://github.com/dragginzgame/canic/pull/572)
+  and [Jobs PR #51](https://github.com/dragginzgame/ic-jobs/pull/51).
+- Import generic Host APIs directly from `ic-host-artifacts`, `ic-host-fs` and
+  `ic-host-process`; remove their complete re-exports through `ic_testkit`.
+  Existing Testkit signatures that expose Host-owned types retain those types.
+
+### Added
+
+- Add the independent `ic-testkit-candid` package for native/Wasm reply decoding
+  with caller-selected wire, work, type-table and header limits. Choose ordinary
+  single-result decoding or require exactly one wire argument without trailing
+  bytes. Decoder errors retain their original causes; existing PocketIC call
+  defaults are unchanged.
+  [#87 — Own a simulator-independent caller-bounded Candid reply codec](https://github.com/dragginzgame/ic-testkit/issues/87).
+
+### Changed
+
+- Share typed benchmark worker arguments and mode parsing between the driver
+  and workload, preserving native paths and independent report admission.
+- Check and package both published libraries. Publication observes each package
+  before uploading and skips completed uploads when retrying a partial release.
+
+### Fixed
+
+- Fix release-guard qualification for standalone Candid tests, retaining
+  PocketIC admission and package-specific failure ordering. Surface the failing
+  substituted recipe log when a product target unexpectedly fails.
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0450)
 
 ## [0.44.0] - 2026-10-15
 

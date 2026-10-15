@@ -58,7 +58,7 @@ pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
     CanisterInstallPhase, StandaloneCanisterInstallError,
 };
-pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
+pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy};
 pub use snapshot::{
     CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
     SnapshotCleanupFailure, SnapshotRestoreFunding,

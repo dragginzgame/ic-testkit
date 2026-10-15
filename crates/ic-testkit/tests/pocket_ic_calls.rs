@@ -1,7 +1,5 @@
 mod support;
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
-
 use candid::Principal;
 use ic_testkit::pic::{CandidCallErrorKind, CandidCallExt, ErrorCode, RejectCode};
 
@@ -51,29 +49,4 @@ fn candid_call_errors_preserve_live_pocket_ic_rejections() {
         assert_eq!(context.caller, caller);
         assert_eq!(context.method, "missing");
     }
-
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| {
-            pocket_ic.query_candid_or_panic::<(), _>(removed_canister, "missing", ());
-        }))
-        .is_err()
-    );
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| {
-            pocket_ic.update_candid_or_panic::<(), _>(removed_canister, "missing", ());
-        }))
-        .is_err()
-    );
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| {
-            pocket_ic.query_candid_as_or_panic::<(), _>(removed_canister, sender, "missing", ());
-        }))
-        .is_err()
-    );
-    assert!(
-        catch_unwind(AssertUnwindSafe(|| {
-            pocket_ic.update_candid_as_or_panic::<(), _>(removed_canister, sender, "missing", ());
-        }))
-        .is_err()
-    );
 }

@@ -1,18 +1,16 @@
 //! Explicit, release-bound provisioning. Checks and launches never download.
 
-use ic_testkit::{
-    ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, hash_gzip, verify_reader},
-    ic_host_fs::{durable, read::read_file_no_follow},
-    ic_host_process::{
-        child::OwnedChild,
-        tool::{
-            AdmittedTool, ExecutionContext, ExecutionError, ExecutionEvidence, ExecutionFailure,
-            ExecutionOperation, OutputLimit, OutputLimits, SuccessfulExit, ToolError, ToolSpec,
-            communicate_child,
-        },
+use ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, hash_gzip, verify_reader};
+use ic_host_fs::{durable, read::read_file_no_follow};
+use ic_host_process::{
+    child::OwnedChild,
+    tool::{
+        AdmittedTool, ExecutionContext, ExecutionError, ExecutionEvidence, ExecutionFailure,
+        ExecutionOperation, OutputLimit, OutputLimits, SuccessfulExit, ToolError, ToolSpec,
+        communicate_child,
     },
-    pic::POCKET_IC_SERVER_VERSION,
 };
+use ic_testkit::pic::POCKET_IC_SERVER_VERSION;
 use std::{
     error::Error,
     ffi::OsString,
@@ -209,7 +207,7 @@ pub(super) fn setup(directory: &Path) -> Result<PathBuf> {
                     || super::INTERRUPTED.load(Ordering::Relaxed) != 0,
                 )
             })
-            .and_then(ic_testkit::ic_host_process::tool::CompletedExecution::require_success);
+            .and_then(ic_host_process::tool::CompletedExecution::require_success);
         if let Some(stderr) = outcome
             .as_ref()
             .ok()
@@ -305,7 +303,7 @@ fn install(
     // and unselected until this admission succeeds; no existing bundle is replaced.
     if let Err(error) = admit(&executable, digest) {
         if let Some(evidence) = error
-            .downcast_ref::<ic_testkit::ic_host_process::tool::ToolError>()
+            .downcast_ref::<ic_host_process::tool::ToolError>()
             .and_then(|error| error.evidence())
         {
             for (name, bytes) in [
@@ -325,7 +323,7 @@ fn install(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ic_testkit::ic_host_artifacts::artifact::encode_gzip;
+    use ic_host_artifacts::artifact::encode_gzip;
     use std::os::unix::fs::{PermissionsExt as _, symlink};
     use std::sync::{Mutex, MutexGuard};
 
@@ -408,7 +406,7 @@ mod tests {
 
     #[test]
     fn offline_check_authenticates_before_decoding_and_rejects_invalid_gzip() {
-        use ic_testkit::ic_host_artifacts::artifact::{ArtifactError, GzipError};
+        use ic_host_artifacts::artifact::{ArtifactError, GzipError};
 
         let root = Fixture::new();
         let (mut asset, original) = archive(POCKET_IC_SERVER_VERSION);

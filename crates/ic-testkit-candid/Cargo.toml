@@ -1,0 +1,20 @@
+[package]
+name = "ic-testkit-candid"
+edition.workspace = true
+rust-version.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Caller-bounded Candid reply decoding without a simulator dependency"
+readme = "README.md"
+homepage.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+candid.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

@@ -14,10 +14,12 @@ if [[ "${CARGO_NET_OFFLINE:-false}" == true || "${CARGO_NET_OFFLINE:-false}" == 
   echo 'publication admission requires registry HTTP access; offline policy is preserved' >&2
   exit 2
 fi
-status=0
-bash "$release_dir/../ci/check-crates-io-version.sh" ic-testkit "$version" || status=$?
-case "$status" in
-  0) echo "ic-testkit ${version} is already published; skipping" ;;
-  1) cargo publish --locked --registry "${registry}" -p ic-testkit ;;
-  *) echo "registry observation unavailable for ic-testkit $version" >&2; exit 2 ;;
-esac
+for package in ic-testkit-candid ic-testkit; do
+  status=0
+  bash "$release_dir/../ci/check-crates-io-version.sh" "$package" "$version" || status=$?
+  case "$status" in
+    0) echo "$package ${version} is already published; skipping" ;;
+    1) cargo publish --locked --registry "${registry}" -p "$package" ;;
+    *) echo "registry observation unavailable for $package $version" >&2; exit 2 ;;
+  esac
+done

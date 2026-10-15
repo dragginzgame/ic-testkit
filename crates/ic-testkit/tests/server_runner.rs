@@ -421,9 +421,7 @@ fn managed_idle_ttl_allows_preclient_work_beyond_server_default() {
 
 #[test]
 fn interrupted_setup_terminates_downloader_descendants_and_retains_failure() {
-    use ic_testkit::ic_host_process::tool::{
-        ExecutionError, ExecutionEvidence, ExecutionFailure, ToolError,
-    };
+    use ic_host_process::tool::{ExecutionError, ExecutionEvidence, ExecutionFailure, ToolError};
 
     struct DownloadGroup(u32);
     impl Drop for DownloadGroup {
@@ -516,7 +514,7 @@ fn interrupted_setup_terminates_downloader_descendants_and_retains_failure() {
 
 #[test]
 fn failed_download_retains_partial_archive_and_original_process_failure() {
-    use ic_testkit::ic_host_process::tool::{OutputLimit, OutputLimits, capture_group_command};
+    use ic_host_process::tool::{OutputLimit, OutputLimits, capture_group_command};
 
     for (ending, block_stderr) in [
         ("exit 23", false),
@@ -569,7 +567,7 @@ fn failed_download_retains_partial_archive_and_original_process_failure() {
                 assert_eq!(fs::read(attempt.join("archive.gz")).unwrap(), b"partial");
                 if block_stderr {
                     assert!(attempt.join("download.stderr").is_dir());
-                    let record_error = ic_testkit::ic_host_fs::durable::write_bytes(
+                    let record_error = ic_host_fs::durable::write_bytes(
                         &attempt.join("download.stderr"),
                         b"download diagnostic",
                     )
@@ -617,11 +615,9 @@ fn successful_download_stops_when_stderr_cannot_be_recorded() {
     assert_eq!(attempts.len(), 1);
     let attempt = &attempts[0];
     assert_eq!(fs::read(attempt.join("archive.gz")).unwrap(), b"partial");
-    let expected = ic_testkit::ic_host_fs::durable::write_bytes(
-        &attempt.join("download.stderr"),
-        b"download diagnostic",
-    )
-    .unwrap_err();
+    let expected =
+        ic_host_fs::durable::write_bytes(&attempt.join("download.stderr"), b"download diagnostic")
+            .unwrap_err();
     assert_eq!(
         fs::read_to_string(attempt.join("failure.txt")).unwrap(),
         expected.to_string()

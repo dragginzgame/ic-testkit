@@ -103,14 +103,17 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.44"
+ic-testkit = "0.45"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
 `[dependencies]` and use `ic_testkit::performance`.
 
-The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic` and `pic` modules are host-only. `benchmark`, `performance`, and `Fake` are
-also available when compiling for `wasm32`.
+The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic` and `pic`
+modules are host-only; `performance` emits markers on Wasm. Benchmark counters,
+marker parsing, aggregation and `Fake` are available on native and Wasm targets.
+Native benchmark directory, metadata and file-output APIs live in
+`benchmark::report`.
 
 ## What ic-testkit provides
 
@@ -218,6 +221,13 @@ cargo test --test pocket_ic_e2e -- --test-threads=1
 Keep ordinary unit tests parallel. The thread count is downstream capacity
 tuning, not an ic-testkit correctness requirement.
 
+The separate [ic-testkit-candid](crates/ic-testkit-candid/README.md) package
+provides caller-bounded native/Wasm reply decoding without simulator dependencies.
+Consumers own budgets, transport, trust, raw evidence and error projection.
+
+Generic Host functionality belongs to direct `ic-host-artifacts`, `ic-host-fs`
+and `ic-host-process` dependencies; Testkit does not re-export those crates.
+
 ## Typed Candid calls
 
 `CandidCallExt` supplies anonymous and caller-aware query/update variants:
@@ -241,8 +251,9 @@ fn increment_counter(pocket_ic: &PocketIc, canister_id: Principal)
 }
 ```
 
-The corresponding `_or_panic` methods unwrap only `CandidCallError`.
-Application values such as `Result<T, E>` remain unchanged.
+Handle `CandidCallError` through the returned result or choose an explicit
+caller-side `.expect("call context")`. Application values such as `Result<T, E>`
+remain unchanged.
 
 `CandidCallErrorKind` distinguishes:
 
@@ -535,14 +546,13 @@ canister may already exist, and later installs are not attempted.
 `ErrorCode::CanisterInstallCodeRateLimited` rejection:
 
 ```rust,no_run
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 use ic_testkit::pic::{CanisterInstallExt, PocketIc, RejectResponse, RetryPolicy};
 
 fn retry_install(pocket_ic: &PocketIc, install_again: impl FnMut() -> Result<(), RejectResponse>)
     -> Result<(), RejectResponse>
 {
-    let policy = RetryPolicy::try_new(3, Duration::from_secs(60))
-        .expect("nonzero attempts and cooldown");
+    let policy = RetryPolicy::new(NonZeroUsize::new(3).unwrap(), Duration::from_secs(60));
     pocket_ic.retry_install_code(policy, install_again)
 }
 ```
@@ -613,7 +623,7 @@ use ic_testkit::pic::{
 };
 
 static POOL: LazyLock<
-    CachedPocketIcBaselinePool<StandaloneCanisterRecipe<fn() -> StandaloneCanisterFixture>>,
+    CachedPocketIcBaselinePool<StandaloneCanisterRecipe<fn() -> std::io::Result<StandaloneCanisterFixture>>>,
 > = LazyLock::new(|| {
     CachedPocketIcBaselinePool::new(
         NonZeroUsize::new(8).unwrap(),
@@ -625,7 +635,7 @@ static POOL: LazyLock<
     )
 });
 
-# fn build_fixture() -> StandaloneCanisterFixture { unimplemented!() }
+# fn build_fixture() -> std::io::Result<StandaloneCanisterFixture> { unimplemented!() }
 fn read_pooled_counter() -> Result<u64, Box<dyn std::error::Error>> {
     let (baseline, _outcome) = POOL.acquire()?;
     Ok(baseline.pocket_ic().query_candid(*baseline.metadata(), "get", ())?)
@@ -639,8 +649,9 @@ both restore and replacement failure. A non-transport restore failure drops the
 slot immediately; its next acquisition is a fresh build.
 
 One pool owns one recipe. The builder must produce the same Wasm, init arguments,
-topology and seeded state whenever invoked. Builders may own configuration in a
-`Send + Sync + 'static` closure. Use a fresh instance or a custom recipe for state
+topology and seeded state whenever invoked. Builders return `std::io::Result<StandaloneCanisterFixture>` and may own
+configuration in a `Send + Sync + 'static` closure. Returned errors keep their
+source and build-stage timings; ordinary construction failures need no panic. Use a fresh instance or a custom recipe for state
 outside the captured canister. See the [0.38 migration](crates/ic-testkit/CHANGELOG.md#0380)
 for the removed standalone-pool interface.
 
@@ -864,7 +875,9 @@ the retired `ic_testkit::ic_host_tools` convenience path and direct Host 0.15 im
 
 ## Benchmark markers and reports
 
-Canister code emits compact markers around the measured region:
+The `performance` module and direct IC CDK dependency are Wasm-only. Native
+producers use `benchmark::format_marker` with their own counters. Canister code
+emits compact markers around the measured region:
 
 ```rust,no_run
 use ic_testkit::performance::Performance;
