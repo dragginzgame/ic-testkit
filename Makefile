@@ -38,7 +38,7 @@ CI_TARGETS := native-measurement-check shared-tooling-check tools-check format-t
 
 RELEASE_CHECK_TARGETS := $(CI_TARGETS) msrv
 VALIDATION_INPUTS := Makefile Cargo.toml Cargo.lock rust-toolchain.toml \
-	crates/ic-testkit/Cargo.toml crates/ic-testkit-native/Cargo.toml crates/ic_testkit_perf_probe/Cargo.toml \
+	crates/ic-testkit/Cargo.toml crates/ic-testkit-candid/Cargo.toml crates/ic-testkit-native/Cargo.toml crates/ic_testkit_perf_probe/Cargo.toml \
 	ci/tool-versions.env ci/ic-tools.tsv .shared-tooling.snapshot
 
 help:
@@ -54,16 +54,16 @@ help:
 	@echo "  fmt             Sort Cargo manifests and format all workspace Rust code"
 	@echo "  fmt-check       Check manifest sorting and Rust formatting without mutation"
 	@echo "  git-hooks-check Check hook preservation and installation in isolated fixtures"
-	@echo "  check           Check the host crate with locked dependencies"
-	@echo "  check-wasm      Check the crate for wasm32"
+	@echo "  check           Check the libraries with locked dependencies"
+	@echo "  check-wasm      Check the libraries for wasm32"
 	@echo "  clippy          Run Clippy with warnings denied"
 	@echo "  docs-check      Build public API documentation with warnings denied"
 	@echo "  installation-check Check current README dependency requirements"
 	@echo "  shared-tooling-check Verify the reviewed shared snapshot offline"
-	@echo "  test            Run the ic-testkit test suite"
+	@echo "  test            Run the published packages' test suites"
 	@echo "  test-canisters  Run the PocketIC canister integration test"
-	@echo "  msrv            Check the crate with the declared MSRV"
-	@echo "  package         Build and verify the publishable crate"
+	@echo "  msrv            Check the workspace with the declared MSRV"
+	@echo "  package         Build and verify the publishable crates"
 	@echo "  ci              Run the local push gate"
 	@echo "  release-check   Run the complete release gate, including MSRV"
 	@echo "  version         Show the current workspace package version"
@@ -88,6 +88,7 @@ tags:
 	@git tag --sort=-version:refname | head -10
 
 test: build-server-cli
+	+cargo test -p ic-testkit-candid --locked
 	+@server="$$("$(SERVER_CLI)" check)" || exit $$?; \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked && \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
@@ -115,22 +116,24 @@ native-measurement-check:
 	+cargo check -p ic-testkit-native --all-targets --all-features --locked --target wasm32-unknown-unknown
 
 check:
-	+cargo check -p ic-testkit --locked
+	+cargo check -p ic-testkit -p ic-testkit-candid --locked
 
 check-wasm:
-	+cargo check -p ic-testkit --locked --target wasm32-unknown-unknown
+	+cargo check -p ic-testkit -p ic-testkit-candid --locked --target wasm32-unknown-unknown
 
 clippy:
-	+cargo clippy -p ic-testkit --all-targets --locked -- -D warnings
+	+cargo clippy -p ic-testkit -p ic-testkit-candid --all-targets --locked -- -D warnings
 
 docs-check:
-	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit --locked --no-deps
+	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit -p ic-testkit-candid --locked --no-deps
 
 msrv:
 	rustc +$(MSRV) --version
 	cargo +$(MSRV) --version
 	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --all-features --locked
 	+cargo +$(MSRV) check -p ic-testkit-native --all-targets --all-features --locked --target wasm32-unknown-unknown
+	+cargo +$(MSRV) check -p ic-testkit-candid --all-targets --locked
+	+cargo +$(MSRV) check -p ic-testkit-candid --all-targets --locked --target wasm32-unknown-unknown
 	+cargo +$(MSRV) check -p ic-testkit --locked
 	+cargo +$(MSRV) check -p ic-testkit --lib --target wasm32-unknown-unknown --locked
 	+cargo +$(MSRV) check -p ic_testkit_perf_probe --lib --target wasm32-unknown-unknown --locked
@@ -142,14 +145,18 @@ publish-guards-check:
 	bash scripts/ci/check-publish-guards.sh
 
 release-guards-check:
+	perl scripts/ci/test-local-lock-versions.pl
 	bash scripts/ci/check-release-guards.sh
 
 package:
-	+cargo package -p ic-testkit -p ic-testkit-native --locked --allow-dirty
+	+cargo package -p ic-testkit-native --locked --allow-dirty
+	+cargo package -p ic-testkit-candid --locked --allow-dirty
+	+cargo package -p ic-testkit --locked --allow-dirty
 
 publish-dry-run:
-	+cargo publish -p ic-testkit --locked --dry-run --allow-dirty
 	+cargo publish -p ic-testkit-native --locked --dry-run --allow-dirty
+	+cargo publish -p ic-testkit-candid --locked --dry-run --allow-dirty
+	+cargo publish -p ic-testkit --locked --dry-run --allow-dirty
 
 ci:
 	+@bash scripts/ci/run-validation-targets.sh --fail-fast $(addprefix --input ,$(VALIDATION_INPUTS)) $(CI_TARGETS)

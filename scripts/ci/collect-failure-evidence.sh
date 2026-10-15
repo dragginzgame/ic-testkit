@@ -35,11 +35,10 @@ for name in "${names[@]}"; do
     fi
 done
 # Shared formatter failures retain exact logs under the workflow temp root.
-for formatting_log in "$temporary"/formatting.*; do
-    if [[ -e "$formatting_log" || -L "$formatting_log" ]]; then
-        arguments+=("$temporary" "${formatting_log##*/}")
-    fi
-done
+# shellcheck source=scripts/ci/formatting-evidence.sh
+source "${archiver%/*}/formatting-evidence.sh"
+select_formatting_evidence "$temporary"
+arguments+=(${formatting_evidence[@]+"${formatting_evidence[@]}"})
 # Retain a redirected parent itself and unrelated logs, without traversing it.
 collection_status=0
 for parent in target .tools; do

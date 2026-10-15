@@ -337,7 +337,17 @@ set -euo pipefail
 [[ "$1" != +* ]] || shift
 [[ "$1" != --version ]] || exit 0
 [[ "$*" == *--locked* ]] || exit 97
-[[ "$1" != test || "${POCKET_IC_BIN:-}" == /prepared/server ]] || exit 97
+operation="$1"
+if [[ "$operation" == test ]]; then
+  case " $* " in
+    *' -p ic-testkit-candid '*) operation=test:ic-testkit-candid ;;
+    *' -p ic-testkit '*)
+      [[ "${POCKET_IC_BIN:-}" == /prepared/server ]] || exit 97
+      operation=test:ic-testkit
+      ;;
+    *) exit 97 ;;
+  esac
+fi
 jobserver=''
 for option in ${MAKEFLAGS:-}; do
   case "$option" in
@@ -349,8 +359,8 @@ case "$jobserver" in
   *,*) : <&"${jobserver%,*}"; : >&"${jobserver#*,}" ;;
   *) exit 97 ;;
 esac
-printf 'cargo:%s\n' "$1" >> "$TOOL_TRACE"
-[[ "${TOOL_FAIL:-}" != "cargo:$1" ]] || exit 23
+printf 'cargo:%s\n' "$operation" >> "$TOOL_TRACE"
+[[ "${TOOL_FAIL:-}" != "cargo:$operation" ]] || exit 23
 [[ "$1" == build ]] || exit 0
 mkdir -p "$TOOL_ROOT/target/debug"
 cat > "$TOOL_ROOT/target/debug/ic-testkit-server" <<'SERVER'
@@ -389,21 +399,26 @@ STUB
   for target in check check-wasm clippy docs-check msrv package publish-dry-run \
     build-test-canisters test test-canisters; do
     : > "$TOOL_TRACE"
-    "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" "$target" > "$TOOL_ROOT/$target.log" 2>&1
+    "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" "$target" > "$TOOL_ROOT/$target.log" 2>&1 || {
+      cat "$TOOL_ROOT/$target.log" >&2
+      fail "substituted $target recipe failed; see $TOOL_ROOT/$target.log"
+    }
   done
-  printf '%s\n' cargo:build server:check cargo:test > "$TOOL_ROOT/expected"
+  printf '%s\n' cargo:build server:check cargo:test:ic-testkit > "$TOOL_ROOT/expected"
   cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'canister test bypassed owner admission'
   : > "$TOOL_TRACE"
   "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" test > "$TOOL_ROOT/test.log" 2>&1
-  printf '%s\n' cargo:build server:check cargo:test cargo:test > "$TOOL_ROOT/expected"
+  printf '%s\n' cargo:build cargo:test:ic-testkit-candid server:check \
+    cargo:test:ic-testkit cargo:test:ic-testkit > "$TOOL_ROOT/expected"
   cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'full test target omitted separate-process qualification'
-  for stage in server:check cargo:test; do
+  for stage in cargo:test:ic-testkit-candid server:check cargo:test:ic-testkit; do
     : > "$TOOL_TRACE"
     status=0
-    TOOL_FAIL="$stage" "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" test > "$TOOL_ROOT/test-failure-${stage#*:}.log" 2>&1 || status=$?
+    TOOL_FAIL="$stage" "$make_bin" --no-print-directory -j4 -C "$TOOL_ROOT" test > "$TOOL_ROOT/test-failure-${stage//:/-}.log" 2>&1 || status=$?
     [[ "$status" == 2 ]] || fail 'test admission or Cargo failure status lost'
-    printf '%s\n' cargo:build server:check > "$TOOL_ROOT/expected"
-    [[ "$stage" != cargo:test ]] || printf '%s\n' cargo:test >> "$TOOL_ROOT/expected"
+    printf '%s\n' cargo:build cargo:test:ic-testkit-candid > "$TOOL_ROOT/expected"
+    [[ "$stage" == cargo:test:ic-testkit-candid ]] || printf '%s\n' server:check >> "$TOOL_ROOT/expected"
+    [[ "$stage" != cargo:test:ic-testkit ]] || printf '%s\n' cargo:test:ic-testkit >> "$TOOL_ROOT/expected"
     cmp "$TOOL_TRACE" "$TOOL_ROOT/expected" || fail 'failed test dispatched later Cargo work'
   done
   : > "$TOOL_TRACE"

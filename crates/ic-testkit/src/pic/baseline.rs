@@ -16,34 +16,11 @@ pub struct CachedPocketIcBaseline<T> {
 }
 
 impl<T> CachedPocketIcBaseline<T> {
-    /// Capture one cached baseline from the current PocketIC instance.
+    /// Capture a cached baseline with an explicit sender for every canister.
     ///
-    /// Snapshot capture is ordered and transactional as documented by
-    /// [`PocketIcSnapshotExt::capture_controller_snapshots`].
+    /// Capture is ordered and transactional as documented by
+    /// [`PocketIcSnapshotExt::capture_snapshots`]. No sender fallback is performed.
     pub fn capture<I>(
-        instance: PocketIcInstance<PocketIc>,
-        controller_id: Principal,
-        canister_ids: I,
-        metadata: T,
-    ) -> Result<Self, ControllerSnapshotError>
-    where
-        I: IntoIterator<Item = Principal>,
-    {
-        let snapshots = instance
-            .instance
-            .capture_controller_snapshots(controller_id, canister_ids)?;
-
-        Ok(Self {
-            instance,
-            snapshots,
-            metadata,
-        })
-    }
-
-    /// Capture one cached baseline with an explicit sender for every canister.
-    ///
-    /// This avoids fallback rejections in mixed-controller topologies.
-    pub fn capture_with_senders<I>(
         instance: PocketIcInstance<PocketIc>,
         targets: I,
         metadata: T,
@@ -51,8 +28,7 @@ impl<T> CachedPocketIcBaseline<T> {
     where
         I: IntoIterator<Item = CanisterSnapshotTarget>,
     {
-        let snapshots = instance.instance.capture_snapshots_with_senders(targets)?;
-
+        let snapshots = instance.instance.capture_snapshots(targets)?;
         Ok(Self {
             instance,
             snapshots,
@@ -60,39 +36,11 @@ impl<T> CachedPocketIcBaseline<T> {
         })
     }
 
-    /// Restore the captured snapshot set without adding cycles.
-    pub fn restore(&self, controller_id: Principal) -> Result<(), ControllerSnapshotError> {
+    /// Restore with exactly the captured senders and selected cycle funding.
+    pub fn restore(&self, funding: SnapshotRestoreFunding) -> Result<(), ControllerSnapshotError> {
         self.instance
             .instance
-            .restore_controller_snapshots(controller_id, &self.snapshots)
-    }
-
-    /// Restore the captured snapshot set with an explicit cycle-funding policy.
-    pub fn restore_with_funding(
-        &self,
-        controller_id: Principal,
-        funding: SnapshotRestoreFunding,
-    ) -> Result<(), ControllerSnapshotError> {
-        self.instance
-            .instance
-            .restore_controller_snapshots_with_funding(controller_id, &self.snapshots, funding)
-    }
-
-    /// Restore with exactly the senders retained during snapshot capture.
-    pub fn restore_with_captured_senders(&self) -> Result<(), ControllerSnapshotError> {
-        self.instance
-            .instance
-            .restore_snapshots_with_captured_senders(&self.snapshots)
-    }
-
-    /// Restore with captured senders and an explicit cycle-funding policy.
-    pub fn restore_with_captured_senders_and_funding(
-        &self,
-        funding: SnapshotRestoreFunding,
-    ) -> Result<(), ControllerSnapshotError> {
-        self.instance
-            .instance
-            .restore_snapshots_with_captured_senders_and_funding(&self.snapshots, funding)
+            .restore_snapshots(&self.snapshots, funding)
     }
 
     /// Borrow the owned PocketIC instance behind this cached baseline.

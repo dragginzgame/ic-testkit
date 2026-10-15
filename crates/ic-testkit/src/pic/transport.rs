@@ -1,4 +1,7 @@
-use std::any::Any;
+use std::{
+    any::Any,
+    panic::{AssertUnwindSafe, catch_unwind},
+};
 
 /// Captured PocketIC operation failure, retaining transport classification.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,10 +19,6 @@ impl PocketIcOperationError {
         Self { message, transport }
     }
 
-    pub(super) fn from_panic(payload: &(dyn Any + Send)) -> Self {
-        Self::new(panic_payload_to_string(payload))
-    }
-
     /// Read the original upstream message without contextual wrappers.
     #[must_use]
     pub fn message(&self) -> &str {
@@ -31,6 +30,15 @@ impl PocketIcOperationError {
     pub const fn is_transport(&self) -> bool {
         self.transport
     }
+}
+
+// Only callers that intentionally capture every unwind use this boundary.
+// Candid calls retain their separate policy of resuming unrelated panics.
+pub(super) fn capture_operation<T>(
+    operation: impl FnOnce() -> T,
+) -> Result<T, PocketIcOperationError> {
+    catch_unwind(AssertUnwindSafe(operation))
+        .map_err(|payload| PocketIcOperationError::new(panic_payload_to_string(payload.as_ref())))
 }
 
 impl std::fmt::Display for PocketIcOperationError {
@@ -96,7 +104,7 @@ pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'stati
         }
         if candidate
             .downcast_ref::<super::CandidCallError>()
-            .is_some_and(|error| error.kind() == super::CandidCallErrorKind::Transport)
+            .is_some_and(|error| error.kind == super::CandidCallErrorKind::Transport)
         {
             return true;
         }
@@ -187,7 +195,7 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 mod tests {
     use super::super::{CanisterInstallError, CanisterInstallPhase, ControllerSnapshotError};
     use super::{
-        PocketIcOperationError, is_dead_instance_transport_error,
+        PocketIcOperationError, capture_operation, is_dead_instance_transport_error,
         is_dead_pocket_ic_transport_error, panic_is_dead_instance_transport,
     };
 
@@ -241,10 +249,16 @@ mod tests {
 
     #[test]
     fn classify_pocket_ic_panic_marks_dead_instance_transport() {
-        let classified = PocketIcOperationError::new(INCOMPLETE);
+        let classified = capture_operation::<()>(|| panic!("{INCOMPLETE}"))
+            .expect_err("operation panic must be captured");
 
+        assert_eq!(classified.message(), INCOMPLETE);
         assert!(classified.is_transport());
         assert!(panic_is_dead_instance_transport(&INCOMPLETE));
+        let non_string = capture_operation::<()>(|| std::panic::panic_any(7_u8))
+            .expect_err("non-string panic must be captured");
+        assert_eq!(non_string.message(), "non-string panic payload");
+        assert!(!non_string.is_transport());
     }
 
     #[test]

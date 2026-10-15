@@ -1,6 +1,9 @@
 //! Workload for the fixture_reuse_benchmark_driver example; not an ordinary test.
 //! See docs/fixture-reuse-benchmark.md for the workload and measurement boundaries.
 
+mod fixture_reuse_protocol;
+mod fixture_reuse_report;
+use fixture_reuse_protocol::{Mode, WorkerArguments};
 use std::{
     error::Error,
     fmt, fs, io,
@@ -11,12 +14,13 @@ use std::{
 };
 
 use candid::Principal;
+use fixture_reuse_report::{Phases, Sample, WorkerReport};
 use ic_testkit::pic::{
     BaselinePoolOutcome, BaselinePoolTimings, BaselinePreparationStage, CachedPocketIcBaseline,
-    CachedPocketIcBaselinePool, CandidCallExt, CanisterRestoreReceipt, CycleResetPolicy,
-    FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe, PocketIcBuilder,
-    PocketIcInstance, PocketIcStartupConfig, PreparedBaseline, ReadinessReceipt, ResetReceipt,
-    ResetRequirements, ValidationReceipt,
+    CachedPocketIcBaselinePool, CandidCallExt, CanisterRestoreReceipt, CanisterSnapshotTarget,
+    CycleResetPolicy, FailureDisposition, FixtureRecipeId, PocketIc, PocketIcBaselineRecipe,
+    PocketIcBuilder, PocketIcInstance, PocketIcStartupConfig, PreparedBaseline, ReadinessReceipt,
+    ResetReceipt, ResetRequirements, SnapshotRestoreFunding, ValidationReceipt,
 };
 use serde::Serialize;
 
@@ -122,7 +126,12 @@ impl PocketIcBaselineRecipe for Recipe {
 
     fn build(&self) -> std::result::Result<CachedPocketIcBaseline<Self::Metadata>, Self::Error> {
         let (pic, ids) = self.create()?;
-        CachedPocketIcBaseline::capture(pic, Principal::anonymous(), ids, ids).map_err(recipe_error)
+        CachedPocketIcBaseline::capture(
+            pic,
+            ids.map(|id| CanisterSnapshotTarget::new(id, None)),
+            ids,
+        )
+        .map_err(recipe_error)
     }
 
     fn restore_canisters(
@@ -130,7 +139,7 @@ impl PocketIcBaselineRecipe for Recipe {
         baseline: &CachedPocketIcBaseline<Self::Metadata>,
     ) -> std::result::Result<CanisterRestoreReceipt, Self::Error> {
         baseline
-            .restore_with_captured_senders()
+            .restore(SnapshotRestoreFunding::Preserve)
             .map_err(recipe_error)?;
         CanisterRestoreReceipt::try_from_baseline(baseline, CycleResetPolicy::PreserveCurrent)
             .map_err(recipe_error)
@@ -171,17 +180,6 @@ impl PocketIcBaselineRecipe for Recipe {
     }
 }
 
-#[derive(Default, Serialize)]
-struct Phases {
-    wait_ms: f64,
-    build_ms: Option<f64>,
-    restore_ms: Option<f64>,
-    reset_ms: Option<f64>,
-    readiness_ms: Option<f64>,
-    validation_ms: Option<f64>,
-    acquisition_ms: f64,
-}
-
 impl From<BaselinePoolTimings> for Phases {
     fn from(timings: BaselinePoolTimings) -> Self {
         Self {
@@ -197,12 +195,14 @@ impl From<BaselinePoolTimings> for Phases {
 }
 
 #[derive(Serialize)]
-struct Sample {
-    iteration: usize,
-    phases: Phases,
-    body_ms: f64,
-    release_ms: f64,
-    total_ms: f64,
+struct WorkloadReport {
+    #[serde(flatten)]
+    measurements: WorkerReport,
+    server_startup_ms: f64,
+    cold_preparation: Vec<Phases>,
+    preparation_wall_ms: f64,
+    pool_teardown_ms: f64,
+    server_teardown_ms: f64,
 }
 
 fn ms(duration: Duration) -> f64 {
@@ -263,7 +263,7 @@ fn pooled_sample(
 fn run_tasks(
     pool: &CachedPocketIcBaselinePool<Recipe>,
     recipe: &Recipe,
-    mode: &str,
+    mode: Mode,
     iterations: NonZeroUsize,
     workers: NonZeroUsize,
 ) -> Result<(Vec<Sample>, f64)> {
@@ -277,7 +277,7 @@ fn run_tasks(
                     (worker..iterations.get())
                         .step_by(workers.get())
                         .map(|iteration| {
-                            if mode == "fresh" {
+                            if mode == Mode::Fresh {
                                 fresh_sample(recipe, iteration)
                             } else {
                                 pooled_sample(pool, recipe, iteration)
@@ -302,36 +302,30 @@ fn run_tasks(
 }
 
 fn main() -> Result<()> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args.len() != 7 {
-        return Err(io::Error::other(
-            "usage: fixture_reuse_benchmark MODE CAPACITY ITERATIONS WORKERS STATE_BYTES WASM SERVER",
-        )
-        .into());
-    }
-    let mode = &args[0];
-    let capacity: NonZeroUsize = args[1].parse()?;
-    let iterations: NonZeroUsize = args[2].parse()?;
-    let workers: NonZeroUsize = args[3].parse()?;
-    let state_bytes = args[4].parse()?;
-    if !matches!(mode.as_str(), "fresh" | "pooled") || workers.get() > iterations.get() {
-        return Err(io::Error::other("invalid mode or workers exceeds iterations").into());
-    }
+    let WorkerArguments {
+        mode,
+        capacity,
+        iterations,
+        workers,
+        state_bytes,
+        wasm,
+        server,
+    } = WorkerArguments::try_from(std::env::args_os().skip(1).collect::<Vec<_>>())?;
     let startup = Instant::now();
-    let server = PocketIcStartupConfig::spawn(&args[6], TIMEOUT).start_managed_server()?;
+    let server = PocketIcStartupConfig::spawn(&server, TIMEOUT).start_managed_server()?;
     let server_startup_ms = ms(startup.elapsed());
     let recipe = Recipe {
         id: FixtureRecipeId::try_new("benchmark/two-stateful-canisters/v1")?,
         requirements: ResetRequirements::try_new(CycleResetPolicy::PreserveCurrent, [])?,
         server_url: server.url().to_owned(),
-        wasm: fs::read(&args[5])?.into(),
+        wasm: fs::read(&wasm)?.into(),
         state_bytes,
     };
     let pool = CachedPocketIcBaselinePool::new(capacity, recipe.clone());
     let fixture_started = Instant::now();
     let preparation = Instant::now();
     let mut cold = Vec::new();
-    if mode == "pooled" {
+    if mode == Mode::Pooled {
         // Hold every lease until all slots exist; do not accidentally measure
         // an initial cold build as a warm acquisition.
         let mut held = Vec::new();
@@ -357,23 +351,27 @@ fn main() -> Result<()> {
     let teardown = Instant::now();
     drop(server);
     let server_teardown_ms = ms(teardown.elapsed());
-    println!(
-        "{}",
-        serde_json::json!({
-            "mode": mode,
-            "capacity": if mode == "fresh" { workers.get() } else { capacity.get() },
-            "iterations": iterations.get(),
-            "workers": workers.get(),
-            "state_bytes_per_canister": state_bytes,
-            "server_startup_ms": server_startup_ms,
-            "cold_preparation": cold,
-            "preparation_wall_ms": preparation_wall_ms,
-            "wall_ms": wall_ms,
-            "pool_teardown_ms": pool_teardown_ms,
-            "fixture_wall_ms": fixture_wall_ms,
-            "server_teardown_ms": server_teardown_ms,
-            "samples": samples,
-        })
-    );
+    let report = WorkloadReport {
+        measurements: WorkerReport {
+            mode: mode.as_str().into(),
+            capacity: if mode == Mode::Fresh {
+                workers.get()
+            } else {
+                capacity.get()
+            },
+            iterations: iterations.get(),
+            workers: workers.get(),
+            state_bytes_per_canister: state_bytes,
+            wall_ms,
+            fixture_wall_ms,
+            samples,
+        },
+        server_startup_ms,
+        cold_preparation: cold,
+        preparation_wall_ms,
+        pool_teardown_ms,
+        server_teardown_ms,
+    };
+    println!("{}", serde_json::to_string(&report)?);
     Ok(())
 }

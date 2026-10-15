@@ -162,7 +162,7 @@ new_fixture() {
   # inputs. Only the complete validation gate and Git effects are substituted.
   mkdir -p scripts/release scripts/ci ci
   cp "$repo_root/scripts/release/metadata.sh" scripts/release/
-  for helper in check-release-source.sh read-cargo-workspace-version.sh next-release-version.sh check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk render-cargo-workspace-version.pl; do
+  for helper in check-release-source.sh read-cargo-workspace-version.sh next-release-version.sh validate-release-inputs.pl check-format-tools.sh check-installation-version.sh finalize-release-changelog.awk render-cargo-workspace-version.pl rewrite-local-lock-versions.pl; do
     cp "$repo_root/scripts/ci/$helper" scripts/ci/
   done
   cp "$repo_root/ci/tool-versions.env" ci/
@@ -170,7 +170,7 @@ new_fixture() {
     mkdir -p "$(dirname "$file")"
     cp "$repo_root/$file" "$file"
   done
-  for member in crates/ic-testkit crates/ic-testkit-native crates/ic_testkit_perf_probe; do
+  for member in crates/ic-testkit crates/ic-testkit-candid crates/ic-testkit-native crates/ic_testkit_perf_probe; do
     mkdir -p "$member/src"
     cp "$repo_root/$member/Cargo.toml" "$member/Cargo.toml"
     : > "$member/src/lib.rs"
@@ -440,6 +440,7 @@ printf '/.release-state/\n' > .git/info/exclude
 "$REAL_GIT" add -- .gitignore Cargo.toml Cargo.lock CHANGELOG.md \
   crates/ic-testkit/CHANGELOG.md README.md crates/ic-testkit/README.md \
   rust-toolchain.toml crates/ic-testkit/Cargo.toml crates/ic-testkit/src/lib.rs \
+  crates/ic-testkit-candid/Cargo.toml crates/ic-testkit-candid/src/lib.rs \
   crates/ic-testkit-native/Cargo.toml crates/ic-testkit-native/src/lib.rs \
   crates/ic_testkit_perf_probe/Cargo.toml crates/ic_testkit_perf_probe/src/lib.rs \
   artifact gate-trace gate-environment tool-trace preparation-trace rejected.log scripts ci
@@ -821,7 +822,7 @@ receipt=".release-state/$RELEASE_VERSION.validation"
 cp "$retained/ready" cache-ready
 cp "$receipt" cache-receipt
 cp "$retained/old/Cargo.toml" Cargo.toml
-# shellcheck disable=SC2031 # This recovery case sets its own policy independently.
+# shellcheck disable=SC2031 # This recovery case selects its policy independently.
 export ADAPTER_FETCH_TEST=true ADAPTER_FETCH_STATUS=23
 CARGO_NET_OFFLINE=false expect_failure preflight
 [[ "$(cat fetch-trace)" == "fetch --manifest-path $retained/new/Cargo.toml --locked" ]] || fail 'recovery fetched the mixed live workspace'

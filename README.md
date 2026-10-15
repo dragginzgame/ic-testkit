@@ -30,7 +30,7 @@ acquiring PocketIC or canister dependencies.
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/v/ic-testkit.svg" alt="Crates.io"></a>
   <a href="https://docs.rs/ic-testkit"><img src="https://docs.rs/ic-testkit/badge.svg" alt="Docs.rs"></a>
   <a href="https://crates.io/crates/ic-testkit"><img src="https://img.shields.io/crates/d/ic-testkit.svg" alt="Downloads"></a>
-  <a href="Cargo.toml"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/MSRV-1.88.0-blue.svg" alt="MSRV"></a>
   <a href="README.md#toolchains-and-checks"><img src="https://img.shields.io/badge/internal%20rust-1.99.0-orange.svg" alt="Internal Rust"></a>
   <a href="Cargo.toml"><img src="https://img.shields.io/badge/edition-2024-purple.svg" alt="Rust edition"></a>
@@ -107,14 +107,17 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.41"
+ic-testkit = "0.46"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
 `[dependencies]` and use `ic_testkit::performance`.
 
-The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic` and `pic` modules are host-only. `benchmark`, `performance`, and `Fake` are
-also available when compiling for `wasm32`.
+The crate supports Rust 1.88 and uses PocketIC 16. The `pocket_ic` and `pic`
+modules are host-only; `performance` emits markers on Wasm. Benchmark counters,
+marker parsing, aggregation and `Fake` are available on native and Wasm targets.
+Native benchmark directory, metadata and file-output APIs live in
+`benchmark::report`.
 
 ## What ic-testkit provides
 
@@ -185,7 +188,6 @@ restored or validated.
 | Snapshots | `PocketIcSnapshotExt`, `CachedPocketIcBaseline` | Ordered transactional capture, explicit restore funding, scoped caching |
 | Fixture pools | `CachedPocketIcBaselinePool`, `StandaloneCanisterRecipe` | One bounded lifecycle for single- and multi-canister recipes |
 | Diagnostics | `PocketIcDiagnosticsExt` | Controller-aware structured status and bounded log reporting |
-| Time | `PocketIcTimeExt` | Nanoseconds-since-epoch conversion only |
 | Readiness progression | `tick_until` | Bounded advance/tick rounds with a caller-owned predicate |
 | Benchmarks | `benchmark`, `performance` | Marker emission, parsing, aggregation, comparison, and reports |
 | Test identities | `Fake` | Stable deterministic principals |
@@ -223,6 +225,13 @@ cargo test --test pocket_ic_e2e -- --test-threads=1
 Keep ordinary unit tests parallel. The thread count is downstream capacity
 tuning, not an ic-testkit correctness requirement.
 
+The separate [ic-testkit-candid](crates/ic-testkit-candid/README.md) package
+provides caller-bounded native/Wasm reply decoding without simulator dependencies.
+Consumers own budgets, transport, trust, raw evidence and error projection.
+
+Generic Host functionality belongs to direct `ic-host-artifacts`, `ic-host-fs`
+and `ic-host-process` dependencies; Testkit does not re-export those crates.
+
 ## Typed Candid calls
 
 `CandidCallExt` supplies anonymous and caller-aware query/update variants:
@@ -246,8 +255,9 @@ fn increment_counter(pocket_ic: &PocketIc, canister_id: Principal)
 }
 ```
 
-The corresponding `_or_panic` methods unwrap only `CandidCallError`.
-Application values such as `Result<T, E>` remain unchanged.
+Handle `CandidCallError` through the returned result or choose an explicit
+caller-side `.expect("call context")`. Application values such as `Result<T, E>`
+remain unchanged.
 
 `CandidCallErrorKind` distinguishes:
 
@@ -540,14 +550,13 @@ canister may already exist, and later installs are not attempted.
 `ErrorCode::CanisterInstallCodeRateLimited` rejection:
 
 ```rust,no_run
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 use ic_testkit::pic::{CanisterInstallExt, PocketIc, RejectResponse, RetryPolicy};
 
 fn retry_install(pocket_ic: &PocketIc, install_again: impl FnMut() -> Result<(), RejectResponse>)
     -> Result<(), RejectResponse>
 {
-    let policy = RetryPolicy::try_new(3, Duration::from_secs(60))
-        .expect("nonzero attempts and cooldown");
+    let policy = RetryPolicy::new(NonZeroUsize::new(3).unwrap(), Duration::from_secs(60));
     pocket_ic.retry_install_code(policy, install_again)
 }
 ```
@@ -558,65 +567,45 @@ returns all non-rate-limit rejections unchanged.
 
 ## Snapshots and cached baselines
 
-Snapshot capture validates duplicate ids before doing work, stores entries in
-deterministic principal order, and cleans up earlier snapshots if a later
-capture fails:
+Snapshot capture requires one exact management-call sender per canister. It
+validates duplicate ids before doing work, captures in deterministic principal
+order, and cleans up earlier snapshots if a later capture fails. Restore reuses
+those captured senders and requires an explicit cycle-funding policy:
 
 ```rust,no_run
 use candid::Principal;
-use ic_testkit::pic::{PocketIc, PocketIcSnapshotExt, SnapshotRestoreFunding};
+use ic_testkit::pic::{
+    CanisterSnapshotTarget, PocketIc, PocketIcSnapshotExt, SnapshotRestoreFunding,
+};
 
-fn restore_pair(pocket_ic: &PocketIc, controller_id: Principal, canisters: [Principal; 2])
-    -> Result<(), ic_testkit::pic::ControllerSnapshotError>
-{
-    let snapshots = pocket_ic.capture_controller_snapshots(controller_id, canisters)?;
-
-    // Default: do not add cycles.
-    pocket_ic.restore_controller_snapshots(controller_id, &snapshots)?;
-
-    // Optional explicit fixture policy.
-    pocket_ic.restore_controller_snapshots_with_funding(
-        controller_id,
+fn restore_pair(
+    pocket_ic: &PocketIc, root_canister: Principal, root_controller: Principal,
+    child_canister: Principal,
+) -> Result<(), ic_testkit::pic::ControllerSnapshotError> {
+    let snapshots = pocket_ic.capture_snapshots([
+        CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
+        CanisterSnapshotTarget::new(child_canister, None),
+    ])?;
+    pocket_ic.restore_snapshots(&snapshots, SnapshotRestoreFunding::Preserve)?;
+    pocket_ic.restore_snapshots(
         &snapshots,
-        SnapshotRestoreFunding::TopUpTo {
-            minimum_cycles: 200_000_000_000_000,
-        },
+        SnapshotRestoreFunding::TopUpTo { minimum_cycles: 200_000_000_000_000 },
     )?;
     Ok(())
 }
 ```
 
-`ControllerSnapshotError` preserves rejected sender attempts, panic context,
-and any cleanup failures. Restore never adds cycles unless `TopUpTo` is
-explicitly selected. Callers must satisfy upstream snapshot preconditions;
-these helpers do not stop or restart canisters.
+`None` explicitly selects PocketIC's default anonymous sender. Rejections return
+the exact sender and complete upstream response; no other sender is attempted.
+`ControllerSnapshotError` also preserves panic context and partial-capture cleanup
+failures. Restore never adds cycles unless `TopUpTo` is selected. Callers must
+satisfy upstream snapshot preconditions; these helpers do not stop or restart
+canisters. A restore failure does not undo canisters already restored.
 
-Mixed-controller topologies can avoid expected rejected fallback calls by
-selecting the exact sender for each canister:
-
-```rust,no_run
-use candid::Principal;
-use ic_testkit::pic::{
-    CanisterSnapshotTarget, PocketIc, PocketIcSnapshotExt,
-};
-
-fn restore_with_exact_senders(
-    pocket_ic: &PocketIc, root_canister: Principal, root_controller: Principal,
-    child_canister: Principal,
-) -> Result<(), ic_testkit::pic::ControllerSnapshotError> {
-    let snapshots = pocket_ic.capture_snapshots_with_senders([
-        CanisterSnapshotTarget::new(root_canister, Some(root_controller)),
-        CanisterSnapshotTarget::new(child_canister, None),
-    ])?;
-    pocket_ic.restore_snapshots_with_captured_senders(&snapshots)
-}
-```
-
-The existing controller-based method remains useful when its ordered sender
-fallback is desired. `CachedPocketIcBaseline::capture_with_senders` exposes the
-same exact-sender policy for pooled baselines, and
-`restore_with_captured_senders` restores it without requiring or attempting a
-fallback controller.
+Use `CachedPocketIcBaseline::capture(instance, targets, metadata)` for the same
+capture contract in a pooled baseline, then `baseline.restore(funding)` to reuse
+its captured senders. A changed controller set requires caller reconciliation or
+a new baseline rather than an implicit authority fallback.
 
 `CachedPocketIcBaseline<T>` stores one owned instance, its snapshots, and
 caller metadata. Use it as the fixture owned by a `PocketIcBaselineRecipe` in
@@ -638,7 +627,7 @@ use ic_testkit::pic::{
 };
 
 static POOL: LazyLock<
-    CachedPocketIcBaselinePool<StandaloneCanisterRecipe<fn() -> StandaloneCanisterFixture>>,
+    CachedPocketIcBaselinePool<StandaloneCanisterRecipe<fn() -> std::io::Result<StandaloneCanisterFixture>>>,
 > = LazyLock::new(|| {
     CachedPocketIcBaselinePool::new(
         NonZeroUsize::new(8).unwrap(),
@@ -650,7 +639,7 @@ static POOL: LazyLock<
     )
 });
 
-# fn build_fixture() -> StandaloneCanisterFixture { unimplemented!() }
+# fn build_fixture() -> std::io::Result<StandaloneCanisterFixture> { unimplemented!() }
 fn read_pooled_counter() -> Result<u64, Box<dyn std::error::Error>> {
     let (baseline, _outcome) = POOL.acquire()?;
     Ok(baseline.pocket_ic().query_candid(*baseline.metadata(), "get", ())?)
@@ -664,8 +653,9 @@ both restore and replacement failure. A non-transport restore failure drops the
 slot immediately; its next acquisition is a fresh build.
 
 One pool owns one recipe. The builder must produce the same Wasm, init arguments,
-topology and seeded state whenever invoked. Builders may own configuration in a
-`Send + Sync + 'static` closure. Use a fresh instance or a custom recipe for state
+topology and seeded state whenever invoked. Builders return `std::io::Result<StandaloneCanisterFixture>` and may own
+configuration in a `Send + Sync + 'static` closure. Returned errors keep their
+source and build-stage timings; ordinary construction failures need no panic. Use a fresh instance or a custom recipe for state
 outside the captured canister. See the [0.38 migration](crates/ic-testkit/CHANGELOG.md#0380)
 for the removed standalone-pool interface.
 
@@ -839,13 +829,13 @@ panics are captured per operation, and install-failure diagnostics remain
 wrapped so a dead instance or failed renderer cannot replace the original
 install error.
 
-`PocketIcTimeExt` intentionally contains one convenience:
+Read nanoseconds since the Unix epoch directly from PocketIC:
 
 ```rust,no_run
-use ic_testkit::pic::{PocketIc, PocketIcTimeExt};
+use ic_testkit::pic::PocketIc;
 
 let pocket_ic = PocketIc::new();
-let now_ns = pocket_ic.current_time_nanos();
+let now_ns = pocket_ic.get_time().as_nanos_since_unix_epoch();
 ```
 
 Use PocketIC's inherent `get_time`, `set_time`, `set_certified_time`,
@@ -889,7 +879,9 @@ the retired `ic_testkit::ic_host_tools` convenience path and direct Host 0.15 im
 
 ## Benchmark markers and reports
 
-Canister code emits compact markers around the measured region:
+The `performance` module and direct IC CDK dependency are Wasm-only. Native
+producers use `benchmark::format_marker` with their own counters. Canister code
+emits compact markers around the measured region:
 
 ```rust,no_run
 use ic_testkit::performance::Performance;
@@ -941,8 +933,7 @@ exhausted; previous-run discovery orders the indices numerically.
 `aggregate_benchmark_spans` returns `Result<BenchmarkAggregateReport,
 BenchmarkAggregateError>`. Counter totals and run counts use checked arithmetic;
 overflow rejects the complete aggregation rather than returning partial or
-wrapped totals. The error identifies the suite, span label and counter, and
-`is_all_suites()` distinguishes a cross-suite failure from a named suite `ALL`.
+wrapped totals. The error identifies the typed scope, span label and counter.
 
 The report writer emits raw events, spans, aggregates, comparisons, malformed
 and unpaired markers, `bench-summary.md`, and `metadata.json`. Run-directory
@@ -950,10 +941,11 @@ helpers discover compatible previous runs but do not reserve paths. Concurrent
 writers must use unique destinations or synchronize only the shared output
 path.
 
-An authored suite named `ALL` remains distinct from the internal cross-suite
-aggregate. Use `BenchmarkAggregateRow::is_all_suites()` to distinguish them.
-Aggregate and comparison rows, and aggregate errors, expose their authoritative
-label through `suite()`. Use `average(scale)` for checked, floor-rounded `u128`
+Aggregate and comparison rows, and aggregate errors, expose their identity as
+`scope: BenchmarkScope`. Match `BenchmarkScope::Suite(name)` or
+`BenchmarkScope::All`; a suite literally named `ALL` remains a distinct value.
+CSV and text labels and columns remain unchanged. Use `average(scale)` for
+checked, floor-rounded `u128`
 means derived from exact totals and run counts through IC Metrics. For example,
 scale ten projects totals 3 and 4 across two runs to 35 (mean 3.5). Projection
 returns a typed error for zero runs or an unrepresentable scaled result.

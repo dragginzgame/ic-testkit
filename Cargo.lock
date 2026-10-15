@@ -163,6 +163,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
+name = "camino"
+version = "1.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbad30e4b4c14a39e3cc8aed085a12a327257c316619c93581e017bc52be591"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "candid"
 version = "0.10.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -195,6 +204,30 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "cargo-platform"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd0061da739915fae12ea00e16397555ed4371a6bb285431aab930f61b0aa4ba"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
+name = "cargo_metadata"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
+dependencies = [
+ "camino",
+ "cargo-platform",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -728,14 +761,17 @@ dependencies = [
 
 [[package]]
 name = "ic-build"
-version = "0.3.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "415c50c37611014ab87016292bffb7ca366498c52062d226a0c9e886346683f8"
+checksum = "40afef44b47e796ce55c412e20cf96a27ab2f7d04b6bef6c9eb1c66e42528fde"
 dependencies = [
+ "cargo_metadata",
  "ic-host-artifacts",
  "ic-host-fs",
  "ic-host-process",
  "libc",
+ "rustix",
+ "serde",
  "serde_json",
  "sha2",
  "toml",
@@ -806,11 +842,12 @@ dependencies = [
 
 [[package]]
 name = "ic-host-artifacts"
-version = "0.17.13"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9acf9183cfe37a9400ce6893d77292af8b22bcdb7a5451d7a36c81cac33b3be4"
+checksum = "30bbd9c353b97a2604995e35f3f21baeed9b594dfc91f1ab2877b192f03227d8"
 dependencies = [
  "flate2",
+ "leb128",
  "sha2",
  "tar",
  "wasmparser",
@@ -818,9 +855,9 @@ dependencies = [
 
 [[package]]
 name = "ic-host-fs"
-version = "0.17.13"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c549e4539b625ae82ed2de592acef0b8fc98a35e6edba47cc5ee98614c0936b"
+checksum = "0dcfe7c0f16d3fe129284a41bfcd790c1e9d38c6d58ba15c95835d292e7770c5"
 dependencies = [
  "ic-host-artifacts",
  "rustix",
@@ -828,14 +865,23 @@ dependencies = [
 
 [[package]]
 name = "ic-host-process"
-version = "0.17.13"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7d287d27872f8d97a64da3d2d26cc18bdeaafba3c3009a6d538ee8026e0b07"
+checksum = "04818158227c4074535d7e4aa50ea834b4cc527181fe9a5c162214f986e52a1a"
 dependencies = [
  "ic-host-artifacts",
  "ic-host-fs",
  "libc",
  "rustix",
+]
+
+[[package]]
+name = "ic-host-text"
+version = "0.19.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67a800b8b40862add7f3915b678313003f992e85cf487595176006ea93e8e377"
+dependencies = [
+ "unicode-width",
 ]
 
 [[package]]
@@ -851,9 +897,9 @@ dependencies = [
 
 [[package]]
 name = "ic-metrics"
-version = "0.9.4"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d65678222f2c60563768da53a4d03b39c963180dd85e3dd2894237b3ccb7a0fe"
+checksum = "5c420eeed28236735e3dc6c88baf25b27d5a9357555f75248556b0117476f9ac"
 
 [[package]]
 name = "ic-stable-structures"
@@ -866,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "ic-testkit"
-version = "0.41.0"
+version = "0.46.0"
 dependencies = [
  "candid",
  "ic-build",
@@ -874,6 +920,7 @@ dependencies = [
  "ic-host-artifacts",
  "ic-host-fs",
  "ic-host-process",
+ "ic-host-text",
  "ic-metrics",
  "libc",
  "pocket-ic",
@@ -884,10 +931,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "ic-testkit-native"
-version = "0.41.0"
+name = "ic-testkit-candid"
+version = "0.46.0"
 dependencies = [
- "ic-stable-structures",
+ "candid",
+ "serde",
 ]
 
 [[package]]
@@ -928,8 +976,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ic-testkit-native"
+version = "0.46.0"
+dependencies = [
+ "ic-stable-structures",
+]
+
+[[package]]
 name = "ic_testkit_perf_probe"
-version = "0.41.0"
+version = "0.46.0"
 dependencies = [
  "candid",
  "ic-cdk",

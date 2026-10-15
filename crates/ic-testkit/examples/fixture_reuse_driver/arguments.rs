@@ -1,8 +1,28 @@
 //! Validates the operator's workload selection before launching any tools.
 
+use ic_host_process::tool::{OutputLimit, OutputLimits};
 use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
 
 use super::Error;
+use crate::fixture_reuse_protocol::Mode;
+
+const VALUE_OPTIONS: &[&str] = &[
+    "--server",
+    "--iterations",
+    "--workers",
+    "--repeats",
+    "--state-bytes",
+    "--profile",
+    "--output",
+    "--rss-stdout-bytes",
+    "--rss-stderr-bytes",
+];
+
+pub(super) const RSS_COMMAND_LIMITS: OutputLimits = OutputLimits {
+    stdout: OutputLimit::Terminate(16 * 1024 * 1024),
+    stderr: OutputLimit::Terminate(64 * 1024),
+    timeout: None,
+};
 
 pub(super) const HELP: &str = "Fixture reuse benchmark (Linux/macOS)
 Required: --server PATH (exact PocketIC 16 binary)
@@ -14,24 +34,11 @@ Options:
   --capacities N...    Pool capacities (default: 1 2)
   --state-bytes N      Heap bytes per canister, fitting u32 (default: 1048576)
   --profile PROFILE   Workload host profile: release or dev (default: release)
+  --rss-stdout-bytes N  macOS process-table byte limit (default: 16777216)
+  --rss-stderr-bytes N  macOS process-command diagnostic limit (default: 65536)
   --output PATH        Save provenance, raw runs, and summaries as JSON
   --help               Show this help
 Builds use the selected lockfile and prepared offline caches; no server download.";
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum Mode {
-    Fresh,
-    Pooled,
-}
-
-impl Mode {
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Fresh => "fresh",
-            Self::Pooled => "pooled",
-        }
-    }
-}
 
 pub(super) struct Options {
     pub(super) server: PathBuf,
@@ -43,6 +50,7 @@ pub(super) struct Options {
     pub(super) state_bytes: u32,
     pub(super) profile: String,
     pub(super) output: Option<PathBuf>,
+    pub(super) rss_limits: OutputLimits,
 }
 
 pub(super) struct Case {
@@ -90,13 +98,9 @@ fn positive(value: &OsString) -> Result<NonZeroUsize, Error> {
 fn parse_modes(values: &[OsString]) -> Result<Vec<Mode>, Error> {
     let modes = values
         .iter()
-        .map(|value| match value.to_str() {
-            Some("fresh") => Ok(Mode::Fresh),
-            Some("pooled") => Ok(Mode::Pooled),
-            _ => Err(Error::InvalidArgument(format!(
-                "invalid mode: {}",
-                value.display()
-            ))),
+        .map(|value| {
+            Mode::parse(value)
+                .ok_or_else(|| Error::InvalidArgument(format!("invalid mode: {}", value.display())))
         })
         .collect::<Result<Vec<_>, _>>()?;
     for (index, value) in modes.iter().enumerate() {
@@ -125,6 +129,7 @@ pub(super) fn parse_arguments(
         state_bytes: 1024 * 1024,
         profile: "release".into(),
         output: None,
+        rss_limits: RSS_COMMAND_LIMITS,
     };
     let mut args = args.into_iter().peekable();
     while let Some(option) = args.next() {
@@ -161,16 +166,7 @@ pub(super) fn parse_arguments(
             }
             continue;
         }
-        if !matches!(
-            name,
-            "--server"
-                | "--iterations"
-                | "--workers"
-                | "--repeats"
-                | "--state-bytes"
-                | "--profile"
-                | "--output"
-        ) {
+        if !VALUE_OPTIONS.contains(&name) {
             return Err(Error::InvalidArgument(format!("unknown option: {name}")));
         }
         let value = args
@@ -183,6 +179,12 @@ pub(super) fn parse_arguments(
             "--workers" => options.workers = positive(&value)?,
             "--repeats" => options.repeats = positive(&value)?,
             "--output" => options.output = Some(value.into()),
+            "--rss-stdout-bytes" => {
+                options.rss_limits.stdout = OutputLimit::Terminate(positive(&value)?.get());
+            }
+            "--rss-stderr-bytes" => {
+                options.rss_limits.stderr = OutputLimit::Terminate(positive(&value)?.get());
+            }
             "--state-bytes" => {
                 options.state_bytes = value
                     .to_str()
@@ -258,6 +260,7 @@ mod tests {
         let options = parse_arguments(["--server", "/unused/pocket-ic"].map(Into::into))
             .unwrap()
             .unwrap();
+        assert_eq!(options.rss_limits, super::RSS_COMMAND_LIMITS);
         assert_eq!(
             options
                 .benchmark_cases()
@@ -284,6 +287,32 @@ mod tests {
     }
 
     #[test]
+    fn rss_limits_preserve_explicit_selection_without_a_deadline() {
+        let options = parse_arguments(
+            [
+                "--server",
+                "/unused/pocket-ic",
+                "--rss-stdout-bytes",
+                "1024",
+                "--rss-stderr-bytes",
+                "128",
+            ]
+            .map(Into::into),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            options.rss_limits.stdout,
+            ic_host_process::tool::OutputLimit::Terminate(1024)
+        );
+        assert_eq!(
+            options.rss_limits.stderr,
+            ic_host_process::tool::OutputLimit::Terminate(128)
+        );
+        assert_eq!(options.rss_limits.timeout, None);
+    }
+
+    #[test]
     fn invalid_selections_fail_before_launching_tools() {
         for selection in [
             vec!["--capacities", "0"],
@@ -293,6 +322,8 @@ mod tests {
             vec!["--workers", "101"],
             vec!["--state-bytes", "4294967296"],
             vec!["--profile", "custom"],
+            vec!["--rss-stdout-bytes", "0"],
+            vec!["--rss-stderr-bytes", "18446744073709551616"],
             vec!["--modes"],
             vec!["--unknown"],
         ] {

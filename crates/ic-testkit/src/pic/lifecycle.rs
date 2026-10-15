@@ -1,12 +1,11 @@
-use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::time::Duration;
+use std::{num::NonZeroUsize, time::Duration};
 
 use candid::Principal;
 use pocket_ic::{ErrorCode, PocketIc, RejectResponse};
 
 use super::{
     CanisterDiagnosticsRequest, CanisterInstallError, CanisterInstallPhase, PocketIcDiagnosticsExt,
-    PocketIcOperationError,
+    transport::capture_operation,
 };
 
 /// Inputs and diagnostic context for one generic canister installation.
@@ -55,49 +54,23 @@ impl InstallSpec {
 /// Retry limits and simulated cooldown for install-code operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetryPolicy {
-    max_attempts: usize,
+    max_attempts: NonZeroUsize,
     cooldown: Duration,
 }
 
-/// Invalid install-code retry policy configuration.
-#[non_exhaustive]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RetryPolicyError {
-    /// A retry policy must execute its operation at least once.
-    ZeroMaxAttempts,
-}
-
-impl std::fmt::Display for RetryPolicyError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ZeroMaxAttempts => {
-                formatter.write_str("retry policy requires at least one attempt")
-            }
-        }
-    }
-}
-
-impl std::error::Error for RetryPolicyError {}
-
 impl RetryPolicy {
     /// Create a policy with an exact, non-zero maximum attempt count.
-    pub const fn try_new(
-        max_attempts: usize,
-        cooldown: Duration,
-    ) -> Result<Self, RetryPolicyError> {
-        if max_attempts == 0 {
-            Err(RetryPolicyError::ZeroMaxAttempts)
-        } else {
-            Ok(Self {
-                max_attempts,
-                cooldown,
-            })
+    #[must_use]
+    pub const fn new(max_attempts: NonZeroUsize, cooldown: Duration) -> Self {
+        Self {
+            max_attempts,
+            cooldown,
         }
     }
 
     /// Read the maximum number of operation attempts, including the first.
     #[must_use]
-    pub const fn max_attempts(self) -> usize {
+    pub const fn max_attempts(self) -> NonZeroUsize {
         self.max_attempts
     }
 
@@ -114,22 +87,12 @@ impl RetryPolicy {
 /// is an additional top-up, not the complete initial balance.
 pub trait CanisterInstallExt {
     /// Create and install one canister from a reusable specification.
-    #[must_use]
-    fn create_and_install(&self, spec: InstallSpec) -> Principal;
-
-    /// Fallible counterpart to [`create_and_install`](Self::create_and_install).
     ///
     /// Captures PocketIC panics during creation, cycle funding, and installation.
     /// The error identifies the stage and retains an id when creation succeeded.
     fn try_create_and_install(&self, spec: InstallSpec) -> Result<Principal, CanisterInstallError>;
 
-    /// Sequentially create and install multiple canisters.
-    #[must_use]
-    fn create_and_install_many<I>(&self, specs: I) -> Vec<Principal>
-    where
-        I: IntoIterator<Item = InstallSpec>;
-
-    /// Fallible counterpart to [`create_and_install_many`](Self::create_and_install_many).
+    /// Sequentially create and install multiple canisters, stopping at the first failure.
     fn try_create_and_install_many<I>(
         &self,
         specs: I,
@@ -152,12 +115,6 @@ pub trait CanisterInstallExt {
 
 impl CanisterInstallExt for PocketIc {
     /// Install one arbitrary wasm module from a generic install specification.
-    fn create_and_install(&self, spec: InstallSpec) -> Principal {
-        self.try_create_and_install(spec)
-            .unwrap_or_else(|err| panic!("{err}"))
-    }
-
-    /// Install one arbitrary wasm module from a generic install specification.
     fn try_create_and_install(&self, spec: InstallSpec) -> Result<Principal, CanisterInstallError> {
         let canister_id =
             try_install_step(CanisterInstallPhase::CreateCanister, None, &spec, || {
@@ -174,11 +131,10 @@ impl CanisterInstallExt for PocketIc {
         }
 
         // Move the Wasm and init payload while retaining the label for failures.
-        let install = catch_unwind(AssertUnwindSafe(|| {
+        let install = capture_operation(|| {
             self.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
-        }));
-        if let Err(payload) = install {
-            let source = PocketIcOperationError::from_panic(payload.as_ref());
+        });
+        if let Err(source) = install {
             let context = if let Some(label) = &spec.label {
                 format!("install_canister trapped ({label})")
             } else {
@@ -186,14 +142,14 @@ impl CanisterInstallExt for PocketIc {
             };
             // Diagnostics are best-effort and must never replace the original
             // structured install failure, including if stderr or PocketIC fails.
-            let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _ = capture_operation(|| {
                 let report = self.collect_canister_diagnostics(CanisterDiagnosticsRequest::new(
                     canister_id,
                     diagnostic_sender,
                     diagnostic_sender,
                 ));
                 eprintln!("{context}: {report}");
-            }));
+            });
 
             return Err(CanisterInstallError::new(
                 CanisterInstallPhase::InstallCode,
@@ -204,20 +160,6 @@ impl CanisterInstallExt for PocketIc {
         }
 
         Ok(canister_id)
-    }
-
-    /// Sequentially install multiple arbitrary wasm modules into this PocketIC instance.
-    ///
-    /// Installs are attempted in iterator order. If one install fails, earlier
-    /// installs remain in the PocketIC instance, the failed canister may exist
-    /// with the id exposed by `CanisterInstallError::canister_id()`, and later
-    /// installs are not attempted.
-    fn create_and_install_many<I>(&self, specs: I) -> Vec<Principal>
-    where
-        I: IntoIterator<Item = InstallSpec>,
-    {
-        self.try_create_and_install_many(specs)
-            .unwrap_or_else(|err| panic!("{err}"))
     }
 
     /// Sequentially install multiple arbitrary wasm modules into this PocketIC instance.
@@ -262,14 +204,8 @@ fn try_install_step<T>(
     spec: &InstallSpec,
     operation: impl FnOnce() -> T,
 ) -> Result<T, CanisterInstallError> {
-    catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
-        CanisterInstallError::new(
-            phase,
-            canister_id,
-            spec.label.clone(),
-            PocketIcOperationError::from_panic(payload.as_ref()),
-        )
-    })
+    capture_operation(operation)
+        .map_err(|source| CanisterInstallError::new(phase, canister_id, spec.label.clone(), source))
 }
 
 fn retry_install_code_with<T, F, W>(
@@ -281,7 +217,7 @@ where
     F: FnMut() -> Result<T, RejectResponse>,
     W: FnMut(),
 {
-    let mut retries = 1..policy.max_attempts();
+    let mut retries = 1..policy.max_attempts().get();
     loop {
         match op() {
             Err(err)
@@ -299,12 +235,13 @@ where
 mod tests {
     use std::{
         cell::{Cell, RefCell},
+        num::NonZeroUsize,
         time::Duration,
     };
 
     use pocket_ic::{ErrorCode, RejectCode, RejectResponse};
 
-    use super::{RetryPolicy, RetryPolicyError, retry_install_code_with};
+    use super::{RetryPolicy, retry_install_code_with};
 
     fn rejection(error_code: ErrorCode, message: &str) -> RejectResponse {
         RejectResponse {
@@ -321,8 +258,10 @@ mod tests {
             let attempts = Cell::new(0);
             let waits = Cell::new(0);
             let result = retry_install_code_with(
-                RetryPolicy::try_new(max_attempts, Duration::from_secs(1))
-                    .expect("valid retry policy"),
+                RetryPolicy::new(
+                    NonZeroUsize::new(max_attempts).unwrap(),
+                    Duration::from_secs(1),
+                ),
                 || {
                     attempts.set(attempts.get() + 1);
                     Err::<(), _>(rejection(
@@ -351,7 +290,7 @@ mod tests {
             let events = RefCell::new(Vec::new());
             let attempts = Cell::new(0);
             let result = retry_install_code_with(
-                RetryPolicy::try_new(3, Duration::from_secs(1)).unwrap(),
+                RetryPolicy::new(NonZeroUsize::new(3).unwrap(), Duration::from_secs(1)),
                 || {
                     events.borrow_mut().push("attempt");
                     attempts.set(attempts.get() + 1);
@@ -384,7 +323,7 @@ mod tests {
         let attempts = Cell::new(0);
         let not_retryable = rejection(ErrorCode::CanisterRejectedMessage, "not retryable");
         let result = retry_install_code_with(
-            RetryPolicy::try_new(3, Duration::from_secs(1)).expect("valid retry policy"),
+            RetryPolicy::new(NonZeroUsize::new(3).unwrap(), Duration::from_secs(1)),
             || {
                 attempts.set(attempts.get() + 1);
                 Err::<(), _>(not_retryable.clone())
@@ -394,13 +333,5 @@ mod tests {
 
         assert_eq!(result, Err(not_retryable));
         assert_eq!(attempts.get(), 1);
-    }
-
-    #[test]
-    fn retry_policy_rejects_zero_attempts() {
-        assert_eq!(
-            RetryPolicy::try_new(0, Duration::from_secs(1)),
-            Err(RetryPolicyError::ZeroMaxAttempts)
-        );
     }
 }

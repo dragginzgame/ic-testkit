@@ -8,16 +8,19 @@ PocketIC-oriented test utilities for Internet Computer canister tests.
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.41"
+ic-testkit = "0.46"
 ```
 
 The published MSRV is Rust 1.88, and the selected PocketIC line is 16.
 Canisters using benchmark markers can add the crate under `[dependencies]`.
-`pocket_ic` and `pic` are host-only; `benchmark`, `performance`,
-and `Fake` are available on `wasm32` as well.
+`pocket_ic` and `pic` are host-only. `performance` is Wasm-only;
+`benchmark` counters, parsing and aggregation, and `Fake` are available on both
+targets. Native directory, metadata and file-output APIs live in
+`benchmark::report`. Candid calls return contextual errors; choose caller-side
+`expect` when a fixture must panic. Standalone recipe builders return
+`std::io::Result<StandaloneCanisterFixture>`.
 
-This crate is the published Rust package in the `ic-testkit` workspace. It
-provides:
+This is the PocketIC package in the `ic-testkit` workspace. It provides:
 
 - direct re-exports of `PocketIc` and `PocketIcBuilder`
 - the complete host-only upstream crate at `ic_testkit::pocket_ic`
@@ -80,9 +83,9 @@ through `output()`, and inspect typed secondary failures through
 raw output files remain caller-owned. Replace matches on the old error enum
 with matches on `error.failure()`; no compatibility entry points are retained.
 
-Host-only shared APIs are available through the complete `ic_host_artifacts`,
-`ic_host_fs` and `ic_host_process` re-exports under `ic_testkit`.
-These select IC Host 0.17. Add `ic-host-tools` directly for Candid and IC helpers;
+Import generic Host APIs directly from `ic-host-artifacts`, `ic-host-fs` and
+`ic-host-process` dependencies. Testkit no longer re-exports those crates.
+Add `ic-host-tools` directly for Candid and IC helpers;
 the [0.35 migration guide](CHANGELOG.md#0350) covers the removed convenience
 re-export and current import paths. The [Host 0.14 migration guide](CHANGELOG.md#0340)
 covers dependency alignment, completed results for nonzero exits, explicit
@@ -112,8 +115,9 @@ compiled by the crate's normal all-target checks. The
 [transactional external-artifact example](https://github.com/dragginzgame/ic-build/blob/main/crates/ic-build/examples/transactional_artifact_cache.rs)
 is compiled and maintained by IC Build.
 
-Benchmark aggregate/comparison rows and aggregate errors use `suite()` for their
-label; `average(scale)` now returns checked floor-rounded `u128` means through
+Benchmark aggregate/comparison rows and aggregate errors expose
+`scope: BenchmarkScope::{Suite, All}` for their identity; `average(scale)` returns
+checked floor-rounded `u128` means through
 IC Metrics. `compare_benchmark_aggregates(current, previous, scale)` returns
 current/previous means and run counts, preserving missing rows and measured zero.
 Approximate percentage fields are removed. Aggregate CSV/text uses scale one in

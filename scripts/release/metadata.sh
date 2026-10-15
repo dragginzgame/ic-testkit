@@ -141,7 +141,7 @@ case "$mode" in
     cache_manifest=Cargo.toml
     if [[ -e "$prepared/ready" ]]; then
       check_recovery
-      for member in crates/ic-testkit crates/ic-testkit-native crates/ic_testkit_perf_probe; do
+      for member in crates/ic-testkit crates/ic-testkit-candid crates/ic-testkit-native crates/ic_testkit_perf_probe; do
         cmp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml" \
           || fail "saved member manifest changed: $member"
       done
@@ -192,9 +192,9 @@ case "$mode" in
         cp -p "$file" "$prepared/old/$file"
         cp -p "$file" "$prepared/new/$file"
       done
-      # Cargo owns lockfile generation. Resolve metadata in a private copy of
-      # this workspace's manifests; no builds or real version changes occur.
-      for member in crates/ic-testkit crates/ic-testkit-native crates/ic_testkit_perf_probe; do
+      # Retain a consistent saved manifest workspace for interrupted-release
+      # cache preparation, independent of partially installed live metadata.
+      for member in crates/ic-testkit crates/ic-testkit-candid crates/ic-testkit-native crates/ic_testkit_perf_probe; do
         mkdir -p "$prepared/new/$member/src"
         cp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml"
         : > "$prepared/new/$member/src/lib.rs"
@@ -207,19 +207,15 @@ case "$mode" in
       cargo sort --workspace "$prepared/new"
       # Member manifests are already sorted inputs, outside the release file
       # set. Formatting must not introduce an unstaged change to those inputs.
-      for member in crates/ic-testkit crates/ic-testkit-native crates/ic_testkit_perf_probe; do
+      for member in crates/ic-testkit crates/ic-testkit-candid crates/ic-testkit-native crates/ic_testkit_perf_probe; do
         cmp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml" \
           || fail "member manifest requires formatting before release: $member"
       done
-      cargo metadata --manifest-path "$prepared/new/Cargo.toml" --offline --format-version 1 >/dev/null
-      # Ignore only generated versions of this workspace's local packages;
-      # all registry records and dependency edges must remain byte-identical.
-      for tree in old new; do
-        perl -0pe 's/(\[\[package\]\]\nname = "(?:ic-testkit|ic-testkit-native|ic_testkit_perf_probe)"\nversion = ")[^"]+("\n)/${1}WORKSPACE${2}/g' \
-          "$prepared/$tree/Cargo.lock" > "$prepared/$tree/selected-dependencies"
-      done
-      cmp "$prepared/old/selected-dependencies" "$prepared/new/selected-dependencies" \
-        || fail "dependency selections changed"
+      # Project only admitted workspace versions; external records and edges
+      # remain byte-identical, without resolving the graph again.
+      perl "$script_dir/../ci/rewrite-local-lock-versions.pl" \
+        "$prepared/old/Cargo.lock" "$RELEASE_PREVIOUS" "$RELEASE_VERSION" \
+        ic-testkit ic-testkit-candid ic-testkit-native ic_testkit_perf_probe > "$prepared/new/Cargo.lock"
       for file in CHANGELOG.md crates/ic-testkit/CHANGELOG.md; do
         awk -v version="$RELEASE_VERSION" -v previous="$RELEASE_PREVIOUS" \
           -v date="$RELEASE_DATE" \

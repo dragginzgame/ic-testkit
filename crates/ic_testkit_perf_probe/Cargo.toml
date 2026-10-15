@@ -1,4 +1,5 @@
 [package]
+license.workspace = true
 name = "ic_testkit_perf_probe"
 edition.workspace = true
 rust-version.workspace = true
@@ -8,7 +9,7 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
-[dependencies]
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 candid = { workspace = true }
 ic-cdk = { workspace = true }
 ic-testkit = { workspace = true }

@@ -8,26 +8,194 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.41.1]
-
-- Add opt-in stable-memory IO counters with shared clone/reset observation,
-  specialized unsafe reads and sticky overflow reporting. Callers must reject
-  overflowed measurements; workloads and failure injection stay local
-  ([#95 — Own native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95)).
+## [0.46.1]
 
 ### Added
 
-- Add the dependency-free `ic-testkit-native` package for scoped native allocation
-  counts and elapsed time. Workloads remain caller-owned; PocketIC and canister
-  dependencies stay out of this package
-  ([#86 — Own native allocation measurement](https://github.com/dragginzgame/ic-testkit/issues/86)).
+- Add opt-in stable-memory IO counters with shared clone/reset observation,
+  specialized unsafe reads and sticky overflow reporting. Callers must reject
+  overflowed measurements; workloads and failure injection stay local.
+  [#95 — Own opt-in native stable-memory IO instrumentation](https://github.com/dragginzgame/ic-testkit/issues/95).
 
+- Add the default-feature dependency-free `ic-testkit-native` package for native allocation
+  measurement. Callers retain workloads, reports and exact assertions.
+  [#86 — Own lightweight native allocation measurement](https://github.com/dragginzgame/ic-testkit/issues/86).
+- Include the independent native package in existing test, lint, documentation,
+  compiler-floor, package and family-publication checks. Publication retries skip
+  every already-published package while preserving registry uncertainty refusal.
 
-### Testing
+## [0.46.0] - 2026-10-15
 
-- Include the native measurement package in configured package checks, both
-  Rust 1.88 targets, hook exports and release-metadata recovery fixtures
-  ([#86](https://github.com/dragginzgame/ic-testkit/issues/86)).
+### Breaking
+
+- Adopt Host 0.19 for native process and filesystem operations. Callers using
+  Host types exposed by Testkit must select the same Host minor line. Private
+  parent preparation now rejects ancestor symlinks and `..`; supply canonical
+  physical paths when intentionally selecting an alias.
+
+### Changed
+
+- Use Build 0.6's Cargo observation API for workspace discovery, preserving
+  selected tools, bounded diagnostics and unlimited build duration.
+- Refresh the reviewed Shared Tooling snapshot to committed 0.15.0, carry its
+  release-input validator into isolated metadata qualification, and share
+  formatter failure-evidence selection with the common owner.
+- Bound macOS RSS command capture with driver-selected, configurable output
+  limits, retaining complete-table admission, original causes and worker cleanup.
+  No elapsed-time limit is added.
+  [#101 — Adopt explicit Host RSS command limits](https://github.com/dragginzgame/ic-testkit/issues/101).
+
+### Added
+
+- Decode multiple top-level Candid reply arguments with `query_candid_args` and
+  `update_candid_args`, preserving explicit callers and contextual failures.
+  Existing single-result calls keep their decoding semantics.
+
+### Fixed
+
+- Skip simulated-time reads and same-time writes during zero-duration readiness
+  polling; preserve nonzero advancement, tick budgets and predicate ordering.
+- Give successful version-probe fixtures scheduling headroom on loaded hosts,
+  retaining the short deadline for the deliberately stalled probe.
+- Include MIT license text in both published crates and inherit the existing
+  workspace license in the private performance probe.
+
+Pass a tuple of reply types, such as `(u128, u128)`, to the new functions.
+This describes two top-level arguments; `CandidCallExt` still decodes one value,
+including tuple-valued replies. Both paths share encoding and transport/error
+handling. Use `()` for no replies and `(T,)` for one reply.
+
+## [0.45.0] - 2026-10-15
+
+### Breaking
+
+- Use fallible Candid query/update methods and choose caller-side `expect` where
+  desired; remove the four `_or_panic` convenience methods.
+- Import native benchmark directory, metadata and report-output APIs from
+  `benchmark::report`. Parsing, counters and aggregation remain portable;
+  filesystem reporting and Testkit's JSON dependency are native-only.
+- Return `std::io::Result<StandaloneCanisterFixture>` from standalone recipe
+  builders. Setup failures retain their causes and build-stage timings through
+  the existing pool error path.
+
+- Restrict `performance::Performance` and the direct IC CDK dependency to Wasm;
+  native callers emit supplied counters through `benchmark::format_marker`.
+- Use only `try_create_and_install`, `try_create_and_install_many` and
+  `StandaloneCanisterFixture::try_install`. Handle the result or choose an explicit
+  caller-side `expect`; remove the panic-only installation entry points.
+- Construct retry policies with `RetryPolicy::new(NonZeroUsize, cooldown)`;
+  `max_attempts()` returns that non-zero value. Remove `RetryPolicyError`.
+  Caller preparations: [Canic PR #572](https://github.com/dragginzgame/canic/pull/572)
+  and [Jobs PR #51](https://github.com/dragginzgame/ic-jobs/pull/51).
+- Import generic Host APIs directly from `ic-host-artifacts`, `ic-host-fs` and
+  `ic-host-process`; remove their complete re-exports through `ic_testkit`.
+  Existing Testkit signatures that expose Host-owned types retain those types.
+
+### Added
+
+- Add the independent `ic-testkit-candid` package for native/Wasm reply decoding
+  with caller-selected wire, work, type-table and header limits. Choose ordinary
+  single-result decoding or require exactly one wire argument without trailing
+  bytes. Decoder errors retain their original causes; existing PocketIC call
+  defaults are unchanged.
+  [#87 — Own a simulator-independent caller-bounded Candid reply codec](https://github.com/dragginzgame/ic-testkit/issues/87).
+
+### Changed
+
+- Share typed benchmark worker arguments and mode parsing between the driver
+  and workload, preserving native paths and independent report admission.
+- Check and package both published libraries. Publication observes each package
+  before uploading and skips completed uploads when retrying a partial release.
+
+### Fixed
+
+- Fix release-guard qualification for standalone Candid tests, retaining
+  PocketIC admission and package-specific failure ordering. Surface the failing
+  substituted recipe log when a product target unexpectedly fails.
+
+## [0.44.0] - 2026-10-15
+
+### Breaking
+
+- Read `CandidCallError` and `CandidCallContext` through their existing public
+  fields; remove their duplicate getters. Use `context.as_deref()` and
+  `reject_response.as_deref()` when borrowing boxed optional values.
+  Canic caller preparation is in [PR #569](https://github.com/dragginzgame/canic/pull/569).
+
+- Capture snapshots through `capture_snapshots(targets)` and restore through
+  `restore_snapshots(snapshots, funding)`. Select each sender explicitly; restore
+  reuses the captured sender without fallback. Cached baselines use
+  `capture(instance, targets, metadata)` and `restore(funding)`. Snapshot rejection
+  errors expose one `sender` and `response` instead of an attempt list.
+  Canic preparation is in [draft PR #570](https://github.com/dragginzgame/canic/pull/570);
+  normal adoption awaits publication and its pending upstream integration.
+- Match aggregate/comparison rows and aggregate errors through the public
+  `scope: BenchmarkScope::{Suite, All}` field instead of `suite()` and
+  `is_all_suites()`. Existing report formats remain unchanged.
+
+### Changed
+
+- Share catch-all PocketIC panic conversion across installation, snapshots and
+  diagnostics, preserving contextual failures, cleanup and recovery decisions.
+  Candid calls still resume unrelated panics with their original payload.
+- Create and admit private server setup directories through IC Host FS,
+  retaining the directory descriptor until verified bundle publication.
+  Failed attempts and installed bundles retain their existing layout and policy.
+
+## [0.43.0] - 2026-10-14
+
+### Breaking
+
+- Remove the redundant `PocketIcTimeExt` trait and its prelude export. Read
+  nanoseconds directly with `pic.get_time().as_nanos_since_unix_epoch()`;
+  update trait imports and call sites. Simulated polling remains unchanged.
+  Jobs caller preparation is in [PR #49](https://github.com/dragginzgame/ic-jobs/pull/49);
+  Canic caller preparation is in [PR #565](https://github.com/dragginzgame/canic/pull/565).
+
+### Changed
+
+- Share the fixture benchmark worker/driver report types and decode borrowed
+  JSON without cloning the complete report. Preserve raw worker fields, required
+  phases, workload matching and driver-owned sampling admission.
+- Render benchmark terminal columns through IC Host Text 0.18.2 with computed
+  widths and escaped cells. Numeric formatting and JSON reports remain local.
+- Serialize benchmark metadata directly from its typed record, retaining JSON
+  fields and the trailing newline; key presentation follows record order.
+
+## [0.42.0] - 2026-10-14
+
+### Breaking
+
+- The public IC Host reexports now select 0.18. Following file reads/hashes
+  admit their opened descriptor instead of checking metadata before opening.
+  Native open failures therefore precede type/size refusal; callers relying on
+  error precedence must update their handling. No stored-format migration is
+  required for this library contract change.
+
+### Changed
+
+- Select reviewed Shared Tooling 0.12.7 and its local-lockfile rewriter for
+  release preparation. Only exact unsourced workspace package versions and
+  local dependency references change; all external selections remain intact.
+  Saved manifests still support cache preparation after interrupted metadata
+  installation, and final locked Cargo admission remains independent
+  ([#73 — Adopt snapshot-owned common tool catalogs](https://github.com/dragginzgame/ic-testkit/issues/73)).
+
+### Added
+
+- Use `testing::read_http_request_line` to classify a synthetic request without
+  waiting for headers/body, then `read_http_request_with_line` on that same
+  socket to complete it under the original absolute deadline. Both phases
+  retain caller-selected bounds, response policy and failure injection; the
+  existing whole-request helper remains available for complete peers
+  ([Blob #70](https://github.com/dragginzgame/ic-blob-storage/issues/70)).
+
+### Fixed
+
+- Allocate retained idle-lifetime evidence atomically with a randomized temporary
+  directory under `target/`. Previous logs remain intact when CI restores its
+  cache; the server lifetime and evidence upload paths retain their contracts
+  ([#91](https://github.com/dragginzgame/ic-testkit/issues/91)).
 
 ## [0.41.0] - 2026-10-14
 

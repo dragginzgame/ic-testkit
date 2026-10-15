@@ -1,22 +1,19 @@
 //! Focused PocketIC test-harness utilities for Internet Computer canisters.
 //!
-//! `ic-testkit` keeps PocketIC itself visible: [`pocket_ic`] re-exports the
-//! complete upstream crate, while [`pic`] retains convenient runtime type
+//! `ic-testkit` keeps PocketIC itself visible: `pocket_ic` re-exports the
+//! complete upstream crate, while `pic` retains convenient runtime type
 //! re-exports and adds extension traits for typed Candid calls, generic
 //! installation, diagnostics, snapshots, startup errors, caller-owned
-//! managed-server startup, bounded readiness polling, and a small time conversion. It does not provide a
+//! managed-server startup and bounded readiness polling. It does not provide a
 //! simulator wrapper or a host-wide runtime lock.
 //!
 //! The crate also provides:
 //!
-//! - bounded artifact inspection through [`ic_host_artifacts`], filesystem
-//!   operations through [`ic_host_fs`], verified execution through
-//!   [`ic_host_process`];
 //! - marker parsing, aggregation, comparison, and reports in [`benchmark`];
-//! - canister-side marker emission in [`performance`];
+//! - canister-side marker emission in `performance` (Wasm only);
 //! - deterministic test principals through [`Fake`].
 //!
-//! The [`pocket_ic`], [`pic`] and host-library exports are unavailable
+//! The `pocket_ic` and `pic` exports are unavailable
 //! when compiling for `wasm32`; benchmark data types and marker emission remain
 //! available to canister code.
 
@@ -26,14 +23,12 @@ pub mod benchmark;
 pub use pocket_ic;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use {ic_host_artifacts, ic_host_fs, ic_host_process};
-
-#[cfg(not(target_arch = "wasm32"))]
 pub mod pic;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod testing;
 
+#[cfg(target_arch = "wasm32")]
 pub mod performance;
 
 use candid::Principal;

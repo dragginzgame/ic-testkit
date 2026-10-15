@@ -24,26 +24,31 @@ use std::os::fd::AsFd as _;
 #[cfg(unix)]
 use std::os::unix::{fs::PermissionsExt as _, process::CommandExt as _};
 
-use ic_build::artifacts::{
-    WasmBuildError, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached,
-    workspace_root_for,
+use ic_build::{
+    artifacts::{WasmBuildError, WasmBuildOutcome, WasmBuildSpec, build_wasm_canisters_cached},
+    cargo::observation::workspace_root_for,
 };
-use ic_testkit::{
-    ic_host_artifacts::artifact::ArtifactError,
-    ic_host_fs::{
-        durable::{NamedWriteError, PublicationMode, WriteOptions, write_at_validated_with},
-        read::{hash_file, read_opened_file},
-    },
-    ic_host_process::{
-        sampling,
-        tool::{ResolutionError, resolve_executable},
-    },
+use ic_host_artifacts::artifact::ArtifactError;
+use ic_host_fs::{
+    durable::{NamedWriteError, PublicationMode, WriteOptions, write_at_validated_with},
+    read::{hash_file, read_opened_file},
 };
+use ic_host_process::{
+    sampling,
+    tool::{OutputLimit, OutputLimits, ResolutionError, resolve_executable},
+};
+use ic_host_text::table::{self, Alignment};
 use serde_json::{Map, Value, json};
 
+use crate::fixture_reuse_protocol::{Mode, WorkerArguments};
 use arguments::{HELP, Options, parse_arguments};
 use report::{MeasuredRun, Summary, summarize};
 
+const WORKSPACE_DISCOVERY_LIMITS: OutputLimits = OutputLimits {
+    stdout: OutputLimit::Terminate(64 * 1024),
+    stderr: OutputLimit::Terminate(64 * 1024),
+    timeout: None,
+};
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 const REPORT_LIMIT: u64 = 16 * 1024 * 1024;
 const WASM_LIMIT: u64 = 128 * 1024 * 1024;
@@ -227,7 +232,10 @@ struct CapturedRun {
     rss: (u64, usize, usize),
 }
 
-fn measure(command: &mut Command) -> Result<CapturedRun, Error> {
+fn measure(
+    command: &mut Command,
+    mut snapshot: impl FnMut() -> Result<sampling::Snapshot, sampling::SamplingError>,
+) -> Result<CapturedRun, Error> {
     check_interrupted()?;
     let mut output = tempfile::Builder::new()
         .permissions(Permissions::from_mode(0o600))
@@ -244,8 +252,7 @@ fn measure(command: &mut Command) -> Result<CapturedRun, Error> {
         let mut peak_processes = 0;
         let mut count = 0;
         while child.try_wait()?.is_none() && !INTERRUPTED.load(Ordering::Relaxed) {
-            let (resident, processes) =
-                sampling::tree_rss(child.id(), &sampling::snapshot(64 * 1024)?)?;
+            let (resident, processes) = sampling::tree_rss(child.id(), &snapshot()?)?;
             peak_rss = peak_rss.max(resident);
             peak_processes = peak_processes.max(processes);
             count += 1;
@@ -307,9 +314,7 @@ fn build_command(command: &mut Command) -> Result<(), Error> {
 }
 
 fn print_summary(summaries: &BTreeMap<String, Summary>, labels: &[String]) -> Result<(), Error> {
-    println!(
-        "Mode        work ms   incl. setup/drop ms   tasks/s   restore mean ms   wait mean ms   peak RSS MiB"
-    );
+    let mut rows = Vec::with_capacity(labels.len());
     for label in labels {
         let summary = &summaries[label];
         let (Some(work), Some(fixture), Some(rate), Some(peak), Some(wait)) = (
@@ -324,15 +329,44 @@ fn print_summary(summaries: &BTreeMap<String, Summary>, labels: &[String]) -> Re
         let restore = summary.phases_ms["restore_ms"]
             .as_ref()
             .map_or_else(|| "-".into(), |restore| format!("{:.2}", restore.mean));
-        println!(
-            "{label:10} {:9.2} {:21.2} {:9.2} {restore:>17} {:14.2} {:14.2}",
-            work.p50,
-            fixture.p50,
-            rate.p50,
-            wait.mean,
-            peak.p50 / 1024.0 / 1024.0
-        );
+        rows.push([
+            label.clone(),
+            format!("{:.2}", work.p50),
+            format!("{:.2}", fixture.p50),
+            format!("{:.2}", rate.p50),
+            restore,
+            format!("{:.2}", wait.mean),
+            format!("{:.2}", peak.p50 / 1024.0 / 1024.0),
+        ]);
     }
+    println!(
+        "{}",
+        table::render(
+            &[
+                "Mode",
+                "work ms",
+                "incl. setup/drop ms",
+                "tasks/s",
+                "restore mean ms",
+                "wait mean ms",
+                "peak RSS MiB"
+            ],
+            &rows,
+            &[
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right,
+                Alignment::Right
+            ],
+            table::Options {
+                column_gap: 2,
+                header_separator: false
+            },
+        )
+    );
     Ok(())
 }
 
@@ -371,7 +405,13 @@ fn cargo_command(cargo: &Path, root: &Path, rustc: Option<&Path>) -> Command {
 }
 
 fn prepare(options: &Options) -> Result<Inputs, Error> {
-    let root = workspace_root_for(env!("CARGO_MANIFEST_DIR"))?;
+    let cargo = tool_program(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))?;
+    let rustc = std::env::var_os("RUSTC").map(tool_program).transpose()?;
+    let root = workspace_root_for(
+        env!("CARGO_MANIFEST_DIR"),
+        WORKSPACE_DISCOVERY_LIMITS,
+        cargo_command(&cargo, &std::env::current_dir()?, rustc.as_deref()),
+    )?;
     if !root
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -388,8 +428,6 @@ fn prepare(options: &Options) -> Result<Inputs, Error> {
     if !ic_testkit::pic::supports_pocket_ic_server(server_version.as_bytes()) {
         return Err(Error::InvalidData("expected pocket-ic-server 16.x.y"));
     }
-    let cargo = tool_program(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))?;
-    let rustc = std::env::var_os("RUSTC").map(tool_program).transpose()?;
     let metadata: Value = serde_json::from_str(&text_command(
         cargo_command(&cargo, &root, rustc.as_deref()).args([
             "metadata",
@@ -484,9 +522,11 @@ fn provenance(
         "working_tree_dirty": !text_command(Command::new("git").args(["status", "--porcelain"]).current_dir(root))?.is_empty(),
         "host_profile": options.profile, "wasm_profile": "dev", "wasm_sha256": hash_file(wasm, WASM_LIMIT).map_err(Error::Artifact)?.sha256.to_string(),
         "rss_sample_interval_ms": SAMPLE_INTERVAL.as_millis(), "rss_sampler": sampling::source(),
+        "rss_command_stdout_bytes": options.rss_limits.stdout.retained_bytes(),
+        "rss_command_stderr_bytes": options.rss_limits.stderr.retained_bytes(),
         "iterations": options.iterations.get(), "workers": options.workers.get(), "repeats": options.repeats.get(),
         "state_bytes_per_canister": options.state_bytes, "modes": options.modes.iter().map(|mode| mode.as_str()).collect::<Vec<_>>(),
-        "pool_capacities": if options.modes.contains(&arguments::Mode::Pooled) { options.capacities.iter().map(|capacity| capacity.get()).collect::<Vec<_>>() } else { vec![] },
+        "pool_capacities": if options.modes.contains(&Mode::Pooled) { options.capacities.iter().map(|capacity| capacity.get()).collect::<Vec<_>>() } else { vec![] },
     }))
 }
 
@@ -517,18 +557,20 @@ pub fn run() -> Result<(), Error> {
         {
             check_interrupted()?;
             eprintln!("Run {}/{}: {}", repeat + 1, options.repeats, case.label);
+            let invocation = WorkerArguments {
+                mode: case.mode,
+                capacity: case.capacity,
+                iterations: options.iterations,
+                workers: options.workers,
+                state_bytes: options.state_bytes,
+                wasm: inputs.wasm.record().artifacts()[0].clone(),
+                server: inputs.server.clone(),
+            };
             let captured = measure(
                 Command::new(&inputs.worker)
-                    .args([
-                        case.mode.as_str().to_owned(),
-                        case.capacity.to_string(),
-                        options.iterations.to_string(),
-                        options.workers.to_string(),
-                        options.state_bytes.to_string(),
-                    ])
-                    .arg(&inputs.wasm.record().artifacts()[0])
-                    .arg(&inputs.server)
+                    .args(<[OsString; 7]>::from(invocation))
                     .current_dir(&inputs.root),
+                || sampling::snapshot(64 * 1024, options.rss_limits),
             )?;
             let measured = MeasuredRun::from_worker(captured.raw, &options, case, captured.rss)?;
             runs.get_mut(&case.label)
@@ -576,6 +618,11 @@ mod tests {
 
     #[cfg(unix)]
     use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+    fn snapshot()
+    -> Result<ic_host_process::sampling::Snapshot, ic_host_process::sampling::SamplingError> {
+        ic_host_process::sampling::snapshot(64 * 1024, super::arguments::RSS_COMMAND_LIMITS)
+    }
 
     fn fixture_directory() -> tempfile::TempDir {
         tempfile::Builder::new()
@@ -714,7 +761,11 @@ mod tests {
         fs::write(
             root.join("workspace.json"),
             serde_json::to_vec(&json!({"root":
-                ic_build::artifacts::workspace_root_for(env!("CARGO_MANIFEST_DIR"))
+                ic_build::cargo::observation::workspace_root_for(
+                    env!("CARGO_MANIFEST_DIR"),
+                    super::WORKSPACE_DISCOVERY_LIMITS,
+                    Command::new(env!("CARGO")),
+                )
                     .unwrap().join("Cargo.toml")
             }))
             .unwrap(),
@@ -939,6 +990,46 @@ esac
 
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn sampling_failure_waits_for_worker_completion() {
+        let scratch = fixture_directory();
+        let finished = scratch.path().join("finished");
+        let result = measure(
+            Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    "sleep 0.1; printf done > \"$1\"",
+                    "sampling-failure-worker",
+                ])
+                .arg(&finished),
+            || {
+                ic_host_process::sampling::snapshot(
+                    0,
+                    ic_host_process::tool::OutputLimits {
+                        stdout: ic_host_process::tool::OutputLimit::Terminate(0),
+                        ..super::arguments::RSS_COMMAND_LIMITS
+                    },
+                )
+            },
+        );
+        assert_eq!(fs::read(finished).unwrap(), b"done");
+        let Err(Error::Sampling(error)) = result else {
+            panic!("sampling must fail with its original cause");
+        };
+        assert!(std::error::Error::source(&error).is_some());
+        #[cfg(target_os = "linux")]
+        assert!(matches!(
+            error,
+            ic_host_process::sampling::SamplingError::Io(_)
+        ));
+        #[cfg(target_os = "macos")]
+        assert!(matches!(
+            error,
+            ic_host_process::sampling::SamplingError::Command(_)
+        ));
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn native_measurement_keeps_large_reports_and_rejects_failed_workers() {
         let scratch = fixture_directory();
         let input = scratch.path().join("input.json");
@@ -952,13 +1043,14 @@ esac
             Command::new("/bin/sh")
                 .args(["-c", "sleep 0.1; cat \"$1\"", "test-worker"])
                 .arg(&input),
+            snapshot,
         )
         .unwrap();
         assert_eq!(captured.raw["padding"], padding);
         assert!(captured.rss.2 > 0);
         assert!(captured.rss.0 > 0);
         assert!(
-            matches!(measure(Command::new("/bin/sh").args(["-c", "exit 23"])), Err(Error::CommandFailed { status, .. }) if status.code() == Some(23))
+            matches!(measure(Command::new("/bin/sh").args(["-c", "exit 23"]), snapshot), Err(Error::CommandFailed { status, .. }) if status.code() == Some(23))
         );
     }
 
@@ -975,16 +1067,20 @@ esac
             Command::new("/bin/sh")
                 .args(["-c", "cat \"$1\"", "large-worker"])
                 .arg(&input),
+            snapshot,
         );
         assert!(matches!(
             result,
             Err(Error::Artifact(
-                ic_testkit::ic_host_artifacts::artifact::ArtifactError::LimitExceeded { .. }
+                ic_host_artifacts::artifact::ArtifactError::LimitExceeded { .. }
             ))
         ));
         assert_eq!(fs::metadata(input).unwrap().len(), REPORT_LIMIT + 1);
         assert!(matches!(
-            measure(Command::new("/bin/sh").args(["-c", "printf 'not json'"])),
+            measure(
+                Command::new("/bin/sh").args(["-c", "printf 'not json'"]),
+                snapshot
+            ),
             Err(Error::Json(_))
         ));
     }
@@ -1024,6 +1120,7 @@ esac
                 ])
                 .arg(std::process::id().to_string())
                 .arg(&finished),
+            snapshot,
         );
         assert!(matches!(result, Err(Error::Interrupted)));
         assert_eq!(fs::read(finished).unwrap(), b"done");

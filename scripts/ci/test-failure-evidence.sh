@@ -328,7 +328,7 @@ done
 # A failed selector may emit partial pairs: archive them as diagnostics, never
 # use them to read even an otherwise accessible outside payload.
 mkdir "$fixture/partial-collector" "$fixture/partial-temp" "$fixture/partial-unpacked"
-cp "$collector" "$root/scripts/ci/archive-evidence.sh" "$fixture/partial-collector/"
+cp "$collector" "$root/scripts/ci/archive-evidence.sh" "$root/scripts/ci/formatting-evidence.sh" "$fixture/partial-collector/"
 cat > "$fixture/partial-collector/select-tool-evidence.sh" <<'SELECTOR'
 #!/usr/bin/env bash
 printf '%s\0%s\0' "$IC_TESTKIT_EVIDENCE_OUTSIDE" unrelated

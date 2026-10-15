@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
     fmt,
-    panic::{AssertUnwindSafe, catch_unwind},
     time::{Duration, Instant},
 };
 
@@ -545,17 +544,13 @@ pub trait PocketIcDiagnosticsExt {
             .map(|labeled| {
                 let entry_started = Instant::now();
                 let request = labeled.request;
-                let report = catch_unwind(AssertUnwindSafe(|| {
-                    self.collect_canister_diagnostics(request)
-                }))
-                .unwrap_or_else(|payload| {
-                    let message = transport::panic_payload_to_string(payload.as_ref());
-                    CanisterDiagnosticsReport {
-                        request,
-                        status: Err(diagnostic_panic_failure(message.clone())),
-                        logs: Err(diagnostic_panic_failure(message)),
-                    }
-                });
+                let report =
+                    transport::capture_operation(|| self.collect_canister_diagnostics(request))
+                        .unwrap_or_else(|source| CanisterDiagnosticsReport {
+                            request,
+                            status: Err(diagnostic_panic_failure(source.clone())),
+                            logs: Err(diagnostic_panic_failure(source)),
+                        });
                 CanisterDiagnosticsBatchEntry {
                     label: labeled.label.clone(),
                     report,
@@ -637,18 +632,18 @@ impl PocketIcDiagnosticsExt for PocketIc {
 fn capture_diagnostic_call<T>(
     call: impl FnOnce() -> Result<T, RejectResponse>,
 ) -> Result<T, CanisterDiagnosticFailure> {
-    match catch_unwind(AssertUnwindSafe(call)) {
+    match transport::capture_operation(call) {
         Ok(Ok(value)) => Ok(value),
         Ok(Err(response)) => Err(CanisterDiagnosticFailure::Rejected(response)),
-        Err(payload) => {
-            let message = transport::panic_payload_to_string(payload.as_ref());
-            Err(diagnostic_panic_failure(message))
-        }
+        Err(source) => Err(diagnostic_panic_failure(source)),
     }
 }
 
-fn diagnostic_panic_failure(message: String) -> CanisterDiagnosticFailure {
-    if transport::is_dead_instance_transport_error(&message) {
+fn diagnostic_panic_failure(
+    source: transport::PocketIcOperationError,
+) -> CanisterDiagnosticFailure {
+    let message = source.to_string();
+    if source.is_transport() {
         CanisterDiagnosticFailure::InstanceUnavailable { message }
     } else {
         CanisterDiagnosticFailure::Panicked { message }

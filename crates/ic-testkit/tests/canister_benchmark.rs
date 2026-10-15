@@ -1,21 +1,34 @@
 mod support;
 use candid::Principal;
-use ic_build::artifacts::{WasmBuildSpec, build_wasm_canisters_cached, workspace_root_for};
+use ic_build::{
+    artifacts::{WasmBuildSpec, build_wasm_canisters_cached},
+    cargo::observation::workspace_root_for,
+};
+use ic_host_fs::read::read_file;
+use ic_host_process::tool::{OutputLimit, OutputLimits};
 use ic_testkit::{
     benchmark::{
         BenchmarkEventSource, BenchmarkParserConfig, pair_benchmark_spans,
         parse_benchmark_events_from_source,
     },
-    ic_host_fs::read::read_file,
     pic::{CandidCallExt, InstallSpec, StandaloneCanisterFixture},
 };
+use std::process::Command;
 use support::unique_temp_directory as unique_temp_dir;
 const PERF_PROBE_PACKAGE: &str = "ic_testkit_perf_probe";
 
 #[test]
 fn perf_probe_canister_emits_parseable_benchmark_markers() {
-    let workspace =
-        workspace_root_for(env!("CARGO_MANIFEST_DIR")).expect("resolve Cargo workspace");
+    let workspace = workspace_root_for(
+        env!("CARGO_MANIFEST_DIR"),
+        OutputLimits {
+            stdout: OutputLimit::Terminate(64 * 1024),
+            stderr: OutputLimit::Terminate(64 * 1024),
+            timeout: None,
+        },
+        Command::new(std::env::var_os("CARGO").unwrap_or_else(|| env!("CARGO").into())),
+    )
+    .expect("resolve Cargo workspace");
     if !workspace
         .join("crates/ic_testkit_perf_probe/Cargo.toml")
         .is_file()
@@ -35,8 +48,11 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
         .first()
         .expect("perf probe build returns its retained Wasm");
     let wasm = read_file(wasm_path, 128 * 1024 * 1024).expect("read retained bounded Wasm");
-    let fixture =
-        StandaloneCanisterFixture::install(support::pocket_ic(), InstallSpec::new(wasm, vec![], 0));
+    let fixture = StandaloneCanisterFixture::try_install(
+        support::pocket_ic(),
+        InstallSpec::new(wasm, vec![], 0),
+    )
+    .expect("install standalone fixture");
     let result: u64 = fixture
         .pocket_ic()
         .update_candid(fixture.canister_id(), "benchmark_once", ())

@@ -47,6 +47,8 @@ function emit(i) {
     }
 }
 END {
+    # Direct callers must not turn retained previous history into a downgrade.
+    if (previous != "" && historical(version)) conflict = 1
     if (!first || (top != "## [" version "]" &&
         !(allow_finalized && top == "## [" version "] - " date) &&
         !(previous != "" && (top == "## [" previous "]" ||

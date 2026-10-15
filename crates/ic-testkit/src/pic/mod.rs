@@ -6,7 +6,7 @@
 //!
 //! Construct and own [`PocketIc`] instances normally, then import individual
 //! extension traits or [`prelude`] for Candid calls, installation, diagnostics,
-//! snapshots, fallible startup, bounded predicate polling and nanosecond time conversion. Native
+//! snapshots, fallible startup, bounded predicate polling. Native
 //! simulator operations remain upstream inherent methods.
 //!
 //! [`PocketIcManagedServer`] can explicitly own one exact caller-selected
@@ -46,7 +46,7 @@ pub use baseline_pool::{
     ResetDomainPolicy, ResetReceipt, ResetRequirements, StateResetPolicy, TimeResetPolicy,
     ValidationReceipt,
 };
-pub use calls::CandidCallExt;
+pub use calls::{CandidCallExt, query_candid_args, update_candid_args};
 pub use diagnostics::{
     CanisterDiagnosticFailure, CanisterDiagnosticLogRecord, CanisterDiagnosticLogs,
     CanisterDiagnosticsBatchContractError, CanisterDiagnosticsBatchEntry,
@@ -58,10 +58,10 @@ pub use errors::{
     CandidCallContext, CandidCallError, CandidCallErrorKind, CanisterInstallError,
     CanisterInstallPhase, StandaloneCanisterInstallError,
 };
-pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy, RetryPolicyError};
+pub use lifecycle::{CanisterInstallExt, InstallSpec, RetryPolicy};
 pub use snapshot::{
     CanisterSnapshotTarget, ControllerSnapshotError, ControllerSnapshots, PocketIcSnapshotExt,
-    SnapshotAttemptFailure, SnapshotCleanupFailure, SnapshotRestoreFunding,
+    SnapshotCleanupFailure, SnapshotRestoreFunding,
 };
 pub use standalone::StandaloneCanisterFixture;
 pub use standalone_recipe::StandaloneCanisterRecipe;
@@ -69,7 +69,7 @@ pub use startup::{
     PocketIcInstance, PocketIcManagedServer, PocketIcManagedServerOutput, PocketIcStartupConfig,
     PocketIcStartupError, PocketIcStartupFailure,
 };
-pub use time::{PocketIcTimeExt, TickUntilError, tick_until};
+pub use time::{TickUntilError, tick_until};
 pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};
 
 /// All PocketIC extension traits, and no data types.
@@ -79,6 +79,5 @@ pub use transport::{PocketIcOperationError, is_dead_pocket_ic_transport_error};
 pub mod prelude {
     pub use super::{
         CandidCallExt, CanisterInstallExt, PocketIcDiagnosticsExt, PocketIcSnapshotExt,
-        PocketIcTimeExt,
     };
 }

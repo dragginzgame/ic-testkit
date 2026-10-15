@@ -1683,10 +1683,16 @@ mod tests {
                 label,
                 &format!("#!/bin/sh\n[ \"$1\" = --version ] || exit 99\n{body}\n"),
             );
-            let result =
-                PocketIcStartupConfig::from_environment(Duration::from_millis(200), |name| {
-                    (name == "POCKET_IC_BIN").then(|| script.path().into_os_string())
-                });
+            // A successful process launch needs scheduling headroom on loaded CI
+            // hosts; only the deliberately stalled probe needs a short deadline.
+            let timeout = if label == "version-timeout" {
+                Duration::from_millis(200)
+            } else {
+                Duration::from_secs(5)
+            };
+            let result = PocketIcStartupConfig::from_environment(timeout, |name| {
+                (name == "POCKET_IC_BIN").then(|| script.path().into_os_string())
+            });
             match (
                 expected,
                 result.as_ref().map_err(PocketIcStartupError::failure),
