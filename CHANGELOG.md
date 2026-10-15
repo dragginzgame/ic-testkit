@@ -6,7 +6,7 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.43.0]
+## [0.45.0]
 
 ### Breaking
 
@@ -14,6 +14,59 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   Native fixture callers select optional or required Content-Length framing and
   retain partial bytes with typed failure causes. The phased request-line helper
   remains available and now shares the same framing engine.
+
+## [0.44.0] - 2026-10-15
+
+### Breaking
+
+- Read `CandidCallError` and `CandidCallContext` through their existing public
+  fields; remove their duplicate getters. Use `context.as_deref()` and
+  `reject_response.as_deref()` when borrowing boxed optional values.
+  Canic caller preparation is in [PR #569](https://github.com/dragginzgame/canic/pull/569).
+
+- Capture snapshots through `capture_snapshots(targets)` and restore through
+  `restore_snapshots(snapshots, funding)`. Select each sender explicitly; restore
+  reuses the captured sender without fallback. Cached baselines use
+  `capture(instance, targets, metadata)` and `restore(funding)`. Snapshot rejection
+  errors expose one `sender` and `response` instead of an attempt list.
+  Canic preparation is in [draft PR #570](https://github.com/dragginzgame/canic/pull/570);
+  normal adoption awaits publication and its pending upstream integration.
+- Match aggregate/comparison rows and aggregate errors through the public
+  `scope: BenchmarkScope::{Suite, All}` field instead of `suite()` and
+  `is_all_suites()`. Existing report formats remain unchanged.
+
+### Changed
+
+- Share catch-all PocketIC panic conversion across installation, snapshots and
+  diagnostics, preserving contextual failures, cleanup and recovery decisions.
+  Candid calls still resume unrelated panics with their original payload.
+- Create and admit private server setup directories through IC Host FS,
+  retaining the directory descriptor until verified bundle publication.
+  Failed attempts and installed bundles retain their existing layout and policy.
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0440)
+
+## [0.43.0] - 2026-10-14
+
+### Breaking
+
+- Remove the redundant `PocketIcTimeExt` trait and its prelude export. Read
+  nanoseconds directly with `pic.get_time().as_nanos_since_unix_epoch()`;
+  update trait imports and call sites. Simulated polling remains unchanged.
+  Jobs caller preparation is in [PR #49](https://github.com/dragginzgame/ic-jobs/pull/49);
+  Canic caller preparation is in [PR #565](https://github.com/dragginzgame/canic/pull/565).
+
+### Changed
+
+- Share the fixture benchmark worker/driver report types and decode borrowed
+  JSON without cloning the complete report. Preserve raw worker fields, required
+  phases, workload matching and driver-owned sampling admission.
+- Render benchmark terminal columns through IC Host Text 0.18.2 with computed
+  widths and escaped cells. Numeric formatting and JSON reports remain local.
+- Serialize benchmark metadata directly from its typed record, retaining JSON
+  fields and the trailing newline; key presentation follows record order.
+
+[Integration details](crates/ic-testkit/CHANGELOG.md#0430)
 
 ## [0.42.0] - 2026-10-14
 

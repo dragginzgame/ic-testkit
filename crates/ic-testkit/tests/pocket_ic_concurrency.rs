@@ -18,7 +18,6 @@ use ic_testkit::pic::{
     CachedPocketIcBaselinePool, ControllerSnapshotError, FixtureRecipeId, InstallSpec, PocketIc,
     PocketIcBuilder, PocketIcInstance, PocketIcStartupConfig, PocketIcStartupFailure,
     RebuildReason, SnapshotRestoreFunding, StandaloneCanisterFixture, StandaloneCanisterRecipe,
-    prelude::*,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(60);
@@ -131,10 +130,6 @@ fn standalone_accepts_a_caller_built_instance_and_preserves_it_in_parts() {
     let (owned, canister_id) = fixture.into_parts();
     let pocket_ic = &owned.instance;
 
-    assert_eq!(
-        pocket_ic.current_time_nanos(),
-        pocket_ic.get_time().as_nanos_since_unix_epoch()
-    );
     pocket_ic
         .canister_status(canister_id, None)
         .expect("PocketIC returned by into_parts should remain usable");

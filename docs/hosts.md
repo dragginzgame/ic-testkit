@@ -1,18 +1,135 @@
 # Host support and qualification
 
-## Pending 0.43.0: retained synthetic HTTP capture
+## Pending 0.45.0: retained synthetic HTTP capture
 
-The Backup-driven HTTP capture contribution is reconciled with released 0.42.0.
+The Backup-driven HTTP capture contribution is reconciled with released 0.44.0.
 `testing::capture_http_request` retains exact partial bytes and typed failure
 causes under one deadline; the phased request-line completion keeps its public
 signature and now uses that same framing engine. Removing the old whole-request
-`read_http_request` signature selects 0.43.0 before 1.0. Callers using that
+`read_http_request` signature selects 0.45.0 before 1.0. Callers using that
 helper must select a Content-Length policy and inspect `HttpCapture` or convert
 it with `into_result` when partial evidence is unnecessary. Socket responses,
 application fault injection and evidence-file custody remain caller-owned.
-Linux focused framing, all 80 active library cases and six teardown cases pass,
-along with strict all-target Clippy/docs and Rust 1.88 checking. Native macOS
-acceptance, full CI and publication remain separate.
+On the merged 0.44.0 base, the seven focused HTTP cases, all 80 active library
+cases and six teardown cases pass on Linux, along with strict all-target Clippy
+and Rust formatting. Earlier branch qualification covered warning-denied docs
+and Rust 1.88; those checks have not been repeated on this merged tree. Native
+macOS, full CI and publication remain separate.
+
+## Pending 0.44.0: explicit snapshots and structural benchmark scope
+
+Snapshot capture takes exact targets; restore takes explicit funding and reuses
+captured senders. Rejections retain one sender/response and partial-capture
+cleanup remains transactional. Benchmark scope is a public enum field; a probe
+through the real report writer produces ten byte-identical files before/after,
+including a suite named ALL, comparisons, escaped labels and missing values.
+
+Linux qualification passes 28 benchmark cases, 13 baseline-pool cases, 10
+concurrency cases, five snapshot cases, the snapshot funding unit case and the
+explicitly selected owned-server/baseline lifetime case. Affected strict Clippy,
+library Rust 1.88, warning-denied docs and formatting pass. Examples on Rust 1.88
+are refused by the incoming Build 0.3.3 graph's cargo-platform 0.3.3 (Rust 1.91),
+tracked in [Build #34 — Published dependency graph exceeds Rust 1.88](https://github.com/dragginzgame/ic-build/issues/34); no
+selection was downgraded. Native macOS and full release gates are unrun.
+
+[Draft Canic PR #570](https://github.com/dragginzgame/canic/pull/570) prepares the
+caller migration. An isolated copy of its pending 0.43 adoption graph compiles
+and passes package-only strict Clippy with this Testkit source and the already
+prepared clock/error migrations. A dependency-lint attempt hits the pending
+Canic Host input_snapshot length warning (104/100); unrelated source is untouched.
+This is not published-main or live Canic acceptance. The PR needs Testkit 0.44
+publication and Canic's pending dependency integration.
+
+Source before-images include all incoming edits at Testkit HEAD
+`940e0835d00d64f4326ae4ae6b99ac3dd4ea5b92`. Logs, private graph selections, report
+outputs and qualified inputs are retained under `/tmp/testkit-44-contracts.U333KL/`.
+Own metadata and the incoming normal lock remain unchanged.
+
+## Pending 0.44.0: error access and native operation boundaries
+
+Candid errors and contexts now use their existing public fields without duplicate
+getters. Installation, snapshot capture/restore/cleanup and diagnostics share one
+internal catch-all panic conversion; Candid calls preserve the original payload
+when resuming unrelated panics. Server setup uses the locked registry Host FS
+0.18.2 private-directory creator and pathname admission, retaining its descriptor
+through synchronization and bundle publication. Bundle layout and retention stay
+unchanged; a replaced staging directory is refused before publication.
+
+Canic's two rejection-reader adaptations are delivered in
+[PR #569](https://github.com/dragginzgame/canic/pull/569) at
+`d8c4e1200030381bc0afd530feb151548293a17e`. Selected locked/offline compilation
+and strict Clippy pass against its unchanged Testkit 0.33.1 graph, reusing the
+prior isolated native artifact directory; governed Canic live journeys are unrun.
+
+Against clean Testkit `940e0835d00d64f4326ae4ae6b99ac3dd4ea5b92`, Linux
+qualification passes 26 selected library cases, 7 provisioning cases and 15
+PocketIC integration cases across calls, diagnostics, installation, snapshots and
+teardown. Affected strict Clippy, actual Rust 1.88, warning-denied documentation
+and formatting pass. The initial sandbox refused PocketIC's localhost bind;
+the native retry uses the same prepared 16.1 binary and locked registry graph.
+Package metadata remains 0.43.0. Logs and frozen inputs are retained under
+`/tmp/testkit-three-cuts.eA9P54/`; native macOS and full release gates are unrun.
+
+## Pending 0.43.0: metadata serialization and prepared owner adoption
+
+Benchmark metadata now serializes the typed record directly. A before/after
+probe through the actual report writer preserves decoded fields, escaped values
+and the final newline; JSON keys follow record order instead of the intermediate
+map's sorted order. All other report files are byte-identical. Three metadata/
+report boundary cases and strict selected library/test Clippy pass on the normal
+registry graph. Object-only admission and required/optional fields are unchanged.
+
+The fresh isolated consumer integrates both prepared retirements with the current
+shared report types and published Host table renderer. It uses Host PR #108
+`f9377c547d305e19afa98c66e198e1e15ea99c77` and Build PR #31
+`f791954f7dacd32e51e2727ce6199c73cf1aec52` as temporary source selections. The
+13 driver cases, CLI descendant cancellation, strict affected lint, actual Rust
+1.88 and a fresh/pooled PocketIC smoke pass on Linux. No performance gain is
+claimed. Cargo builds retain caller admission and no default elapsed-time or
+total-diagnostic-output ceiling. External package records and edges match the
+frozen normal lock after restoring incidental Windows edge reselection in the
+private qualification graph; locked complete Cargo metadata admits that graph.
+
+Registry inspection still selects Host 0.18.2 and Build 0.3.2 without these APIs.
+Normal signal/build callers therefore await producer integration/publication
+under [#93](https://github.com/dragginzgame/ic-testkit/issues/93) and
+[#94](https://github.com/dragginzgame/ic-testkit/issues/94). The refreshed patch
+applies to this pending working tree; no temporary override is installed here.
+Before-images, source identities, failed attempts, probes, patch and raw logs
+remain under `/tmp/testkit-final-cuts/`. Own metadata remains 0.42.0; native macOS,
+full release gates and publication remain maintainer-owned.
+
+## Pending 0.43.0: report ownership and native time calls
+
+The normal working tree shares typed fixture-report fields between worker and
+operator driver, retaining raw extra fields and independent workload/duration/
+sampling admission. Its terminal table uses published IC Host Text 0.18.2;
+the archive checksum is
+`fe0d780d03023e8eeaedb5356570f57b32fbdb48c75af58069581929543acc03`
+and its VCS receipt names `55a31aa13a42f55fa3985db33e1586722638ad40`.
+Only the new text selection and local dependency edge are added to the incoming
+lock. Exposed runtime Host selections, existing pins and own 0.42.0 metadata remain.
+
+The redundant time trait is removed; direct PocketIC timestamp conversion replaces
+its consumers. All 13 driver cases, four bounded-polling cases, affected strict
+Clippy, actual Rust 1.88 and a live fresh/pooled smoke pass on Linux. The smoke
+checks worker/driver exchange and fixture correctness, not a performance gain.
+An initial sandbox attempt refused PocketIC loopback binding; the native retry
+uses the same selected binary and sources. Native macOS and full release gates
+remain maintainer-owned. Before-images, exact inputs and raw logs are retained at
+`/tmp/testkit-schema-time/` against released Testkit
+`5d1cce0a1034c7e7bcb2490544b6f81dda5edc32` plus this pending batch.
+
+[Jobs PR #49](https://github.com/dragginzgame/ic-jobs/pull/49) at
+`f0c9ac73cfcbc60ef74f8c89830953274ab74187` passes selected recovery compilation
+and strict lint on its unchanged registry Testkit 0.42.0 graph.
+[Canic PR #565](https://github.com/dragginzgame/canic/pull/565) at
+`fd2257d06dbc05d5fbe834c7fe85934b03f9b1a6` passes selected compilation and strict
+lint on published main. Its earlier rehearsal also passes on the unpublished local anchor
+`644d4b13012b395d6211a6907e2e6aafdf391db9` and published main
+`25b73cd403b20b4e148c6e340f8c760a26d97f6e`; those graphs/evidence remain distinct.
+Normal sibling sources are untouched. Consumer delivery and their governed live
+journeys remain separate from this compile qualification.
 
 ## Pending 0.42.0: canonical release projection and prepared native callers
 

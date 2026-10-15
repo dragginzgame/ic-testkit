@@ -101,30 +101,6 @@ impl CandidCallContext {
             method: method.into(),
         }
     }
-
-    /// Read the PocketIC operation name, such as `update_call` or `query_call`.
-    #[must_use]
-    pub const fn operation(&self) -> &'static str {
-        self.operation
-    }
-
-    /// Read the target canister id.
-    #[must_use]
-    pub const fn canister_id(&self) -> Principal {
-        self.canister_id
-    }
-
-    /// Read the caller principal used for the call.
-    #[must_use]
-    pub const fn caller(&self) -> Principal {
-        self.caller
-    }
-
-    /// Read the called method name.
-    #[must_use]
-    pub fn method(&self) -> &str {
-        &self.method
-    }
 }
 
 impl CandidCallError {
@@ -205,30 +181,6 @@ impl CandidCallError {
             context: Some(Box::new(context)),
             reject_response: None,
         }
-    }
-
-    /// Read the rendered error message.
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    /// Read the structured failure kind.
-    #[must_use]
-    pub const fn kind(&self) -> CandidCallErrorKind {
-        self.kind
-    }
-
-    /// Read the structured call context, when available.
-    #[must_use]
-    pub fn context(&self) -> Option<&CandidCallContext> {
-        self.context.as_deref()
-    }
-
-    /// Read the structured PocketIC rejection, when the call reached the IC.
-    #[must_use]
-    pub fn reject_response(&self) -> Option<&RejectResponse> {
-        self.reject_response.as_deref()
     }
 }
 
@@ -394,7 +346,7 @@ mod tests {
             response.clone(),
         );
 
-        assert_eq!(error.kind(), CandidCallErrorKind::CanisterReject);
-        assert_eq!(error.reject_response(), Some(&response));
+        assert_eq!(error.kind, CandidCallErrorKind::CanisterReject);
+        assert_eq!(error.reject_response.as_deref(), Some(&response));
     }
 }

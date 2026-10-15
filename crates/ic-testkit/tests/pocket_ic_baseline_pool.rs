@@ -16,11 +16,12 @@ use candid::Principal;
 use ic_testkit::pic::{
     BaselinePoolContractError, BaselinePoolError, BaselinePoolOutcome,
     BaselinePoolPreparationError, BaselinePreparationStage, CachedPocketIcBaseline,
-    CachedPocketIcBaselinePool, CanisterRestoreReceipt, ControllerSnapshotError, CycleResetPolicy,
-    ExtraCanisterPolicy, FailureDisposition, FixtureRecipeId, PocketIcBaselineRecipe,
-    PocketIcBuilder, PocketIcStartupConfig, PocketIcStartupError, PreparedBaseline,
-    ReadinessReceipt, RebuildReason, ResetDomainPolicy, ResetReceipt, ResetRequirements,
-    TimeResetPolicy, ValidationReceipt, is_dead_pocket_ic_transport_error,
+    CachedPocketIcBaselinePool, CanisterRestoreReceipt, CanisterSnapshotTarget,
+    ControllerSnapshotError, CycleResetPolicy, ExtraCanisterPolicy, FailureDisposition,
+    FixtureRecipeId, PocketIcBaselineRecipe, PocketIcBuilder, PocketIcStartupConfig,
+    PocketIcStartupError, PreparedBaseline, ReadinessReceipt, RebuildReason, ResetDomainPolicy,
+    ResetReceipt, ResetRequirements, SnapshotRestoreFunding, TimeResetPolicy, ValidationReceipt,
+    is_dead_pocket_ic_transport_error,
 };
 
 const EMPTY_WASM: &[u8] = b"\0asm\x01\0\0\0";
@@ -163,8 +164,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
 
         let mut baseline = CachedPocketIcBaseline::capture(
             pocket_ic,
-            Principal::anonymous(),
-            canister_ids,
+            canister_ids.map(|id| CanisterSnapshotTarget::new(id, None)),
             TwoCanisterMetadata {
                 canister_ids,
                 baseline_time_nanos: 0,
@@ -208,7 +208,7 @@ impl PocketIcBaselineRecipe for TwoCanisterRecipe {
             return Err(TestRecipeError::Synthetic("requested restore failure"));
         }
 
-        baseline.restore(Principal::anonymous())?;
+        baseline.restore(SnapshotRestoreFunding::Preserve)?;
         if self
             .controls
             .report_incomplete_restore
@@ -461,9 +461,8 @@ fn multi_canister_pool_restores_and_explicitly_rebuilds_one_slot() {
 
 #[test]
 fn restore_receipt_rejects_an_empty_captured_baseline() {
-    let baseline =
-        CachedPocketIcBaseline::capture(support::pocket_ic(), Principal::anonymous(), [], ())
-            .expect("empty snapshot capture remains valid");
+    let baseline = CachedPocketIcBaseline::capture(support::pocket_ic(), [], ())
+        .expect("empty snapshot capture remains valid");
     assert_eq!(baseline.snapshot_count(), 0);
     assert_eq!(
         CanisterRestoreReceipt::try_from_baseline(&baseline, CycleResetPolicy::PreserveCurrent),

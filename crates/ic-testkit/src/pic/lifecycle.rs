@@ -1,4 +1,3 @@
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 
 use candid::Principal;
@@ -6,7 +5,7 @@ use pocket_ic::{ErrorCode, PocketIc, RejectResponse};
 
 use super::{
     CanisterDiagnosticsRequest, CanisterInstallError, CanisterInstallPhase, PocketIcDiagnosticsExt,
-    PocketIcOperationError,
+    transport::capture_operation,
 };
 
 /// Inputs and diagnostic context for one generic canister installation.
@@ -174,11 +173,10 @@ impl CanisterInstallExt for PocketIc {
         }
 
         // Move the Wasm and init payload while retaining the label for failures.
-        let install = catch_unwind(AssertUnwindSafe(|| {
+        let install = capture_operation(|| {
             self.install_canister(canister_id, spec.wasm, spec.init_bytes, spec.install_sender);
-        }));
-        if let Err(payload) = install {
-            let source = PocketIcOperationError::from_panic(payload.as_ref());
+        });
+        if let Err(source) = install {
             let context = if let Some(label) = &spec.label {
                 format!("install_canister trapped ({label})")
             } else {
@@ -186,14 +184,14 @@ impl CanisterInstallExt for PocketIc {
             };
             // Diagnostics are best-effort and must never replace the original
             // structured install failure, including if stderr or PocketIC fails.
-            let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _ = capture_operation(|| {
                 let report = self.collect_canister_diagnostics(CanisterDiagnosticsRequest::new(
                     canister_id,
                     diagnostic_sender,
                     diagnostic_sender,
                 ));
                 eprintln!("{context}: {report}");
-            }));
+            });
 
             return Err(CanisterInstallError::new(
                 CanisterInstallPhase::InstallCode,
@@ -262,14 +260,8 @@ fn try_install_step<T>(
     spec: &InstallSpec,
     operation: impl FnOnce() -> T,
 ) -> Result<T, CanisterInstallError> {
-    catch_unwind(AssertUnwindSafe(operation)).map_err(|payload| {
-        CanisterInstallError::new(
-            phase,
-            canister_id,
-            spec.label.clone(),
-            PocketIcOperationError::from_panic(payload.as_ref()),
-        )
-    })
+    capture_operation(operation)
+        .map_err(|source| CanisterInstallError::new(phase, canister_id, spec.label.clone(), source))
 }
 
 fn retry_install_code_with<T, F, W>(

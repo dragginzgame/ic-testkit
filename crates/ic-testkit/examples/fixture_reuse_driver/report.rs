@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use crate::fixture_reuse_report::{Phases, WorkerReport};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -11,43 +12,12 @@ use super::{
     arguments::{Case, Options},
 };
 
-const PHASES: [&str; 7] = [
-    "wait_ms",
-    "build_ms",
-    "restore_ms",
-    "reset_ms",
-    "readiness_ms",
-    "validation_ms",
-    "acquisition_ms",
-];
-
-#[derive(Deserialize)]
-struct Sample {
-    iteration: usize,
-    phases: BTreeMap<String, Option<f64>>,
-    body_ms: f64,
-    release_ms: f64,
-    total_ms: f64,
-}
-
-#[derive(Deserialize)]
-struct Metrics {
-    mode: String,
-    capacity: usize,
-    iterations: usize,
-    workers: usize,
-    state_bytes_per_canister: u32,
-    wall_ms: f64,
-    fixture_wall_ms: f64,
-    samples: Vec<Sample>,
-}
-
 #[derive(Serialize)]
 pub(super) struct MeasuredRun {
     #[serde(flatten)]
-    raw: Map<String, Value>,
+    raw: Value,
     #[serde(skip)]
-    metrics: Metrics,
+    metrics: WorkerReport,
     pub(super) sampled_peak_tree_rss_bytes: u64,
     pub(super) peak_tree_process_count: usize,
     pub(super) rss_samples: usize,
@@ -60,7 +30,8 @@ impl MeasuredRun {
         case: &Case,
         rss: (u64, usize, usize),
     ) -> Result<Self, Error> {
-        let metrics: Metrics = serde_json::from_value(Value::Object(raw.clone()))?;
+        let raw = Value::Object(raw);
+        let metrics = WorkerReport::deserialize(&raw)?;
         if metrics.mode != case.mode.as_str()
             || metrics.capacity != case.capacity.get()
             || metrics.iterations != options.iterations.get()
@@ -82,18 +53,19 @@ impl MeasuredRun {
         }
         for (iteration, sample) in metrics.samples.iter().enumerate() {
             if sample.iteration != iteration
-                || sample.phases.len() != PHASES.len()
-                || !PHASES
-                    .iter()
-                    .all(|phase| sample.phases.contains_key(*phase))
-                || sample.phases["wait_ms"].is_none()
-                || sample.phases["acquisition_ms"].is_none()
-                || sample
-                    .phases
-                    .values()
-                    .flatten()
-                    .chain([&sample.body_ms, &sample.release_ms, &sample.total_ms])
-                    .any(|value| !value.is_finite() || *value < 0.0)
+                || [
+                    Some(sample.phases.wait_ms),
+                    sample.phases.build_ms,
+                    sample.phases.restore_ms,
+                    sample.phases.reset_ms,
+                    sample.phases.readiness_ms,
+                    sample.phases.validation_ms,
+                    Some(sample.phases.acquisition_ms),
+                ]
+                .into_iter()
+                .flatten()
+                .chain([sample.body_ms, sample.release_ms, sample.total_ms])
+                .any(|value| !value.is_finite() || value < 0.0)
             {
                 return Err(Error::InvalidData(
                     "invalid worker task identity, phases or durations",
@@ -106,7 +78,7 @@ impl MeasuredRun {
             "rss_samples",
         ]
         .iter()
-        .any(|key| raw.contains_key(*key))
+        .any(|key| raw.get(*key).is_some())
         {
             return Err(Error::InvalidData(
                 "worker report contains driver-owned sampling fields",
@@ -173,20 +145,26 @@ pub(super) fn summarize(runs: &[MeasuredRun]) -> Summary {
         .iter()
         .flat_map(|run| &run.metrics.samples)
         .collect::<Vec<_>>();
-    let phases_ms = PHASES
-        .iter()
-        .map(|phase| {
-            (
-                (*phase).into(),
-                distribution(
-                    samples
-                        .iter()
-                        .filter_map(|sample| sample.phases[*phase])
-                        .collect(),
-                ),
-            )
-        })
-        .collect();
+    let phase = |select: fn(&Phases) -> Option<f64>| {
+        distribution(
+            samples
+                .iter()
+                .filter_map(|sample| select(&sample.phases))
+                .collect(),
+        )
+    };
+    let phases_ms = [
+        ("wait_ms", phase(|p| Some(p.wait_ms))),
+        ("build_ms", phase(|p| p.build_ms)),
+        ("restore_ms", phase(|p| p.restore_ms)),
+        ("reset_ms", phase(|p| p.reset_ms)),
+        ("readiness_ms", phase(|p| p.readiness_ms)),
+        ("validation_ms", phase(|p| p.validation_ms)),
+        ("acquisition_ms", phase(|p| Some(p.acquisition_ms))),
+    ]
+    .into_iter()
+    .map(|(name, distribution)| (name.into(), distribution))
+    .collect();
     Summary {
         phases_ms,
         body_ms: distribution(samples.iter().map(|sample| sample.body_ms).collect()),
@@ -300,6 +278,34 @@ mod tests {
         }
         let mut raw = worker_report();
         raw.insert("samples".into(), json!([]));
+        assert!(matches!(
+            MeasuredRun::from_worker(raw, &options, &case, (1, 1, 1)),
+            Err(Error::InvalidData(_))
+        ));
+        for phase in [
+            "wait_ms",
+            "build_ms",
+            "restore_ms",
+            "reset_ms",
+            "readiness_ms",
+            "validation_ms",
+            "acquisition_ms",
+        ] {
+            let mut raw = worker_report();
+            raw["samples"][0]["phases"]
+                .as_object_mut()
+                .unwrap()
+                .remove(phase);
+            assert!(MeasuredRun::from_worker(raw, &options, &case, (1, 1, 1)).is_err());
+        }
+        let mut raw = worker_report();
+        raw["samples"][0]["phases"]["unexpected"] = json!(0);
+        assert!(MeasuredRun::from_worker(raw, &options, &case, (1, 1, 1)).is_err());
+        let mut raw = worker_report();
+        raw["samples"][0]["phases"]["wait_ms"] = Value::Null;
+        assert!(MeasuredRun::from_worker(raw, &options, &case, (1, 1, 1)).is_err());
+        let mut raw = worker_report();
+        raw.insert("rss_samples".into(), json!(1));
         assert!(matches!(
             MeasuredRun::from_worker(raw, &options, &case, (1, 1, 1)),
             Err(Error::InvalidData(_))
