@@ -1318,9 +1318,11 @@ esac
             text_command(Command::new("/bin/sh").args(["-c", "printf '\\377'"])),
             Err(Error::InvalidData("tool output is not UTF-8"))
         ));
-        let Err(Error::Tool(error)) =
-            text_command(Command::new("/bin/sh").args(["-c", "printf '%065537d' 0"]))
-        else {
+        // Keep the producer alive until capture kills it: an immediately exiting
+        // producer races group signalling on macOS and can retain a cleanup error.
+        let Err(Error::Tool(error)) = text_command(
+            Command::new("/bin/sh").args(["-c", "printf '%065537d' 0; exec /bin/sleep 30"]),
+        ) else {
             panic!("expected bounded-output failure")
         };
         let ToolError::Execution(execution) = error.as_ref() else {
@@ -1334,7 +1336,18 @@ esac
         ));
         assert_eq!(execution.evidence.stdout.len(), 64 * 1024);
         assert!(execution.evidence.stdout_truncated);
-        assert!(execution.cleanup.is_none());
+        assert!(
+            execution.cleanup.is_none(),
+            "cleanup evidence: {execution:?}"
+        );
+        assert_eq!(
+            execution
+                .evidence
+                .status
+                .as_ref()
+                .and_then(std::os::unix::process::ExitStatusExt::signal),
+            Some(9)
+        );
         build_command(Command::new("/bin/sh").args(["-c", "sleep 0.05"])).unwrap();
         let Err(Error::Tool(error)) =
             build_command(Command::new("/bin/sh").args(["-c", "exit 23"]))
