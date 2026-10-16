@@ -1,6 +1,45 @@
 use super::*;
 
 #[test]
+fn bounded_accept_preserves_peer_and_request_bytes() {
+    use std::io::Write as _;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    client.write_all(b"GET /original HTTP/1.1\r\n\r\n").unwrap();
+    let (mut stream, peer) =
+        accept_tcp_until(&listener, Instant::now() + Duration::from_secs(2)).unwrap();
+    assert_eq!(peer, client.local_addr().unwrap());
+    assert_eq!(
+        read_http_request(&mut stream, Duration::from_secs(2), 128, 0).unwrap(),
+        b"GET /original HTTP/1.1\r\n\r\n"
+    );
+}
+
+#[test]
+fn elapsed_accept_deadline_leaves_queued_connection_unconsumed() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    assert_eq!(
+        accept_tcp_until(&listener, Instant::now())
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::TimedOut
+    );
+    listener.accept().unwrap();
+}
+
+#[test]
+fn idle_accept_expires_without_a_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    assert_eq!(
+        accept_tcp_until(&listener, Instant::now() + Duration::from_millis(20))
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::TimedOut
+    );
+}
+
+#[test]
 fn request_framing_preserves_body_bounds_and_rejects_ambiguous_lengths() {
     assert_eq!(request_length(b"POST / HTTP/1.1\r\n", 32, 4).unwrap(), None);
     let request = b"POST / HTTP/1.1\r\nContent-Length: 4\r\n\r\ntest";

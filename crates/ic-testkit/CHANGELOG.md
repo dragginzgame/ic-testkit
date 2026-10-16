@@ -8,6 +8,11 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.47.1]
+
+- Share deadline-bounded native TCP acceptance through `testing::accept_tcp_until`,
+  preserving caller-owned request handling, responses and cancellation policy.
+
 ## [0.47.0] - 2026-10-15
 
 ### Breaking
