@@ -768,20 +768,32 @@ mod tests {
         }
         let clean = super::git_provenance(&root, limits).unwrap();
         assert!(!clean.is_dirty());
-        let name = OsString::from_vec(b"untracked-\xff".to_vec());
-        fs::write(root.join(name), b"fixture").unwrap();
-        let dirty = super::git_provenance(&root, limits).unwrap();
-        assert_eq!(dirty.revision(), clean.revision());
-        assert!(dirty.is_dirty());
-        assert!(dirty.status_evidence().stdout.contains(&0xff));
-        assert_eq!(
-            dirty.options.untracked,
-            ic_host_process::provenance::UntrackedFiles::Normal
-        );
-        assert_eq!(
-            dirty.options.ignore_submodules,
-            ic_host_process::provenance::IgnoreSubmodules::None
-        );
+        // macOS filesystems reject arbitrary invalid UTF-8 names before Git runs.
+        // Every host still checks raw control/quote bytes; Linux also exercises
+        // an actual invalid UTF-8 directory entry.
+        for name in [b"untracked-\n\t\"".as_slice()]
+            .into_iter()
+            .chain(cfg!(target_os = "linux").then_some(b"untracked-\xff".as_slice()))
+        {
+            let path = root.join(OsString::from_vec(name.to_vec()));
+            fs::write(&path, b"fixture").unwrap();
+            let dirty = super::git_provenance(&root, limits).unwrap();
+            assert_eq!(dirty.revision(), clean.revision());
+            assert!(dirty.is_dirty());
+            assert_eq!(
+                dirty.status_evidence().stdout,
+                [b"?? ".as_slice(), name, b"\0"].concat()
+            );
+            assert_eq!(
+                dirty.options.untracked,
+                ic_host_process::provenance::UntrackedFiles::Normal
+            );
+            assert_eq!(
+                dirty.options.ignore_submodules,
+                ic_host_process::provenance::IgnoreSubmodules::None
+            );
+            fs::remove_file(path).unwrap();
+        }
 
         let missing = fixture_directory();
         let error =

@@ -17,6 +17,13 @@ repository checkout. The complete historical changelog remains at
   large-input diagnostic dumps while retaining typed decoder causes and limits.
   Callers still own error disclosure; compact mode can include small inputs.
 
+### Testing
+
+- Qualify exact raw Git status bytes with portable control/quote filenames on all
+  native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
+  macOS fixture creation before Git observation without changing production behavior
+  ([#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111)).
+
 ## [0.49.0] - 2026-10-16
 
 ### Breaking
