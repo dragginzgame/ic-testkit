@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Testing
 
+- Keep the output-limit fixture producer alive until capture terminates it and
+  assert its reaped signal status. This removes a natural-exit/group-signal race
+  while retaining exact output and cleanup evidence in native qualification
+  ([#114 — Deterministic live-producer cleanup qualification](https://github.com/dragginzgame/ic-testkit/issues/114)).
 - Qualify exact raw Git status bytes with portable control/quote filenames on all
   native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
   macOS fixture creation before Git observation without changing production behavior

@@ -5927,3 +5927,9 @@ status output. Linux also creates an invalid UTF-8 entry. macOS runner filesyste
 refuse that entry with OS error 92 before Git can observe it; they retain the same
 portable byte, unchanged-revision and typed failure checks. Production observation
 is unchanged. See [#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111).
+
+The output-limit command fixture keeps its producer alive through the capture
+refusal, then requires successful cleanup and reaped SIGKILL status. The previous
+immediately exiting producer raced process-group signalling on Apple Silicon;
+that race could produce secondary cleanup evidence even though the output-limit
+failure was correctly retained. Production command cleanup policy is unchanged.
