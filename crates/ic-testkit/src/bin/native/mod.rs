@@ -7,9 +7,7 @@ use std::{
     time::Duration,
 };
 
-use ic_testkit::pic::PocketIcStartupConfig;
-
-mod provisioning;
+use ic_testkit::pic::{PocketIcStartupConfig, server_assets};
 
 static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
 const USAGE: &str = "usage: ic-testkit-server setup|check [--directory DIRECTORY]\n       ic-testkit-server run [--directory DIRECTORY] [--ttl SECONDS] [--idle-ttl SECONDS] [--startup-timeout SECONDS] [--server-stdout NEW-FILE --server-stderr NEW-FILE] -- COMMAND [ARG...]";
@@ -80,7 +78,7 @@ fn parse(mut arguments: impl Iterator<Item = OsString>) -> Result<Arguments, Str
     let action = arguments.next().ok_or(USAGE)?;
     if action == "setup" || action == "check" {
         let directory = match arguments.next() {
-            None => PathBuf::from(provisioning::DEFAULT_DIRECTORY),
+            None => PathBuf::from(server_assets::DEFAULT_DIRECTORY),
             Some(flag) if flag == "--directory" => path_argument(&mut arguments)?,
             _ => return Err(USAGE.to_owned()),
         };
@@ -182,11 +180,15 @@ pub fn main() -> ExitCode {
     let arguments = match arguments {
         Arguments::Setup(directory) => {
             return match Signals::install() {
-                Ok(_signals) => report_provisioning(provisioning::setup(&directory)),
+                Ok(_signals) => report_provisioning(server_assets::setup(&directory, || {
+                    INTERRUPTED.load(Ordering::Relaxed) != 0
+                })),
                 Err(error) => report_provisioning(Err(error.into())),
             };
         }
-        Arguments::Check(directory) => return report_provisioning(provisioning::check(&directory)),
+        Arguments::Check(directory) => {
+            return report_provisioning(server_assets::check(&directory));
+        }
         Arguments::Run(arguments) => arguments,
     };
     let RunArguments {
@@ -207,8 +209,8 @@ pub fn main() -> ExitCode {
                     "--directory conflicts with an explicit server URL or POCKET_IC_BIN".into(),
                 );
             }
-            let binary = provisioning::check(
-                &directory.unwrap_or_else(|| PathBuf::from(provisioning::DEFAULT_DIRECTORY)),
+            let binary = server_assets::check(
+                &directory.unwrap_or_else(|| PathBuf::from(server_assets::DEFAULT_DIRECTORY)),
             )?;
             command.env("POCKET_IC_BIN", &binary);
             PocketIcStartupConfig::spawn(binary, timeout)

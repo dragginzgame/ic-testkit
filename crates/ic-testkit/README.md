@@ -37,9 +37,13 @@ This is the PocketIC package in the `ic-testkit` workspace. It provides:
 - compact benchmark marker parsing, aggregation, comparison, and report writing
 - canister-side `Performance::measure` marker emission
 
-`ic-testkit` does not wrap the PocketIC simulator API, serialize independent
-instances. Its published CLI owns explicit server provisioning and offline
-verification; tests never install through that CLI implicitly. Tests normally retain one
+`ic-testkit` does not wrap the PocketIC simulator API or serialize independent
+instances. `pic::server_assets` owns explicit server provisioning and offline
+verification for Rust callers and the published CLI; tests never install implicitly.
+Rust fixtures call `server_assets::check(&directory)` and pass the returned
+absolute executable path to `PocketIcStartupConfig::spawn`, without invoking the CLI.
+Explicit `server_assets::setup` takes a caller-owned cancellation predicate.
+Tests normally retain one
 `PocketIcInstance<PocketIc>` and use `owned.instance` for simulator operations;
 focused extension traits provide reusable harness behavior. Less common
 upstream types remain available through the complete `ic_testkit::pocket_ic`

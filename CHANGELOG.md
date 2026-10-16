@@ -6,6 +6,16 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.49.1]
+
+### Added
+
+- Expose Unix `pic::server_assets::{check, setup, DEFAULT_DIRECTORY}` as the
+  shared Rust and CLI owner of authenticated PocketIC bundles. Offline checks
+  return the admitted absolute executable without invoking a build tool or CLI;
+  explicit setup takes caller-owned cancellation and installs no signal handlers.
+  Existing digests, byte bounds, retained evidence and bundle layout are unchanged.
+
 ## [0.49.0] - 2026-10-16
 
 ### Breaking

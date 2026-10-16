@@ -1,5 +1,22 @@
 # Host support and qualification
 
+## Pending 0.49.1: shared Rust server asset admission
+
+Unix `pic::server_assets` owns the previous CLI provisioning implementation.
+Rust fixtures and the CLI share offline authenticated `check`; explicit `setup`
+takes caller-owned cancellation rather than installing signal handlers in the
+library. Digests, limits, bundle layout and retained evidence are unchanged.
+All seven moved provisioning cases, the CLI unit case and three focused CLI
+setup cases pass on Linux, including signal cancellation, redirected roots and
+missing setup without executing tools. Strict library/CLI Clippy, actual Rust
+1.91 library/CLI checking, warning-denied rustdoc, formatting, Cargo inheritance
+and documentation links pass. The CLI admits Backup's prepared 16.1.0 bundle.
+Native macOS and full CI remain separate; no package version changed.
+An isolated Backup adapter uses the library check directly in both simulator
+fixtures, retaining server digests, original/optimized Wasm and private logs.
+Its complete Core allocation/upload/load/start and Agent capture/transfer/upload/
+restore journeys pass on managed PocketIC 16.1.0 with local loopback access.
+
 ## Pending 0.49.0: shared hook qualification and benchmark rows
 
 The teardown integration fixture reads bounded requests through Host's HTTP

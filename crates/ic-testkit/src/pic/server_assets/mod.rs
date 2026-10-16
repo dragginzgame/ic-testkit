@@ -1,5 +1,10 @@
-//! Explicit, release-bound provisioning. Checks and launches never download.
+//! Explicit, release-bound PocketIC assets for Rust fixtures and the CLI.
+//!
+//! [`check`] is offline and never sets up a missing bundle. [`setup`] explicitly
+//! provisions it. Callers retain namespace custody and select the bundle root;
+//! managed startup and application safety remain separate responsibilities.
 
+use super::POCKET_IC_SERVER_VERSION;
 use ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, hash_gzip, verify_reader};
 use ic_host_fs::{durable, read::read_file_no_follow};
 use ic_host_process::{
@@ -10,7 +15,6 @@ use ic_host_process::{
         communicate_child,
     },
 };
-use ic_testkit::pic::POCKET_IC_SERVER_VERSION;
 use std::{
     error::Error,
     ffi::OsString,
@@ -26,7 +30,8 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const ARCHIVE_LIMIT: usize = 80 * 1024 * 1024;
 const EXECUTABLE_LIMIT: usize = 512 * 1024 * 1024;
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-pub(super) const DEFAULT_DIRECTORY: &str = ".tools/ic-testkit-server";
+/// Default bundle root used by `ic-testkit-server`.
+pub const DEFAULT_DIRECTORY: &str = ".tools/ic-testkit-server";
 
 struct Asset {
     host: &'static str,
@@ -146,12 +151,32 @@ fn check_bundle(bundle: &Path, asset: &Asset) -> Result<PathBuf> {
     Ok(executable)
 }
 
-pub(super) fn check(directory: &Path) -> Result<PathBuf> {
+/// Admit an existing reviewed bundle without downloading or changing it.
+///
+/// Authenticates the bounded archive before decoding, compares the executable's
+/// exact bytes, then runs bounded `--version` admission with an empty environment.
+/// Returns the absolute executable path, not ongoing custody of its namespace.
+/// Callers must prevent replacement between admission and managed startup.
+///
+/// # Errors
+/// Rejects unsupported hosts, redirected paths, missing or modified bundles,
+/// invalid archives, or failed executable/version admission.
+pub fn check(directory: &Path) -> Result<PathBuf> {
     let asset = selected_asset()?;
     check_bundle(&bundle_path(&root_path(directory)?, &asset), &asset)
 }
 
-pub(super) fn setup(directory: &Path) -> Result<PathBuf> {
+/// Explicitly prepare or admit the reviewed bundle, retaining failed attempts.
+///
+/// Downloads only when the selected bundle is absent. Cooperating setups share
+/// one lock; existing bundles must pass the same offline [`check`] admission.
+/// `interrupted` lets the caller request bounded downloader cancellation without
+/// this library installing process-global signal handlers.
+///
+/// # Errors
+/// Returns path, lock, download, authentication, decoding, publication or
+/// executable/version failures. Retained evidence is never automatically removed.
+pub fn setup(directory: &Path, mut interrupted: impl FnMut() -> bool) -> Result<PathBuf> {
     let asset = selected_asset()?;
     setup_with(directory, &asset, |archive| {
         let url = format!(
@@ -204,7 +229,7 @@ pub(super) fn setup(directory: &Path) -> Result<PathBuf> {
                         timeout: Some(Duration::from_secs(310)),
                     },
                     SuccessfulExit::Cleanup,
-                    || super::INTERRUPTED.load(Ordering::Relaxed) != 0,
+                    &mut interrupted,
                 )
             })
             .and_then(ic_host_process::tool::CompletedExecution::require_success);
