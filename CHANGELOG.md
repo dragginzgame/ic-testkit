@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   explicit setup takes caller-owned cancellation and installs no signal handlers.
   Existing digests, byte bounds, retained evidence and bundle layout are unchanged.
 
+### Testing
+
+- Qualify exact raw Git status bytes with portable control/quote filenames on all
+  native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
+  macOS fixture creation before Git observation without changing production behavior
+  ([#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111)).
+
 ## [0.49.0] - 2026-10-16
 
 ### Breaking

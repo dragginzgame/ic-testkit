@@ -5918,3 +5918,12 @@ and warning-denied native documentation pass. Evidence is retained at
 by sandbox loopback restrictions and is retained separately. Native macOS and
 full CI remain maintainer qualification; Git observations remain separate reads,
 not an atomic source snapshot. No persistent layout or format identity changes.
+
+## Git path fixture portability
+
+The benchmark driver's Git observation test uses newline, tab and quote bytes in
+an actual filename on every native host and checks the complete NUL-delimited
+status output. Linux also creates an invalid UTF-8 entry. macOS runner filesystems
+refuse that entry with OS error 92 before Git can observe it; they retain the same
+portable byte, unchanged-revision and typed failure checks. Production observation
+is unchanged. See [#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111).
