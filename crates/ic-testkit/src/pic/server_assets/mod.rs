@@ -366,31 +366,56 @@ mod tests {
     use super::*;
     use ic_host_artifacts::artifact::encode_gzip;
     use std::os::unix::fs::{PermissionsExt as _, symlink};
-    use std::sync::{Mutex, MutexGuard};
 
-    static EXECUTABLE_FIXTURES: Mutex<()> = Mutex::new(());
+    fn run_in_subprocess() -> bool {
+        let current = std::thread::current();
+        let name = current.name().expect("registered asset test name");
+        if std::env::var("IC_TESTKIT_ASSET_CASE").as_deref() == Ok(name) {
+            return false;
+        }
+        // A library sibling's fork can retain a writable executable descriptor.
+        // Re-exec before writing fixtures so only this case owns their lifetime.
+        let mut child = OwnedChild::spawn(
+            Command::new(std::env::current_exe().expect("library test executable"))
+                .args(["--exact", name, "--nocapture"])
+                .env("IC_TESTKIT_ASSET_CASE", name)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped()),
+        )
+        .expect("spawn isolated asset test");
+        let completed = communicate_child(
+            &mut child,
+            None,
+            OutputLimits {
+                stdout: OutputLimit::Terminate(64 * 1024),
+                stderr: OutputLimit::Terminate(64 * 1024),
+                timeout: Some(Duration::from_secs(120)),
+            },
+            SuccessfulExit::Cleanup,
+            &mut || false,
+        )
+        .expect("capture and reap isolated asset test");
+        assert!(
+            completed.status.success(),
+            "isolated asset test failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&completed.stdout),
+            String::from_utf8_lossy(&completed.stderr),
+        );
+        true
+    }
 
     struct Fixture {
         root: tempfile::TempDir,
-        _guard: MutexGuard<'static, ()>,
     }
     impl Fixture {
         fn new() -> Self {
-            // A sibling test's fork can briefly inherit a writable executable
-            // descriptor. Keep mutable script fixtures separate, as Host's
-            // process fixtures do; concurrency inside one setup case remains.
-            let guard = EXECUTABLE_FIXTURES
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let root = tempfile::Builder::new()
                 .prefix("testkit-provision-")
                 .permissions(fs::Permissions::from_mode(0o700))
                 .tempdir_in(std::env::temp_dir().canonicalize().unwrap())
                 .unwrap();
-            Self {
-                root,
-                _guard: guard,
-            }
+            Self { root }
         }
     }
     fn archive(version: &str) -> (Asset, Vec<u8>) {
@@ -408,6 +433,9 @@ mod tests {
 
     #[test]
     fn authenticated_setup_reuses_offline_and_refuses_changed_bytes_before_execution() {
+        if run_in_subprocess() {
+            return;
+        }
         let root = Fixture::new();
         let (asset, bytes) = archive(POCKET_IC_SERVER_VERSION);
         let executable = setup_with(root.root.path(), &asset, |path| {
@@ -448,6 +476,10 @@ mod tests {
     #[test]
     fn offline_check_authenticates_before_decoding_and_rejects_invalid_gzip() {
         use ic_host_artifacts::artifact::{ArtifactError, GzipError};
+
+        if run_in_subprocess() {
+            return;
+        }
 
         let root = Fixture::new();
         let (mut asset, original) = archive(POCKET_IC_SERVER_VERSION);
@@ -497,6 +529,9 @@ mod tests {
 
     #[test]
     fn failed_setup_retains_evidence_and_previous_bundles_then_can_retry() {
+        if run_in_subprocess() {
+            return;
+        }
         let root = Fixture::new();
         let previous = root.root.path().join("previous-version");
         fs::create_dir(&previous).unwrap();
@@ -553,6 +588,9 @@ mod tests {
 
     #[test]
     fn digest_decode_and_version_failures_never_publish() {
+        if run_in_subprocess() {
+            return;
+        }
         for mode in [0, 1, 2] {
             let root = Fixture::new();
             let (mut asset, mut bytes) = archive("15.0.0");
@@ -576,6 +614,9 @@ mod tests {
 
     #[test]
     fn redirected_paths_are_refused_without_touching_the_target() {
+        if run_in_subprocess() {
+            return;
+        }
         let root = Fixture::new();
         let (asset, _) = archive(POCKET_IC_SERVER_VERSION);
         let target = root.root.path().join("target");
@@ -600,6 +641,9 @@ mod tests {
 
     #[test]
     fn replaced_staging_directory_is_not_published() {
+        if run_in_subprocess() {
+            return;
+        }
         let root = Fixture::new();
         let (asset, bytes) = archive(POCKET_IC_SERVER_VERSION);
         let retained = root.root.path().join("retained-original-stage");
@@ -613,7 +657,10 @@ mod tests {
         })
         .expect_err("replacement must not inherit the held directory claim");
         assert_eq!(
-            error.downcast_ref::<io::Error>().unwrap().kind(),
+            error
+                .downcast_ref::<io::Error>()
+                .unwrap_or_else(|| panic!("expected directory identity refusal, got {error:?}"))
+                .kind(),
             io::ErrorKind::InvalidInput,
         );
         assert!(!bundle_path(root.root.path(), &asset).exists());
@@ -622,6 +669,9 @@ mod tests {
 
     #[test]
     fn concurrent_setups_download_once_and_recheck_under_the_lock() {
+        if run_in_subprocess() {
+            return;
+        }
         let root = Fixture::new();
         let (asset, bytes) = archive(POCKET_IC_SERVER_VERSION);
         let calls = AtomicU64::new(0);

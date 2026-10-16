@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Testing
 
+- Isolate each server-asset case before executable writes so parallel library
+  process tests cannot inherit its writable descriptor. Keep bounded child capture
+  and the two-caller setup check; production retries and admission stay unchanged
+  ([#115 — Isolate server-asset fixtures from parallel library process tests](https://github.com/dragginzgame/ic-testkit/issues/115)).
 - Keep the output-limit fixture producer alive until capture terminates it and
   assert its reaped signal status. This removes a natural-exit/group-signal race
   while retaining exact output and cleanup evidence in native qualification

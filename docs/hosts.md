@@ -5933,3 +5933,10 @@ refusal, then requires successful cleanup and reaped SIGKILL status. The previou
 immediately exiting producer raced process-group signalling on Apple Silicon;
 that race could produce secondary cleanup evidence even though the output-limit
 failure was correctly retained. Production command cleanup policy is unchanged.
+
+The library server-asset unit cases each re-exec before creating their executable
+fixtures. This keeps unrelated parallel library subprocess tests from inheriting
+a writable executable descriptor; the previous per-module mutex could only
+coordinate asset cases. Each child has bounded capture and a 120-second deadline.
+The concurrent-setup case still uses two callers and requires exactly one download.
+Production setup and version admission retain their original errors and no retries.
