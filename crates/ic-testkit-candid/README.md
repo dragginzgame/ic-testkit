@@ -14,6 +14,10 @@ additional arguments. `decode_exactly_one` requires one actual wire argument and
 rejects additional arguments and trailing bytes.
 Both return typed wire admission or original Candid failures without modifying
 input bytes. This crate does not change Testkit's existing PocketIC call defaults.
+Both entrypoints select Candid's compact diagnostics on native and Wasm hosts,
+avoiding full large-input dumps while retaining the original typed cause.
+Compact diagnostics are not a redaction guarantee for small inputs; callers
+still own error disclosure and retention of raw evidence.
 
 The workspace owns this package's version and Rust 1.91 floor. The workspace
 publication adapter observes/publishes this package before Testkit, preserving

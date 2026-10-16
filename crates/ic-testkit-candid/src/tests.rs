@@ -57,6 +57,32 @@ fn exact_result_policy_requires_one_wire_argument() {
 }
 
 #[test]
+fn native_failures_use_compact_candid_diagnostics_and_preserve_input() {
+    for bytes in [
+        vec![0xab; 4096],
+        candid::encode_one(vec![42_u8; 4096]).unwrap(),
+    ] {
+        let original = bytes.clone();
+        for exact in [false, true] {
+            let error = if exact {
+                decode_exactly_one::<bool>(&bytes, limits(bytes.len()))
+            } else {
+                decode_one::<bool>(&bytes, limits(bytes.len()))
+            }
+            .unwrap_err();
+            let DecodeError::Candid(source) = error else {
+                panic!("original Candid failure");
+            };
+            let diagnostic = format!("{source:#}");
+            assert!(diagnostic.len() < 1024, "{diagnostic}");
+            assert!(!diagnostic.contains(&"ab".repeat(256)));
+            assert!(!diagnostic.contains(&"2a".repeat(256)));
+            assert_eq!(bytes, original);
+        }
+    }
+}
+
+#[test]
 fn refusals_preserve_original_bytes_and_decoder_causes() {
     let mut trailing = candid::encode_one(42_u64).unwrap();
     trailing.push(0);

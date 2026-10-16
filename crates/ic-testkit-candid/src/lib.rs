@@ -75,7 +75,8 @@ fn config(bytes: &[u8], limits: DecodeLimits) -> Result<DecoderConfig, DecodeErr
         .set_decoding_quota(limits.decoding_quota)
         .set_skipping_quota(limits.skipping_quota)
         .set_max_type_len(limits.type_entries)
-        .set_max_header_len(limits.header_bytes);
+        .set_max_header_len(limits.header_bytes)
+        .set_full_error_message(false);
     Ok(config)
 }
 

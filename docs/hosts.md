@@ -1,5 +1,19 @@
 # Host support and qualification
 
+## Pending 0.49.1: compact bounded Candid diagnostics
+
+The independent `ic-testkit-candid` package selects Candid's compact diagnostics
+on native hosts as well as Wasm. Original typed causes, caller-selected wire/work/
+header limits and exact-result policy are retained. Compact mode avoids full
+large-input dumps; callers still own small-input disclosure and raw evidence.
+All five codec cases pass on Linux with current Rust and actual Rust 1.91,
+including malformed-header and mismatched-value diagnostics with unchanged bytes.
+Strict all-target codec Clippy, warning-denied rustdoc, Wasm compilation,
+formatting, dependency declarations and documentation links pass. An isolated
+Backup adapter removes its decoder module and passes 77 model/codec cases with
+the original method-specific ceilings and typed outer errors. Native macOS,
+hosted CI and published-package adoption remain separate.
+
 ## Pending 0.49.0: shared hook qualification and benchmark rows
 
 The teardown integration fixture reads bounded requests through Host's HTTP

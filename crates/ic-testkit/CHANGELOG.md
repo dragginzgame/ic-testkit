@@ -8,6 +8,15 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.49.1]
+
+### Changed
+
+- Use Candid's compact diagnostics in the independent bounded codec on native
+  hosts as well as Wasm. Both ordinary and exact-result decoding avoid full
+  large-input diagnostic dumps while retaining typed decoder causes and limits.
+  Callers still own error disclosure; compact mode can include small inputs.
+
 ## [0.49.0] - 2026-10-16
 
 ### Breaking
