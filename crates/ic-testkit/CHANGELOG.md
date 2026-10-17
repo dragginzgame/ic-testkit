@@ -8,6 +8,13 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.52.1]
+
+- Add a private Git-consumed Node fixture-session helper for browser harnesses.
+  It owns readiness polling, retained logs and bounded graceful/TERM/KILL cleanup;
+  callers retain fixtures, browser assertions and PocketIC ownership in their child.
+  The Rust package API and dependency graph are unchanged.
+
 ## [0.52.0] - 2026-10-17
 
 ### Breaking

@@ -1,0 +1,10 @@
+{
+  "name": "@dragginzgame/ic-testkit-browser",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "exports": "./testing/browser/session.mjs",
+  "files": ["testing/browser/session.mjs", "testing/browser/README.md"],
+  "scripts": { "test": "node --test testing/browser/session.test.mjs" }
+}

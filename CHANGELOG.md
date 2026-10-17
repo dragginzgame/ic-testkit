@@ -6,6 +6,13 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.52.1]
+
+- Add a private Git-consumed Node fixture-session helper for browser harnesses.
+  It owns readiness polling, retained logs and bounded graceful/TERM/KILL cleanup;
+  callers retain fixtures, browser assertions and PocketIC ownership in their child.
+  The Rust package API and dependency graph are unchanged.
+
 ## [0.52.0] - 2026-10-17
 
 ### Breaking
