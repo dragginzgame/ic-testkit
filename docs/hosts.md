@@ -1,5 +1,24 @@
 # Host support and qualification
 
+## Prepared 0.53.1: private sample statistics
+
+The private `ic-testkit-dev/src/statistics` module takes ownership of finite
+sample projections from Metrics 0.13.4 source
+`76cca76c8e591d91c9dbed6b276ac2ef57533335`, preparing for Metrics' 0.14 hard cut.
+Its typed errors remain available as the driver's original error source;
+count/mean/p50/p95 and the worker/report schema are unchanged. Unused minimum
+and maximum projections are removed. The development package drops its direct
+Metrics dependency; the published Testkit library still uses Metrics integer
+benchmark arithmetic. No package version or external lock selection changes.
+
+Five statistics units and three report-boundary units pass on Linux, including
+invalid-input immutability, midpoint/nearest-rank distinctions, signed zero,
+extreme fractions, non-finite means and original typed error sources. Strict
+all-target development-package Clippy and Rust 1.91 compilation pass. This is
+functional qualification, without a timing benchmark or a Wasm-size claim.
+Full CI, native macOS and live server measurements remain separate. Focused
+receipts are retained in `/tmp/metrics-hardcut-0140.7Fcf5q/`.
+
 ## Pending 0.53.0: package tests receive prepared PocketIC
 
 The failed archive attempt at `target/package-qualification-GTmwz7/` reaches

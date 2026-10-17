@@ -3,7 +3,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::fixture_reuse_report::{Phases, WorkerReport};
+use crate::{
+    fixture_reuse_report::{Phases, WorkerReport},
+    statistics::summarize_samples,
+};
 use serde::Serialize;
 
 use super::{
@@ -114,9 +117,9 @@ pub(super) struct Distribution {
     pub(super) p95: f64,
 }
 
-// Sampling and presentation stay local; Metrics owns the arithmetic.
+// Complete floating-point sample statistics belong to this private report owner.
 fn distribution(mut values: Vec<f64>) -> Result<Option<Distribution>, Error> {
-    Ok(ic_metrics::summarize_samples(&mut values, 95, 100)
+    Ok(summarize_samples(&mut values, 95, 100)
         .map_err(Error::Statistics)?
         .map(|statistics| Distribution {
             count: statistics.count,
@@ -270,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn summary_refuses_nonfinite_derived_rates_with_the_metrics_cause() {
+    fn summary_refuses_nonfinite_derived_rates_with_the_statistics_cause() {
         let options = parse_arguments(
             [
                 "--server",
@@ -299,17 +302,17 @@ mod tests {
         };
         assert!(matches!(
             error,
-            Error::Statistics(ic_metrics::SampleStatisticsError::NonFiniteSample { .. })
+            Error::Statistics(crate::statistics::SampleStatisticsError::NonFiniteSample { .. })
         ));
         assert!(
             std::error::Error::source(&error)
                 .unwrap()
-                .is::<ic_metrics::SampleStatisticsError>()
+                .is::<crate::statistics::SampleStatisticsError>()
         );
         assert!(matches!(
             distribution(vec![f64::MAX; 3]),
             Err(Error::Statistics(
-                ic_metrics::SampleStatisticsError::NonFiniteMean
+                crate::statistics::SampleStatisticsError::NonFiniteMean
             ))
         ));
     }
