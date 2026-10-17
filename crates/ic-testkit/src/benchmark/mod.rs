@@ -426,16 +426,18 @@ pub fn pair_benchmark_spans(events: &[RawBenchmarkEvent]) -> BenchmarkSpanReport
 pub fn aggregate_benchmark_spans(
     spans: &[BenchmarkSpan],
 ) -> Result<Vec<BenchmarkAggregateRow>, BenchmarkAggregateError> {
-    let mut rows: BTreeMap<(BenchmarkScope, &str), AggregateBuilder> = BTreeMap::new();
+    let mut rows = BTreeMap::new();
 
     for span in spans {
-        add_span_to_aggregate(&mut rows, BenchmarkScope::Suite(span.suite.clone()), span)?;
-        add_span_to_aggregate(&mut rows, BenchmarkScope::All, span)?;
+        add_span_to_aggregate(&mut rows, AggregateScope::Suite(&span.suite), span)?;
+        add_span_to_aggregate(&mut rows, AggregateScope::All, span)?;
     }
 
     Ok(rows
         .into_iter()
-        .map(|((scope, span_label), builder)| builder.finish(scope, span_label.to_owned()))
+        .map(|((scope, span_label), builder)| {
+            builder.finish(scope.into_owned(), span_label.to_owned())
+        })
         .collect())
 }
 
@@ -633,6 +635,23 @@ fn push_paired_span(
     }
 }
 
+// Borrow grouping identities until a row or error must own them. Keep the same
+// suite-before-all ordering as the public report scope.
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+enum AggregateScope<'a> {
+    Suite(&'a str),
+    All,
+}
+
+impl AggregateScope<'_> {
+    fn into_owned(self) -> BenchmarkScope {
+        match self {
+            Self::Suite(suite) => BenchmarkScope::Suite(suite.to_owned()),
+            Self::All => BenchmarkScope::All,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct AggregateBuilder {
     runs: u64,
@@ -678,8 +697,8 @@ impl AggregateBuilder {
 }
 
 fn add_span_to_aggregate<'a>(
-    rows: &mut BTreeMap<(BenchmarkScope, &'a str), AggregateBuilder>,
-    scope: BenchmarkScope,
+    rows: &mut BTreeMap<(AggregateScope<'a>, &'a str), AggregateBuilder>,
+    scope: AggregateScope<'a>,
     span: &'a BenchmarkSpan,
 ) -> Result<(), BenchmarkAggregateError> {
     match rows.entry((scope, span.span_label.as_str())) {
@@ -688,7 +707,7 @@ fn add_span_to_aggregate<'a>(
             BenchmarkAggregateError {
                 span_label: (*span_label).to_owned(),
                 counter,
-                scope: scope.clone(),
+                scope: scope.into_owned(),
             }
         }),
         Entry::Vacant(entry) => {

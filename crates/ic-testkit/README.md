@@ -8,7 +8,7 @@ PocketIC-oriented test utilities for Internet Computer canister tests.
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.49"
+ic-testkit = "0.50"
 ```
 
 The published MSRV is Rust 1.91, and the selected PocketIC line is 16.
@@ -16,7 +16,9 @@ Canisters using benchmark markers can add the crate under `[dependencies]`.
 `pocket_ic` and `pic` are host-only. `performance` is Wasm-only;
 `benchmark` counters, parsing and aggregation, and `Fake` are available on both
 targets. Native directory, metadata and file-output APIs live in
-`benchmark::report`. Candid calls return contextual errors; choose caller-side
+`benchmark::report`. Candid calls require caller-selected
+`ic_testkit_candid::DecodeLimits` and return contextual errors with typed decode
+causes; add `ic-testkit-candid` directly to select those budgets. Choose caller-side
 `expect` when a fixture must panic. Standalone recipe builders return
 `std::io::Result<StandaloneCanisterFixture>`.
 

@@ -195,13 +195,26 @@ case "$mode" in
       # Retain a consistent saved manifest workspace for interrupted-release
       # cache preparation, independent of partially installed live metadata.
       for member in crates/ic-testkit crates/ic-testkit-candid crates/ic_testkit_perf_probe; do
-        mkdir -p "$prepared/new/$member/src"
-        cp "$member/Cargo.toml" "$prepared/new/$member/Cargo.toml"
-        : > "$prepared/new/$member/src/lib.rs"
+        for selection in old new; do
+          mkdir -p "$prepared/$selection/$member/src"
+          cp "$member/Cargo.toml" "$prepared/$selection/$member/Cargo.toml"
+          : > "$prepared/$selection/$member/src/lib.rs"
+        done
       done
       cp rust-toolchain.toml "$prepared/new/rust-toolchain.toml"
+      # The shared renderer also advances requirements on admitted local members.
+      # Observe the saved source workspace, never today's partially installed files.
+      cargo metadata --manifest-path "$prepared/old/Cargo.toml" --locked --offline \
+        --format-version 1 --no-deps > "$prepared/workspace-metadata.json"
+      "${YQ:-yq}" -p toml -o json -I 0 '.' "$prepared/old/Cargo.toml" \
+        > "$prepared/workspace-manifest.json"
+      jq -n --slurpfile manifest "$prepared/workspace-manifest.json" \
+        --slurpfile metadata "$prepared/workspace-metadata.json" \
+        '{manifest: $manifest[0], members: ($metadata[0].packages | map({name, manifest_path}))}' \
+        > "$prepared/workspace-input.json"
       perl "$script_dir/../ci/render-cargo-workspace-version.pl" \
         "$prepared/old/Cargo.toml" "$RELEASE_PREVIOUS" "$RELEASE_VERSION" \
+        "$prepared/workspace-input.json" \
         > "$prepared/new/Cargo.toml"
       bash "$script_dir/../ci/check-format-tools.sh" "$SHARED_TOOLING_CARGO_SORT_VERSION"
       cargo sort --workspace "$prepared/new"

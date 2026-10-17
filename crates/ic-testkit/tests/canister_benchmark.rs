@@ -55,7 +55,12 @@ fn perf_probe_canister_emits_parseable_benchmark_markers() {
     .expect("install standalone fixture");
     let result: u64 = fixture
         .pocket_ic()
-        .update_candid(fixture.canister_id(), "benchmark_once", ())
+        .update_candid(
+            fixture.canister_id(),
+            "benchmark_once",
+            (),
+            support::REPLY_LIMITS,
+        )
         .expect("benchmark_once update call");
 
     assert_eq!(result, 1_498_500);

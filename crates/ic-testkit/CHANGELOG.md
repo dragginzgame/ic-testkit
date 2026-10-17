@@ -8,7 +8,7 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
-## [0.49.1]
+## [0.50.1]
 
 ### Added
 
@@ -32,6 +32,78 @@ repository checkout. The complete historical changelog remains at
   native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
   macOS fixture creation before Git observation without changing production behavior
   ([#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111)).
+
+## [0.50.0] - 2026-10-16
+
+### Breaking
+
+- Snapshot capture and restore failures carry `source: Box<PocketIcCallFailure>`;
+  cleanup failures use the same source in one contextual record. Match rejection
+  or operation failure through that source. Snapshot errors no longer implement
+  `Clone`, `Eq` or `PartialEq`; exact senders and rollback evidence remain available.
+
+- All typed PocketIC query/update helpers require a final
+  `ic_testkit_candid::DecodeLimits` argument and use that crate's bounded decoder.
+  `CandidCallError::Decode` retains a boxed `DecodeError` in `source` instead of
+  a message string; `CandidCallError` no longer implements `Clone`, `Eq` or
+  `PartialEq`. Top-level reply-argument helpers share the same decoding owner.
+
+- Remove `ic_testkit::testing` and its duplicate HTTP request readers. Native
+  fixture callers use `ic_host_process::testing::http` with `test-support`;
+  response policy and PocketIC lifecycle stay with their callers.
+- Benchmark metadata rejects duplicate declared fields rather than silently
+  accepting the last value. Object-only input and optional-field rules remain;
+  metadata now deserializes directly without an intermediate JSON tree.
+- Adopt Host 0.23's exposed types. Process creation selects the previous cleanup
+  policy explicitly, and setup retains descriptor-based locking and archive
+  authentication through the current Host APIs.
+
+### Migration
+
+Match `ControllerSnapshotError::CaptureFailed` or `::RestoreFailed` for either
+rejection or panic, then inspect `source.as_ref()` as
+`PocketIcCallFailure::{Rejected, Operation}`. These variants both retain the
+selected `sender`; capture failures also retain all rollback failures.
+`SnapshotCleanupFailure` is a record with public `canister_id`, `sender` and
+boxed `source` fields instead of separate rejection/panic variants. Use the typed
+source or `Error::source()` to retain transport classification, rather than
+parsing error text. Snapshot errors no longer supply cloning or equality traits.
+
+Add `ic-testkit-candid` as a direct dependency and supply caller-selected
+`DecodeLimits` after the Candid argument tuple in `query_candid`,
+`update_candid`, their `_as` variants and the `query_candid_args` /
+`update_candid_args` free functions. Select wire and work limits for the expected
+reply shape; the library supplies no universal default. These limits govern
+reply decoding and do not impose a build or transport deadline.
+Match `CandidCallError::Decode { source, .. }` or downcast `Error::source()` to
+`ic_testkit_candid::DecodeError` for wire-admission and original decoder causes.
+Use `ic_testkit_candid::decode_args` when decoding top-level reply arguments
+outside PocketIC; `(T, U)` denotes two arguments and `(T,)` denotes one.
+
+
+Select `ic-host-process` directly with its `test-support` feature for synthetic
+HTTP peers. Replace `testing::read_http_request` with
+`testing::http::capture_http_request(..., HttpContentLength::Optional).into_result()`.
+Import phased `read_http_request_line` and `read_http_request_with_line` from
+Host's `testing::http` module. Keep each peer's existing deadline and byte limits.
+
+Metadata files keep their current object layout and optional fields. Remove
+ambiguous duplicate declared keys before reading; existing files are neither
+rewritten nor reinterpreted under another format. Output remains unchanged.
+
+### Development
+
+Benchmark aggregation borrows suite identities while grouping and allocates
+owned names only for completed rows or errors. Suite/label sorting, the distinct
+cross-suite scope and transactional overflow rejection remain unchanged.
+
+Package checks and publication dry runs build the exact coordinated archives
+using the selected lockfile and a temporary dependency on the packaged Candid
+source. This avoids checking against an older published copy with the current
+workspace version. The verification override is confined to a disposable tree;
+archives retain registry dependency declarations. Release preparation uses
+Shared Tooling's renderer to advance the internal requirement with the workspace
+version; package versions remain maintainer-owned.
 
 ## [0.49.0] - 2026-10-16
 

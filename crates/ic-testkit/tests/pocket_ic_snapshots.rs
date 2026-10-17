@@ -2,7 +2,8 @@ mod support;
 
 use candid::Principal;
 use ic_testkit::pic::{
-    CanisterSnapshotTarget, ControllerSnapshotError, PocketIcSnapshotExt, SnapshotRestoreFunding,
+    CanisterSnapshotTarget, ControllerSnapshotError, PocketIcCallFailure, PocketIcSnapshotExt,
+    SnapshotRestoreFunding,
 };
 use pocket_ic::CanisterSettings;
 
@@ -36,16 +37,16 @@ fn explicit_snapshot_senders_support_mixed_controller_sets_without_fallback() {
         ControllerSnapshotError::CaptureFailed {
             canister_id,
             sender,
-            response,
+            source,
             cleanup_failures,
         } => {
             assert_eq!(canister_id, explicit_canister);
             assert_eq!(sender, None);
+            let PocketIcCallFailure::Rejected(response) = *source else {
+                panic!("expected a complete rejection");
+            };
             assert_ne!(response.reject_message, "");
-            assert_eq!(
-                cleanup_failures,
-                [] as [ic_testkit::pic::SnapshotCleanupFailure; 0],
-            );
+            assert_eq!(cleanup_failures.len(), 0);
         }
         other => panic!("unexpected snapshot error: {other}"),
     }
@@ -79,10 +80,13 @@ fn explicit_snapshot_senders_support_mixed_controller_sets_without_fallback() {
         ControllerSnapshotError::RestoreFailed {
             canister_id,
             sender,
-            response,
+            source,
         } => {
             assert_eq!(canister_id, explicit_canister);
             assert_eq!(sender, Some(explicit_controller));
+            let PocketIcCallFailure::Rejected(response) = *source else {
+                panic!("expected a complete rejection");
+            };
             assert_ne!(response.reject_message, "");
         }
         other => panic!("unexpected restore failure: {other}"),
@@ -105,11 +109,8 @@ fn duplicate_snapshot_inputs_are_rejected_before_any_capture() {
             CanisterSnapshotTarget::new(duplicate, Some(Principal::anonymous())),
         ])
         .unwrap_err();
-    assert_eq!(
-        error,
-        ControllerSnapshotError::DuplicateCanisterId {
-            canister_id: duplicate
-        }
+    assert!(
+        matches!(error, ControllerSnapshotError::DuplicateCanisterId { canister_id } if canister_id == duplicate)
     );
     assert!(
         pocket_ic
@@ -171,16 +172,16 @@ fn failed_snapshot_set_capture_cleans_up_earlier_snapshots() {
         ControllerSnapshotError::CaptureFailed {
             canister_id,
             sender,
-            response,
+            source,
             cleanup_failures,
         } => {
             assert_eq!(canister_id, missing_canister);
             assert_eq!(sender, None);
+            let PocketIcCallFailure::Rejected(response) = *source else {
+                panic!("expected a complete rejection");
+            };
             assert_ne!(response.reject_message, "");
-            assert_eq!(
-                cleanup_failures,
-                [] as [ic_testkit::pic::SnapshotCleanupFailure; 0]
-            );
+            assert_eq!(cleanup_failures.len(), 0);
         }
         other => panic!("unexpected snapshot error: {other}"),
     }

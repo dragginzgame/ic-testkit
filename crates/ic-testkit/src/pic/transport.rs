@@ -129,6 +129,11 @@ pub(super) fn panic_payload_to_string(payload: &(dyn Any + Send)) -> String {
 pub fn is_dead_pocket_ic_transport_error(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut current = Some(error);
     while let Some(candidate) = current {
+        // Decoder diagnostics may quote arbitrary reply content. Reaching a
+        // typed decode failure proves this branch is not a transport failure.
+        if candidate.is::<ic_testkit_candid::DecodeError>() {
+            return false;
+        }
         if candidate
             .downcast_ref::<PocketIcOperationError>()
             .is_some_and(PocketIcOperationError::is_transport)
@@ -216,8 +221,8 @@ pub(super) fn is_dead_instance_transport_error(message: &str) -> bool {
 mod tests {
     use super::super::{CanisterInstallError, ControllerSnapshotError};
     use super::{
-        PocketIcOperationError, capture_operation, is_dead_instance_transport_error,
-        is_dead_pocket_ic_transport_error,
+        PocketIcCallFailure, PocketIcOperationError, capture_operation,
+        is_dead_instance_transport_error, is_dead_pocket_ic_transport_error,
     };
 
     #[derive(Debug)]
@@ -293,14 +298,20 @@ mod tests {
         let canister_id = candid::Principal::anonymous();
         for message in [REFUSED, RESET, "unrelated application panic"] {
             let expected = message != "unrelated application panic";
-            let capture = ControllerSnapshotError::CapturePanicked {
+            let capture = ControllerSnapshotError::CaptureFailed {
                 canister_id,
-                source: PocketIcOperationError::new(message),
+                sender: None,
+                source: Box::new(PocketIcCallFailure::Operation(PocketIcOperationError::new(
+                    message,
+                ))),
                 cleanup_failures: vec![],
             };
-            let restore = ControllerSnapshotError::RestorePanicked {
+            let restore = ControllerSnapshotError::RestoreFailed {
                 canister_id,
-                source: PocketIcOperationError::new(message),
+                sender: None,
+                source: Box::new(PocketIcCallFailure::Operation(PocketIcOperationError::new(
+                    message,
+                ))),
             };
             for snapshot in [capture, restore] {
                 assert_eq!(is_dead_pocket_ic_transport_error(&snapshot), expected);
@@ -390,7 +401,9 @@ mod tests {
         let error = super::super::CandidCallError::Decode {
             context: Box::new(context),
             bytes: 0,
-            message: "channel closed".into(),
+            source: Box::new(ic_testkit_candid::DecodeError::Candid(candid::Error::msg(
+                "channel closed",
+            ))),
         };
         assert!(!is_dead_pocket_ic_transport_error(&error));
     }
@@ -415,7 +428,9 @@ mod tests {
                 super::super::CandidCallError::Decode {
                     context: Box::new(context),
                     bytes: 0,
-                    message: REFUSED.into(),
+                    source: Box::new(ic_testkit_candid::DecodeError::Candid(candid::Error::msg(
+                        REFUSED,
+                    ))),
                 },
                 false,
             ),

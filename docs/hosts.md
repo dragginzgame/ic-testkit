@@ -1,21 +1,149 @@
 # Host support and qualification
 
-## Pending 0.49.1: shared Rust server asset admission
+## Pending 0.50.1: direct Rust server admission
 
-Unix `pic::server_assets` owns the previous CLI provisioning implementation.
-Rust fixtures and the CLI share offline authenticated `check`; explicit `setup`
-takes caller-owned cancellation rather than installing signal handlers in the
-library. Digests, limits, bundle layout and retained evidence are unchanged.
-All seven moved provisioning cases, the CLI unit case and three focused CLI
-setup cases pass on Linux, including signal cancellation, redirected roots and
-missing setup without executing tools. Strict library/CLI Clippy, actual Rust
-1.91 library/CLI checking, warning-denied rustdoc, formatting, Cargo inheritance
-and documentation links pass. The CLI admits Backup's prepared 16.1.0 bundle.
-Native macOS and full CI remain separate; no package version changed.
-An isolated Backup adapter uses the library check directly in both simulator
-fixtures, retaining server digests, original/optimized Wasm and private logs.
-Its complete Core allocation/upload/load/start and Agent capture/transfer/upload/
-restore journeys pass on managed PocketIC 16.1.0 with local loopback access.
+Unix `pic::server_assets` exposes the CLI's authenticated server bundle admission
+and explicit provisioning to Rust fixtures. The CLI delegates to the same owner
+and retains signal handling; callers select cancellation, bundle paths, fixture
+custody and application safety. Offline checks never install missing assets.
+Each server-asset test re-execs before executable writes and selects explicit
+kill-and-wait cleanup, preventing unrelated library forks from retaining writable
+executable descriptors. Current-main Linux qualification passes all 87 non-ignored library cases
+(including all seven asset cases), the CLI unit case and both changed driver
+cases. Strict library/bin/test and affected-example Clippy, actual Rust 1.91
+library/bin checking, warning-denied docs, formatting and inheritance checks pass.
+The combined source adapter also passes Backup's 34 Core and 12 Agent PocketIC
+cases on server 16.1.0. Native macOS, hosted checks and published Backup adoption
+remain separate; no full local CI or release ran.
+
+## Pending 0.50.0: snapshot causes and borrowed aggregation
+
+Snapshot capture, restore and rollback retain one `PocketIcCallFailure` source
+with exact sender/canister context. Rejection/panic classification has one owner;
+snapshot errors no longer provide cloning or equality traits. Aggregation borrows
+suite names until row/error emission, preserving suite/label order, a distinct
+global scope and checked overflow semantics. All 23 benchmark cases, five live
+snapshot cases, 13 baseline-pool cases and 10 concurrency cases pass on Linux;
+two dedicated server-kill cases remain explicitly ignored. Two snapshot cleanup/
+funding cases and ten transport-source cases pass, as does the run-count overflow
+case. Strict affected-target Clippy, actual Rust 1.91, warning-denied Rustdoc and
+prepared formatting pass. This is focused evidence, not full CI or native macOS.
+
+[Host PR #171 — Stream bounded gzip payloads into caller-owned sinks](https://github.com/dragginzgame/ic-host-tooling/pull/171)
+adds the sink operation needed to delete the CLI's decoded executable buffer and
+separate hash traversal. Its producer at `5c22e3d` passes all 16 gzip cases on
+current Rust and actual Rust 1.88, strict Artifacts Clippy and warning-denied docs.
+The prepared consumer passes seven provisioning cases, including authenticated
+CRC/truncation/trailing-data refusal, strict CLI/test Clippy and actual Rust 1.91.
+Its exact selected graph changes only Host Artifacts' source; versions and all
+other dependency edges remain selected. This is source-override qualification;
+the live checkout retains its published dependency and buffering flow until
+publication. Adoption belongs to
+[#116 — Adopt published Host gzip streaming in server provisioning](https://github.com/dragginzgame/ic-testkit/issues/116).
+Before-images, the apply-checked consumer patch and raw logs remain under
+`target/snapshot-streaming-evidence/`. Host's hosted checks are pending; native
+macOS and full release qualification remain separate. Package versions, the
+real index and Git refs were not changed by this task.
+
+## Pending 0.50.0: caller-bounded Candid replies and pool classification
+
+All typed PocketIC calls now use the independent Candid codec, including its new
+bounded top-level argument decoder. Callers supply `DecodeLimits`; fixtures own
+small-reply budgets and documentation passes caller budgets through explicitly.
+Decode failures retain their typed cause and cannot become transport recovery
+merely because decoder evidence quotes a reqwest-looking string. Pool contract
+classification is projected directly at its only call site; recipe classification
+and fatal recipe-identity mismatch behavior remain unchanged.
+
+On normal registry Build 0.11.0 and Host 0.23.1, Linux passes five codec cases,
+six call-codec cases, ten transport cases, six pool unit cases, 13 live pool cases,
+the six-variant live rejection case and all six teardown parent cases. Strict
+all-target Clippy for both packages, actual Rust 1.91 native/Wasm compilation,
+warning-denied Rustdoc, library doctests and prepared formatting pass. A real
+PocketIC 16.1 smoke completes fresh and capacity-one pooled workloads with two
+tasks each, one worker and 64 state bytes. This is correctness evidence, not a
+performance comparison. Native macOS and full CI/release remain separate.
+
+The Candid signatures require downstream updates when adopting 0.50.0. Traced
+callers include Auth's qualification runner, Timers' PocketIC harness, Storage's
+benchmark, Jobs' consumer recovery tests, Query's Governance testkit, Blob's
+PocketIC fixtures, Canic's qualification helpers/tests and IC Crates' managed
+fixtures. Use the [package migration guide](../crates/ic-testkit/CHANGELOG.md#0500)
+and select budgets for each consumer's actual reply shapes; no global default is
+introduced or pushed into those independent application policies.
+
+[Host PR #167 — Single-probe observed-version admission](https://github.com/dragginzgame/ic-host-tooling/pull/167)
+removes the need for the benchmark's preliminary Git version capture. Its
+producer passes focused version tests on current Rust and actual Rust 1.88,
+provenance tests, strict Process Clippy and warning-denied docs. Testkit's
+apply-checked consumer patch and source qualification are retained at
+`/tmp/testkit-bounded-candid-git.m7WVPu/`; publication gates normal adoption.
+The live checkout retains its existing Git flow and registry requirements.
+Before-images and failed/passing logs are retained in that same directory.
+Own package metadata, the real index and Git refs remain maintainer-owned.
+
+The prepared Git consumer passes all 21 driver cases, strict driver Clippy,
+actual Rust 1.91 and the same live two-task fresh/pooled smoke. Only four Host
+package sources change in that qualification; all selected package versions and
+external dependency edges are retained. Normal adoption is tracked in
+[#112](https://github.com/dragginzgame/ic-testkit/issues/112).
+Host PR #167's exact-source required CI also passes Linux, Rust 1.88 and native
+macOS 15 on both architectures; that does not qualify Testkit's native matrix.
+
+Packaging and publication dry runs verify the exact coordinated archives with
+the selected graph and a temporary archived-sibling dependency override. Neither
+archive gains a path dependency. This avoids Cargo reusing the older published
+Candid source under the current workspace version during pre-bump validation.
+The release adapter supplies saved workspace identities to Shared's existing
+renderer so the internal version requirement follows minor/major releases too.
+Real offline package checks and the registry-backed publication dry run pass;
+no upload occurs. Isolated release metadata/recovery and Make jobserver checks,
+ShellCheck, Bash 3.2 package/metadata qualification and the four updated README
+call examples pass. The full release gate remains maintainer-run.
+
+## Pending 0.50.0: HTTP ownership and direct metadata decoding
+
+Testkit's duplicate HTTP request reader and export are removed. The startup and
+simulated-time peers call published Host's opt-in HTTP module directly, retaining
+optional Content-Length, deadlines and byte bounds. Query's directly affected
+callers are prepared in [PR #72](https://github.com/dragginzgame/ic-query/pull/72),
+and Blob's in [PR #78](https://github.com/dragginzgame/ic-blob-storage/pull/78).
+Their sibling working checkouts remain unchanged. Query's 19 focused cases and
+Blob's three CLI cases pass; Blob's affected standalone/storage targets compile.
+Both caller PRs pass strict affected-package Clippy and formatting on their
+selected registry Host 0.22.1 graphs; those selections are not upgraded here.
+Canic's two additional callers are in local committed `47d3521`, ahead of GitHub
+main. Their focused patch passes formatting and apply checks; owning-target
+compilation is blocked by the same 13 Host 0.23/Build-alignment errors on its
+unchanged baseline. That caller patch must accompany Canic's pending batch.
+Query's Intel macOS CI failed during a common-tool download connection reset,
+before compilation; GitHub refused a retry while that workflow was still running.
+
+On Testkit's incoming registry Host 0.23.1 graph, 23 benchmark, 27 startup,
+seven simulated-time, eight CLI, 13 server-runner and six teardown parent cases
+pass on Linux. Metadata remains object-only and now rejects duplicate declared
+fields without allocating a generic JSON tree. CLI setup selects the prior
+KillAndWait cleanup explicitly, authenticates the observed archive digest and
+retains a held descriptor lock. Focused strict Clippy, actual Rust 1.91 checks
+and formatting pass. This does not qualify the normal benchmark driver: Build
+0.10 still exposes Host 0.22 types, requiring its pending aligned release.
+
+[Host PR #108 — Scoped Unix signal actions](https://github.com/dragginzgame/ic-host-tooling/pull/108)
+is refreshed onto published Host 0.23.1; its producer passes current Rust and
+Rust 1.88 signal cases, strict Process Clippy, warning-denied docs and formatting.
+The prepared Testkit signal patch removes both local guards. It passes 18 driver,
+eight CLI and the real CLI interruption case, strict all-target Clippy, actual
+Rust 1.91 and a live PocketIC 16.1 two-task fresh/pooled smoke. That qualification
+uses the isolated Host PR and a frozen copy of Build's pending dirty 0.11 source
+over `95567eb`; only the five selected Build/Host package sources change. It is
+source-override evidence, not normal registry adoption or a performance comparison.
+Publication gates normal adoption under
+[#93 — Adopt scoped Host signal actions](https://github.com/dragginzgame/ic-testkit/issues/93).
+The live checkout retains its guards until that API is published. Before-images,
+the apply-checked signal patch, exact graph admission and raw failed/passing logs
+remain at `/tmp/testkit-http-signals-metadata.IiS7s0/`. Own package metadata,
+incoming manifest/lock selections, index and refs remain unchanged by this work.
+Native macOS and full CI/release qualification remain maintainer checks.
 
 ## Pending 0.49.0: shared hook qualification and benchmark rows
 
@@ -5918,25 +6046,3 @@ and warning-denied native documentation pass. Evidence is retained at
 by sandbox loopback restrictions and is retained separately. Native macOS and
 full CI remain maintainer qualification; Git observations remain separate reads,
 not an atomic source snapshot. No persistent layout or format identity changes.
-
-## Git path fixture portability
-
-The benchmark driver's Git observation test uses newline, tab and quote bytes in
-an actual filename on every native host and checks the complete NUL-delimited
-status output. Linux also creates an invalid UTF-8 entry. macOS runner filesystems
-refuse that entry with OS error 92 before Git can observe it; they retain the same
-portable byte, unchanged-revision and typed failure checks. Production observation
-is unchanged. See [#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111).
-
-The output-limit command fixture keeps its producer alive through the capture
-refusal, then requires successful cleanup and reaped SIGKILL status. The previous
-immediately exiting producer raced process-group signalling on Apple Silicon;
-that race could produce secondary cleanup evidence even though the output-limit
-failure was correctly retained. Production command cleanup policy is unchanged.
-
-The library server-asset unit cases each re-exec before creating their executable
-fixtures. This keeps unrelated parallel library subprocess tests from inheriting
-a writable executable descriptor; the previous per-module mutex could only
-coordinate asset cases. Each child has bounded capture and a 120-second deadline.
-The concurrent-setup case still uses two callers and requires exactly one download.
-Production setup and version admission retain their original errors and no retries.

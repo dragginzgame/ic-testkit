@@ -1,6 +1,8 @@
 //! Controlled reproduction of PocketIC's synchronous instance-deletion wait.
 //! The parent owns a synthetic HTTP peer and can always kill/reap the probe.
 
+mod support;
+
 use candid::Principal;
 use ic_host_process::testing::http::{HttpContentLength, capture_http_request};
 use ic_testkit::pic::{
@@ -183,7 +185,7 @@ fn refused_instance_request_probe() {
         .read_exact(&mut [0])
         .expect("parent releases refused call");
     let error = pic
-        .query_candid::<u64, _>(Principal::anonymous(), "get", ())
+        .query_candid::<u64, _>(Principal::anonymous(), "get", (), support::REPLY_LIMITS)
         .expect_err("peer is gone");
     assert!(matches!(error, CandidCallError::Transport { .. }));
     assert!(is_dead_pocket_ic_transport_error(&error));

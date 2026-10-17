@@ -90,6 +90,20 @@ pub fn decode_one<'a, T: Deserialize<'a> + CandidType>(
     candid::decode_one_with_config(bytes, &config(bytes, limits)?).map_err(DecodeError::Candid)
 }
 
+/// Decode top-level reply arguments with caller-bounded decoding and skipping.
+///
+/// `(T, U)` requests two arguments, while `(T,)` requests one. As with
+/// [`decode_one`], additional values may be skipped within the selected quota.
+///
+/// # Errors
+/// Refuses wire/work ceilings, malformed arguments and trailing bytes.
+pub fn decode_args<'a, T: candid::utils::ArgumentDecoder<'a>>(
+    bytes: &'a [u8],
+    limits: DecodeLimits,
+) -> Result<T, DecodeError> {
+    candid::decode_args_with_config(bytes, &config(bytes, limits)?).map_err(DecodeError::Candid)
+}
+
 /// Decode exactly one typed Candid result, rejecting missing or additional values or bytes.
 ///
 /// # Errors

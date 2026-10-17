@@ -25,9 +25,6 @@ pub use pocket_ic;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pic;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub mod testing;
-
 #[cfg(target_arch = "wasm32")]
 pub mod performance;
 

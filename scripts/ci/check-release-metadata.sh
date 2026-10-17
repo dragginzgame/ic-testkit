@@ -331,6 +331,8 @@ HISTORY
     adapter prepare
   adapter prepared
   [[ "$(bash "$repo_root/scripts/ci/read-cargo-workspace-version.sh" --stable Cargo.toml)" == "$RELEASE_VERSION" ]] || fail "fixture invariant in $PWD at line $LINENO"
+  [[ "$("${YQ:-yq}" -p toml -r '.workspace.dependencies.ic-testkit-candid.version' Cargo.toml)" == "${RELEASE_VERSION%.*}" ]] \
+    || fail 'prepared local Candid requirement did not follow the release line'
   # The exact generated metadata, dependency selection and retained old bytes
   # are the contract; no test inspects the adapter's implementation layout.
   cmp history-root ".release-state/$RELEASE_VERSION.metadata/old/CHANGELOG.md"

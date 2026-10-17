@@ -305,7 +305,10 @@ fn measure(
 
 fn execute_command(command: &mut Command) -> Result<CompletedExecution, Error> {
     check_interrupted()?;
-    let mut child = OwnedChild::spawn(command.stdin(Stdio::null()).stderr(Stdio::inherit()))?;
+    let mut child = OwnedChild::spawn(
+        command.stdin(Stdio::null()).stderr(Stdio::inherit()),
+        ic_host_process::child::CleanupPolicy::KillAndWait,
+    )?;
     communicate_child(
         &mut child,
         None,

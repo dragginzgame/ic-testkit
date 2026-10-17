@@ -251,12 +251,14 @@ mod tests {
                     }
                     Err(error) => panic!("accept simulated-time request: {error}"),
                 };
-                let request = crate::testing::read_http_request(
+                let request = ic_host_process::testing::http::capture_http_request(
                     &mut stream,
                     Duration::from_secs(1),
                     16_384,
                     16_384,
+                    ic_host_process::testing::http::HttpContentLength::Optional,
                 )
+                .into_result()
                 .unwrap();
                 let text = std::str::from_utf8(&request).unwrap();
                 let path = text.split_whitespace().nth(1).unwrap().to_owned();

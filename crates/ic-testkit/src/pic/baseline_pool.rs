@@ -1009,8 +1009,17 @@ where
             BaselinePoolPreparationError::Contract(
                 BaselinePoolContractError::RecipeIdentityMismatch { .. },
             ) => FailureDisposition::Fatal,
-            BaselinePoolPreparationError::Contract(_) => {
-                FailureDisposition::Rebuild(rebuild_reason_for_error(error))
+            BaselinePoolPreparationError::Contract(error) => {
+                FailureDisposition::Rebuild(match error {
+                    BaselinePoolContractError::MissingResetDomain { .. }
+                    | BaselinePoolContractError::ResetPolicyMismatch { .. }
+                    | BaselinePoolContractError::CyclePolicyMismatch { .. }
+                    | BaselinePoolContractError::DuplicateResetDomain { .. }
+                    | BaselinePoolContractError::RestoreCanisterSetMismatch { .. } => {
+                        RebuildReason::ResetCoverageMismatch
+                    }
+                    _ => RebuildReason::InvariantValidationFailure,
+                })
             }
         }
     }
@@ -1071,20 +1080,6 @@ const fn add_timing(total: &mut Option<Duration>, elapsed: Duration) {
         None => elapsed,
         Some(previous) => previous.saturating_add(elapsed),
     });
-}
-
-fn rebuild_reason_for_error<E>(error: &BaselinePoolPreparationError<E>) -> RebuildReason {
-    match error {
-        BaselinePoolPreparationError::Recipe { stage, .. } => stage.default_rebuild_reason(),
-        BaselinePoolPreparationError::Contract(
-            BaselinePoolContractError::MissingResetDomain { .. }
-            | BaselinePoolContractError::ResetPolicyMismatch { .. }
-            | BaselinePoolContractError::CyclePolicyMismatch { .. }
-            | BaselinePoolContractError::DuplicateResetDomain { .. }
-            | BaselinePoolContractError::RestoreCanisterSetMismatch { .. },
-        ) => RebuildReason::ResetCoverageMismatch,
-        BaselinePoolPreparationError::Contract(_) => RebuildReason::InvariantValidationFailure,
-    }
 }
 
 fn drop_baseline_safely<M>(baseline: CachedPocketIcBaseline<M>) {

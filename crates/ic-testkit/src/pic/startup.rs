@@ -13,7 +13,7 @@ use std::{
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 
-use ic_host_process::child::{CleanupError, OwnedChild};
+use ic_host_process::child::{CleanupError, CleanupPolicy, OwnedChild};
 use pocket_ic::{PocketIc, PocketIcBuilder};
 
 use super::transport;
@@ -588,7 +588,7 @@ impl PocketIcStartupConfig {
             ));
         }
         command.env("IC_TESTKIT_POCKET_IC_URL", url);
-        let mut owned_child = match OwnedChild::spawn(command) {
+        let mut owned_child = match OwnedChild::spawn(command, CleanupPolicy::KillAndWait) {
             Ok(child) => child,
             Err(source) => {
                 return Err(finalize_failure(
@@ -979,12 +979,13 @@ impl ManagedServer {
             .arg(&files.port)
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
-        let child = OwnedChild::spawn(&mut command).map_err(|source| {
-            PocketIcStartupError::new(PocketIcStartupFailure::ServerSpawn {
-                server_binary: binary.clone(),
-                source,
-            })
-        })?;
+        let child =
+            OwnedChild::spawn(&mut command, CleanupPolicy::KillAndWait).map_err(|source| {
+                PocketIcStartupError::new(PocketIcStartupFailure::ServerSpawn {
+                    server_binary: binary.clone(),
+                    source,
+                })
+            })?;
         Ok(Self {
             child,
             binary,

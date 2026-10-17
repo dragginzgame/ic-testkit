@@ -306,6 +306,11 @@ bash "${repo_root}/scripts/ci/check-release-commands.sh" "${repo_root}" \
   cp "$repo_root"/make/*.mk "$TOOL_ROOT/make/"
   cp "$repo_root/ci/tool-versions.env" "$TOOL_ROOT/ci/"
   cp "$repo_root/scripts/ci/check-make-execution.sh" "$TOOL_ROOT/scripts/ci/"
+  cat > "$TOOL_ROOT/scripts/ci/check-packages.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+exec cargo "$1" --locked
+STUB
   for name in host ic rust; do
     cat > "$TOOL_ROOT/scripts/dev/install-$name-tools.sh" <<'STUB'
 #!/usr/bin/env bash
