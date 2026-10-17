@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    fmt,
+    fmt, io,
     time::{Duration, Instant},
 };
 
@@ -394,6 +394,28 @@ pub trait PocketIcDiagnosticsExt {
         request: CanisterDiagnosticsRequest,
     ) -> CanisterDiagnosticsReport;
 
+    /// Explicitly collect and write one contextual diagnostic report.
+    ///
+    /// Uses the request's exact senders and log limits, with no retry or output
+    /// destination selected implicitly. Collection, formatting and writer panics
+    /// are captured as an IO error retaining [`super::PocketIcOperationError`].
+    /// Ordinary writer errors are returned unchanged. Status/log failures remain
+    /// in the written report; successful output does not mean those calls passed.
+    /// Callers keep their primary failure authoritative and decide whether to
+    /// retain or ignore this secondary reporting result.
+    fn write_canister_diagnostics(
+        &self,
+        request: CanisterDiagnosticsRequest,
+        context: &str,
+        writer: &mut dyn io::Write,
+    ) -> io::Result<()> {
+        transport::capture_operation(|| {
+            let report = self.collect_canister_diagnostics(request);
+            writeln!(writer, "{context}: {report}")
+        })
+        .map_err(io::Error::other)?
+    }
+
     /// Collect every labeled request sequentially in its supplied order.
     ///
     /// Every target is attempted even when an earlier entry fails or panics.
@@ -577,6 +599,7 @@ mod tests {
 
     struct PanickingThenReporting {
         calls: Cell<usize>,
+        request: Cell<Option<CanisterDiagnosticsRequest>>,
     }
 
     impl PocketIcDiagnosticsExt for PanickingThenReporting {
@@ -586,6 +609,7 @@ mod tests {
         ) -> CanisterDiagnosticsReport {
             let call = self.calls.get();
             self.calls.set(call + 1);
+            self.request.set(Some(request));
             assert_ne!(call, 0, "synthetic first-entry diagnostic panic");
             CanisterDiagnosticsReport {
                 request,
@@ -599,10 +623,86 @@ mod tests {
         }
     }
 
+    struct PanickingWriter;
+
+    impl std::io::Write for PanickingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            panic!("synthetic writer panic");
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn explicit_reporting_preserves_requests_and_contains_secondary_failures() {
+        let collector = PanickingThenReporting {
+            calls: Cell::new(0),
+            request: Cell::new(None),
+        };
+        let request = CanisterDiagnosticsRequest {
+            canister_id: Principal::from_slice(&[1]),
+            status_sender: Principal::from_slice(&[2]),
+            log_sender: Principal::from_slice(&[3]),
+            log_limits: CanisterLogRenderLimits::default(),
+        };
+        let mut output = Vec::new();
+        let error = collector
+            .write_canister_diagnostics(request, "install", &mut output)
+            .expect_err("collection panic becomes secondary error");
+        assert_eq!(output, [] as [u8; 0]);
+        assert_eq!(collector.calls.get(), 1);
+        assert_eq!(collector.request.get(), Some(request));
+        assert!(
+            error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<super::super::PocketIcOperationError>()
+                .unwrap()
+                .message()
+                .contains("synthetic first-entry diagnostic panic")
+        );
+
+        collector
+            .write_canister_diagnostics(request, "install", &mut output)
+            .unwrap();
+        let text = String::from_utf8(output).unwrap();
+        assert!(text.starts_with("install: "));
+        assert!(
+            text.contains("synthetic status failure") && text.contains("synthetic log failure")
+        );
+        assert_eq!(collector.calls.get(), 2);
+        assert_eq!(collector.request.get(), Some(request));
+
+        let mut full_writer = std::io::Cursor::new([0_u8; 0]);
+        let error = collector
+            .write_canister_diagnostics(request, "install", &mut full_writer)
+            .expect_err("ordinary writer failure is retained");
+        assert_eq!(error.kind(), std::io::ErrorKind::WriteZero);
+        let error = collector
+            .write_canister_diagnostics(request, "install", &mut PanickingWriter)
+            .expect_err("writer panic becomes secondary error");
+        assert!(
+            error
+                .get_ref()
+                .unwrap()
+                .downcast_ref::<super::super::PocketIcOperationError>()
+                .unwrap()
+                .message()
+                .contains("synthetic writer panic")
+        );
+        assert_eq!(
+            collector.calls.get(),
+            4,
+            "one explicit collection per call, with no retries"
+        );
+    }
+
     #[test]
     fn labeled_batch_retains_order_and_continues_after_entry_panic() {
         let collector = PanickingThenReporting {
             calls: Cell::new(0),
+            request: Cell::new(None),
         };
         let first = CanisterDiagnosticsRequest {
             canister_id: Principal::from_slice(&[1]),
@@ -653,6 +753,7 @@ mod tests {
     fn diagnostic_batch_rejects_invalid_labels_before_collection() {
         let collector = PanickingThenReporting {
             calls: Cell::new(0),
+            request: Cell::new(None),
         };
         let request = CanisterDiagnosticsRequest {
             canister_id: Principal::from_slice(&[1]),

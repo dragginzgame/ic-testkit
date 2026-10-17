@@ -8,6 +8,14 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.51.1]
+
+### Added
+
+- Explicit, panic-safe diagnostic reporting to a caller-selected writer. Exact
+  senders and log limits remain caller-owned; collection, formatting and output
+  failures return as secondary errors without an implicit retry or destination.
+
 ## [0.51.0] - 2026-10-17
 
 ### Breaking

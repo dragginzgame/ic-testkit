@@ -6,6 +6,14 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.51.1]
+
+### Added
+
+- Explicit, panic-safe diagnostic reporting to a caller-selected writer. Exact
+  senders and log limits remain caller-owned; collection, formatting and output
+  failures return as secondary errors without an implicit retry or destination.
+
 ## [0.51.0] - 2026-10-17
 
 ### Breaking
