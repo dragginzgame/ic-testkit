@@ -20,32 +20,63 @@ fn candid_call_errors_preserve_live_pocket_ic_rejections() {
     let sender = Principal::management_canister();
     for (result, operation, caller) in [
         (
-            pocket_ic.query_candid::<(), _>(removed_canister, "missing", ()),
+            pocket_ic.query_candid::<(), _>(removed_canister, "missing", (), support::REPLY_LIMITS),
             "query_call",
             Principal::anonymous(),
         ),
         (
-            pocket_ic.update_candid::<(), _>(removed_canister, "missing", ()),
+            pocket_ic.update_candid::<(), _>(
+                removed_canister,
+                "missing",
+                (),
+                support::REPLY_LIMITS,
+            ),
             "update_call",
             Principal::anonymous(),
         ),
         (
-            pocket_ic.query_candid_as::<(), _>(removed_canister, sender, "missing", ()),
+            pocket_ic.query_candid_as::<(), _>(
+                removed_canister,
+                sender,
+                "missing",
+                (),
+                support::REPLY_LIMITS,
+            ),
             "query_call",
             sender,
         ),
         (
-            pocket_ic.update_candid_as::<(), _>(removed_canister, sender, "missing", ()),
+            pocket_ic.update_candid_as::<(), _>(
+                removed_canister,
+                sender,
+                "missing",
+                (),
+                support::REPLY_LIMITS,
+            ),
             "update_call",
             sender,
         ),
         (
-            query_candid_args::<(), _>(pocket_ic, removed_canister, sender, "missing", ()),
+            query_candid_args::<(), _>(
+                pocket_ic,
+                removed_canister,
+                sender,
+                "missing",
+                (),
+                support::REPLY_LIMITS,
+            ),
             "query_call",
             sender,
         ),
         (
-            update_candid_args::<(), _>(pocket_ic, removed_canister, sender, "missing", ()),
+            update_candid_args::<(), _>(
+                pocket_ic,
+                removed_canister,
+                sender,
+                "missing",
+                (),
+                support::REPLY_LIMITS,
+            ),
             "update_call",
             sender,
         ),

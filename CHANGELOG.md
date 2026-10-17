@@ -6,7 +6,7 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [0.49.1]
+## [0.50.1]
 
 ### Changed
 
@@ -25,6 +25,43 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
   native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
   macOS fixture creation before Git observation without changing production behavior
   ([#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111)).
+
+## [0.50.0] - 2026-10-16
+
+### Breaking
+
+- Snapshot capture and restore failures carry `source: Box<PocketIcCallFailure>`;
+  cleanup failures use the same source in one contextual record. Match rejection
+  or operation failure through that source. Snapshot errors no longer implement
+  `Clone`, `Eq` or `PartialEq`; exact senders and rollback evidence remain available.
+
+- All typed PocketIC query/update helpers require a final
+  `ic_testkit_candid::DecodeLimits` argument and use that crate's bounded decoder.
+  `CandidCallError::Decode` retains a boxed `DecodeError` in `source` instead of
+  a message string; `CandidCallError` no longer implements `Clone`, `Eq` or
+  `PartialEq`. Top-level reply-argument helpers share the same decoding owner.
+
+- Remove `ic_testkit::testing` and its duplicate HTTP request readers. Native
+  fixture callers use `ic_host_process::testing::http` with `test-support`;
+  response policy and PocketIC lifecycle stay with their callers.
+- Benchmark metadata rejects duplicate declared fields rather than silently
+  accepting the last value. Object-only input and optional-field rules remain;
+  metadata now deserializes directly without an intermediate JSON tree.
+- Adopt Host 0.23's exposed types. Process creation selects the previous cleanup
+  policy explicitly, and setup retains descriptor-based locking and archive
+  authentication through the current Host APIs.
+
+[Migration details](crates/ic-testkit/CHANGELOG.md#0500)
+
+### Changed
+
+- Benchmark aggregation borrows suite names while grouping, allocating owned
+  names only for completed rows or errors. Report ordering and overflow checks
+  remain unchanged.
+
+- Package checks and publication dry runs verify the coordinated Candid/Testkit
+  archives together. Release preparation advances the internal dependency
+  requirement with the workspace version through Shared Tooling's renderer.
 
 ## [0.49.0] - 2026-10-16
 

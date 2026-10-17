@@ -103,7 +103,7 @@ Host-side test crates normally add:
 
 ```toml
 [dev-dependencies]
-ic-testkit = "0.49"
+ic-testkit = "0.50"
 ```
 
 Canister crates that emit benchmark markers can add the same version under
@@ -199,10 +199,10 @@ Each test normally constructs and directly owns one fresh `PocketIc`:
 use candid::Principal;
 use ic_testkit::pic::{PocketIc, prelude::*};
 
-fn read_counter(pocket_ic: &PocketIc, canister_id: Principal)
+fn read_counter(pocket_ic: &PocketIc, canister_id: Principal, limits: ic_testkit_candid::DecodeLimits)
     -> Result<u64, ic_testkit::pic::CandidCallError>
 {
-    pocket_ic.query_candid(canister_id, "get", ())
+    pocket_ic.query_candid(canister_id, "get", (), limits)
 }
 ```
 
@@ -230,21 +230,25 @@ and `ic-host-process` dependencies; Testkit does not re-export those crates.
 
 ## Typed Candid calls
 
-`CandidCallExt` supplies anonymous and caller-aware query/update variants:
+`CandidCallExt` supplies anonymous and caller-aware query/update variants. Each
+call requires explicit `ic_testkit_candid::DecodeLimits` for reply bytes, decoder
+work, skipping, type entries and header bytes. These budgets govern reply
+decoding; transport deadlines remain with the caller and PocketIC:
 
 ```rust,no_run
 use candid::Principal;
 use ic_testkit::pic::{CandidCallExt, PocketIc};
 
-fn increment_counter(pocket_ic: &PocketIc, canister_id: Principal)
+fn increment_counter(pocket_ic: &PocketIc, canister_id: Principal, limits: ic_testkit_candid::DecodeLimits)
     -> Result<(), ic_testkit::pic::CandidCallError>
 {
-    let _: () = pocket_ic.update_candid(canister_id, "increment", ())?;
+    let _: () = pocket_ic.update_candid(canister_id, "increment", (), limits)?;
     let value: u64 = pocket_ic.query_candid_as(
         canister_id,
         Principal::anonymous(),
         "get",
         (),
+        limits,
     )?;
     assert_eq!(value, 1); // This example assumes a counter initially at zero.
     Ok(())
@@ -257,7 +261,8 @@ remain unchanged.
 
 `CandidCallError` variants distinguish:
 
-- `Encode` and `Decode` failures with call context;
+- `Encode` and `Decode` failures with call context; `Decode::source` retains
+  `ic_testkit_candid::DecodeError` and exposes it through `Error::source()`;
 - `CanisterReject`, retaining the complete upstream `RejectResponse`;
 - `Transport` when the PocketIC instance is unreachable;
 
@@ -508,7 +513,7 @@ use ic_testkit::pic::{
     CandidCallExt, InstallSpec, PocketIcBuilder, PocketIcStartupConfig, StandaloneCanisterFixture,
 };
 
-fn install_counter(wasm: Vec<u8>, init_bytes: Vec<u8>)
+fn install_counter(wasm: Vec<u8>, init_bytes: Vec<u8>, limits: ic_testkit_candid::DecodeLimits)
     -> Result<StandaloneCanisterFixture, Box<dyn std::error::Error>>
 {
     let owned = PocketIcStartupConfig::from_env(std::time::Duration::from_secs(30))?
@@ -520,7 +525,7 @@ fn install_counter(wasm: Vec<u8>, init_bytes: Vec<u8>)
             .label("counter"),
     )?;
 
-    let _value: u64 = fixture.pocket_ic().query_candid(fixture.canister_id(), "get", ())?;
+    let _value: u64 = fixture.pocket_ic().query_candid(fixture.canister_id(), "get", (), limits)?;
     Ok(fixture)
 }
 ```
@@ -642,9 +647,9 @@ static POOL: LazyLock<
 });
 
 # fn build_fixture() -> std::io::Result<StandaloneCanisterFixture> { unimplemented!() }
-fn read_pooled_counter() -> Result<u64, Box<dyn std::error::Error>> {
+fn read_pooled_counter(limits: ic_testkit_candid::DecodeLimits) -> Result<u64, Box<dyn std::error::Error>> {
     let (baseline, _outcome) = POOL.acquire()?;
-    Ok(baseline.pocket_ic().query_candid(*baseline.metadata(), "get", ())?)
+    Ok(baseline.pocket_ic().query_candid(*baseline.metadata(), "get", (), limits)?)
 }
 ```
 
@@ -956,10 +961,11 @@ when floor rounding would hide a fraction. Marker framing, metadata discovery an
 retained prior report files are unchanged; new reports must use unique destinations
 rather than reinterpret or overwrite an older report under the changed columns.
 
-Native synthetic peers can use `testing::read_http_request` with an explicit
-read budget and header/body byte bounds. It returns one raw request, selects
-blocking reads on accepted sockets and rejects ambiguous framing. Callers own
-responses and transport-failure injection.
+Native synthetic peers use `ic_host_process::testing::http::capture_http_request`
+with Host's `test-support` feature, an explicit read budget, header/body byte
+bounds and `HttpContentLength::Optional`. Call `.into_result()` for complete raw
+request bytes. Host selects blocking reads on accepted sockets and rejects
+ambiguous framing; callers own responses and transport-failure injection.
 
 ## Deterministic principals
 

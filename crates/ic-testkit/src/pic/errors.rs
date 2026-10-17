@@ -7,7 +7,7 @@ use super::{PocketIcInstance, PocketIcOperationError};
 ///
 /// Match the variant to inspect its required context and original failure details.
 #[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum CandidCallError {
     /// Arguments could not be Candid-encoded.
     Encode {
@@ -22,8 +22,8 @@ pub enum CandidCallError {
         context: Box<CandidCallContext>,
         /// Number of reply bytes presented to the decoder.
         bytes: usize,
-        /// Original codec failure text.
-        message: String,
+        /// Original bounded decoder failure.
+        source: Box<ic_testkit_candid::DecodeError>,
     },
     /// PocketIC returned a structured canister rejection.
     CanisterReject {
@@ -120,9 +120,9 @@ impl std::fmt::Display for CandidCallError {
             Self::Decode {
                 context,
                 bytes,
-                message,
+                source,
             } => {
-                write!(f, "candid decode failed (bytes={bytes}): {message}")?;
+                write!(f, "candid decode failed (bytes={bytes}): {source}")?;
                 context
             }
             Self::CanisterReject { context, response } => {
@@ -150,6 +150,7 @@ impl std::error::Error for CandidCallError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Transport { source, .. } => Some(source),
+            Self::Decode { source, .. } => Some(source.as_ref()),
             _ => None,
         }
     }

@@ -3,6 +3,15 @@
 
 pub mod wait;
 
+// These fixtures exchange small scalar/tuple replies, never fixture Wasm or logs.
+pub const REPLY_LIMITS: ic_testkit_candid::DecodeLimits = ic_testkit_candid::DecodeLimits {
+    reply_bytes: 65_536,
+    decoding_quota: 1_000_000,
+    skipping_quota: 100_000,
+    type_entries: 1024,
+    header_bytes: 8192,
+};
+
 pub fn startup_config() -> ic_testkit::pic::PocketIcStartupConfig {
     ic_testkit::pic::PocketIcStartupConfig::from_env(std::time::Duration::from_secs(30))
         .expect("prepare POCKET_IC_BIN or configure IC_TESTKIT_POCKET_IC_URL for live tests")

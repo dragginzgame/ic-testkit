@@ -1,9 +1,9 @@
 //! Explicit, release-bound provisioning. Checks and launches never download.
 
-use ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, hash_gzip, verify_reader};
+use ic_host_artifacts::artifact::{Sha256Digest, decode_gzip, hash_gzip, hash_reader};
 use ic_host_fs::{durable, read::read_file_no_follow};
 use ic_host_process::{
-    child::OwnedChild,
+    child::{CleanupPolicy, OwnedChild},
     tool::{
         AdmittedTool, ExecutionContext, ExecutionError, ExecutionEvidence, ExecutionFailure,
         ExecutionOperation, OutputLimit, OutputLimits, SuccessfulExit, ToolError, VersionSpec,
@@ -102,7 +102,7 @@ fn bundle_path(root: &Path, asset: &Asset) -> PathBuf {
 
 fn authenticated_archive(archive: &Path, digest: Sha256Digest) -> Result<Vec<u8>> {
     let bytes = read_file_no_follow(archive, ARCHIVE_LIMIT)?;
-    verify_reader(bytes.as_slice(), ARCHIVE_LIMIT as u64, digest)?;
+    hash_reader(bytes.as_slice(), ARCHIVE_LIMIT as u64)?.verify(digest)?;
     Ok(bytes)
 }
 
@@ -183,7 +183,7 @@ pub(super) fn setup(directory: &Path) -> Result<PathBuf> {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let outcome = OwnedChild::spawn(&mut command)
+        let outcome = OwnedChild::spawn(&mut command, CleanupPolicy::KillAndWait)
             .map_err(|source| {
                 ToolError::Execution(Box::new(ExecutionError {
                     failure: ExecutionFailure::Io {
@@ -250,7 +250,8 @@ fn setup_with(
     let root = root_path(directory)?;
     // Namespace custody remains with the caller. All cooperating setups serialize
     // through Host's admitted regular lock; checks are read-only.
-    let _lock = durable::lock_regular_file_with_parents(&root.join(".setup-v1.lock"))?;
+    let lock = durable::open_regular_lock_file_with_parents(&root.join(".setup-v1.lock"))?;
+    durable::lock_exclusive(&lock)?;
     let bundle = bundle_path(&root, asset);
     match fs::symlink_metadata(&bundle) {
         Ok(_) => return check_bundle(&bundle, asset),

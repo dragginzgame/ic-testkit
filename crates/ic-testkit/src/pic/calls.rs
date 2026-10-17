@@ -1,7 +1,8 @@
 use candid::{
-    CandidType, Principal, decode_args, decode_one, encode_args,
+    CandidType, Principal, encode_args,
     utils::{ArgumentDecoder, ArgumentEncoder},
 };
+use ic_testkit_candid::{DecodeError, DecodeLimits, decode_args, decode_one};
 use pocket_ic::{PocketIc, RejectResponse};
 use serde::de::DeserializeOwned;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -22,7 +23,10 @@ impl CallContext<'_> {
     }
 }
 
-/// Typed Candid calls with contextual encoding, rejection, and decoding errors.
+/// Typed Candid calls with caller-selected reply limits and contextual failures.
+///
+/// Every call requires explicit [`DecodeLimits`]; these bound reply decoding,
+/// not PocketIC transport duration or canister execution.
 pub trait CandidCallExt {
     /// Encode and execute an anonymous update call, then decode its result.
     fn update_candid<T, A>(
@@ -30,12 +34,13 @@ pub trait CandidCallExt {
         canister_id: Principal,
         method: &str,
         args: A,
+        limits: DecodeLimits,
     ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.update_candid_as(canister_id, Principal::anonymous(), method, args)
+        self.update_candid_as(canister_id, Principal::anonymous(), method, args, limits)
     }
 
     /// Encode and execute an update call as an explicit caller.
@@ -45,6 +50,7 @@ pub trait CandidCallExt {
         caller: Principal,
         method: &str,
         args: A,
+        limits: DecodeLimits,
     ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
@@ -56,12 +62,13 @@ pub trait CandidCallExt {
         canister_id: Principal,
         method: &str,
         args: A,
+        limits: DecodeLimits,
     ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
         A: ArgumentEncoder,
     {
-        self.query_candid_as(canister_id, Principal::anonymous(), method, args)
+        self.query_candid_as(canister_id, Principal::anonymous(), method, args, limits)
     }
 
     /// Encode and execute a query call as an explicit caller.
@@ -71,6 +78,7 @@ pub trait CandidCallExt {
         caller: Principal,
         method: &str,
         args: A,
+        limits: DecodeLimits,
     ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
@@ -85,6 +93,7 @@ impl CandidCallExt for PocketIc {
         caller: Principal,
         method: &str,
         args: A,
+        limits: DecodeLimits,
     ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
@@ -100,7 +109,7 @@ impl CandidCallExt for PocketIc {
             context,
             args,
             |bytes| Self::update_call(self, canister_id, caller, method, bytes),
-            |bytes| decode_one(bytes),
+            |bytes| decode_one(bytes, limits),
         )
     }
 
@@ -111,6 +120,7 @@ impl CandidCallExt for PocketIc {
         caller: Principal,
         method: &str,
         args: A,
+        limits: DecodeLimits,
     ) -> Result<T, CandidCallError>
     where
         T: CandidType + DeserializeOwned,
@@ -126,7 +136,7 @@ impl CandidCallExt for PocketIc {
             context,
             args,
             |bytes| Self::query_call(self, canister_id, caller, method, bytes),
-            |bytes| decode_one(bytes),
+            |bytes| decode_one(bytes, limits),
         )
     }
 }
@@ -143,6 +153,7 @@ pub fn update_candid_args<T, A>(
     caller: Principal,
     method: &str,
     args: A,
+    limits: DecodeLimits,
 ) -> Result<T, CandidCallError>
 where
     T: for<'de> ArgumentDecoder<'de>,
@@ -158,7 +169,7 @@ where
         context,
         args,
         |bytes| pic.update_call(canister_id, caller, method, bytes),
-        |bytes| decode_args(bytes),
+        |bytes| decode_args(bytes, limits),
     )
 }
 
@@ -174,6 +185,7 @@ pub fn query_candid_args<T, A>(
     caller: Principal,
     method: &str,
     args: A,
+    limits: DecodeLimits,
 ) -> Result<T, CandidCallError>
 where
     T: for<'de> ArgumentDecoder<'de>,
@@ -189,7 +201,7 @@ where
         context,
         args,
         |bytes| pic.query_call(canister_id, caller, method, bytes),
-        |bytes| decode_args(bytes),
+        |bytes| decode_args(bytes, limits),
     )
 }
 
@@ -202,17 +214,17 @@ fn call_candid<T, A, F, D>(
 where
     A: ArgumentEncoder,
     F: FnOnce(Vec<u8>) -> Result<Vec<u8>, RejectResponse>,
-    D: FnOnce(&[u8]) -> Result<T, candid::Error>,
+    D: FnOnce(&[u8]) -> Result<T, DecodeError>,
 {
     let bytes = encode_args(args).map_err(|err| CandidCallError::Encode {
         context: Box::new(context.to_error_context()),
         message: err.to_string(),
     })?;
     let result = run_raw_call(context, || call(bytes))?;
-    decode(&result).map_err(|err| CandidCallError::Decode {
+    decode(&result).map_err(|source| CandidCallError::Decode {
         context: Box::new(context.to_error_context()),
         bytes: result.len(),
-        message: err.to_string(),
+        source: Box::new(source),
     })
 }
 
@@ -244,8 +256,17 @@ where
 #[cfg(test)]
 mod tests {
     use candid::Principal;
+    use ic_testkit_candid::{DecodeError, DecodeLimits, decode_args, decode_one};
 
     use super::{CallContext, CandidCallError, call_candid, run_raw_call};
+
+    const LIMITS: DecodeLimits = DecodeLimits {
+        reply_bytes: 65_536,
+        decoding_quota: 1_000_000,
+        skipping_quota: 100_000,
+        type_entries: 1024,
+        header_bytes: 8192,
+    };
 
     #[test]
     fn decode_error_includes_call_context() {
@@ -260,7 +281,7 @@ mod tests {
             context,
             (),
             |_| Ok(vec![0xde, 0xad]),
-            |bytes| candid::decode_one::<u64>(bytes),
+            |bytes| decode_one::<u64>(bytes, LIMITS),
         )
         .expect_err("decode fails");
 
@@ -268,11 +289,77 @@ mod tests {
         assert!(err.to_string().contains("operation=query_call"));
         assert!(err.to_string().contains("method=get"));
         assert!(err.to_string().contains("bytes=2"));
-        let CandidCallError::Decode { context, bytes, .. } = err else {
+        assert!(std::error::Error::source(&err).unwrap().is::<DecodeError>());
+        let CandidCallError::Decode {
+            context,
+            bytes,
+            source,
+        } = err
+        else {
             panic!("expected decode failure");
         };
         assert_eq!(bytes, 2);
         assert_eq!(context.method, "get");
+        assert!(matches!(*source, DecodeError::Candid(_)));
+    }
+
+    #[test]
+    fn caller_decode_limits_retain_typed_refusals() {
+        let context = CallContext {
+            operation: "query_call",
+            canister_id: Principal::anonymous(),
+            caller: Principal::anonymous(),
+            method: "get",
+        };
+        let bytes = candid::encode_one(42_u64).unwrap();
+        let length = bytes.len();
+        let error = call_candid(
+            context,
+            (),
+            |_| Ok(bytes),
+            |bytes| {
+                decode_one::<u64>(
+                    bytes,
+                    DecodeLimits {
+                        reply_bytes: 0,
+                        ..LIMITS
+                    },
+                )
+            },
+        )
+        .unwrap_err();
+        let cause = std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<DecodeError>()
+            .unwrap();
+        assert!(
+            matches!(cause, DecodeError::ReplyTooLarge { actual, maximum: 0 } if *actual == length)
+        );
+
+        // Tiny wire data can still describe expensive values: work is bounded
+        // independently of the reply length, including the arguments API.
+        let bytes = candid::encode_args((vec![(); 100_000],)).unwrap();
+        let error = call_candid(
+            context,
+            (),
+            |_| Ok(bytes),
+            |bytes| {
+                decode_args::<(Vec<()>,)>(
+                    bytes,
+                    DecodeLimits {
+                        decoding_quota: 0,
+                        ..LIMITS
+                    },
+                )
+            },
+        )
+        .unwrap_err();
+        let cause = std::error::Error::source(&error)
+            .unwrap()
+            .downcast_ref::<DecodeError>()
+            .unwrap();
+        assert!(matches!(cause, DecodeError::Candid(_)));
+        assert!(std::error::Error::source(cause).is_some());
     }
 
     #[test]
@@ -304,7 +391,7 @@ mod tests {
                 );
                 Ok(candid::encode_args((9_u64, true, "ready")).unwrap())
             },
-            |bytes| candid::decode_args(bytes),
+            |bytes| decode_args(bytes, LIMITS),
         )
         .unwrap();
         assert_eq!(result, (9, true, "ready".into()));
@@ -324,7 +411,7 @@ mod tests {
                 context,
                 (),
                 |_| Ok(bytes),
-                |bytes| candid::decode_args::<(u64, bool)>(bytes),
+                |bytes| decode_args::<(u64, bool)>(bytes, LIMITS),
             )
             .unwrap_err();
             assert!(err.to_string().contains(&format!("bytes={length}")));

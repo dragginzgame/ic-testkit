@@ -215,12 +215,14 @@ impl PendingHttpServer {
             while !stop_worker.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
-                        if crate::testing::read_http_request(
+                        if ic_host_process::testing::http::capture_http_request(
                             &mut stream,
                             Duration::from_secs(1),
                             65_536,
                             65_536,
+                            ic_host_process::testing::http::HttpContentLength::Optional,
                         )
+                        .into_result()
                         .is_err()
                         {
                             continue;

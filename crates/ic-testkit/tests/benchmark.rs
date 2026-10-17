@@ -537,13 +537,31 @@ ICTK|benchmark:end|100|20|30|40
 ",
         &config,
     );
-    let aggregates = aggregate_benchmark_spans(&pair_benchmark_spans(&parse.events).spans)
-        .expect("aggregate benchmark spans");
+    let mut spans = pair_benchmark_spans(&parse.events).spans;
+    for suite in ["z", "", "a"] {
+        let mut span = spans[0].clone();
+        span.suite = suite.into();
+        spans.push(span);
+    }
+    spans.reverse();
+    let aggregates = aggregate_benchmark_spans(&spans).expect("aggregate benchmark spans");
 
-    assert_eq!(aggregates.len(), 2);
+    assert_eq!(
+        aggregates
+            .iter()
+            .map(|row| row.scope.clone())
+            .collect::<Vec<_>>(),
+        [
+            BenchmarkScope::Suite(String::new()),
+            BenchmarkScope::Suite("ALL".into()),
+            BenchmarkScope::Suite("a".into()),
+            BenchmarkScope::Suite("z".into()),
+            BenchmarkScope::All,
+        ]
+    );
     let authored = aggregates
         .iter()
-        .find(|row| matches!(row.scope, BenchmarkScope::Suite(_)))
+        .find(|row| matches!(&row.scope, BenchmarkScope::Suite(suite) if suite == "ALL"))
         .expect("authored ALL suite");
     let all = aggregates
         .iter()
@@ -552,7 +570,7 @@ ICTK|benchmark:end|100|20|30|40
     assert_eq!(authored.scope, BenchmarkScope::Suite("ALL".into()));
     assert_eq!(all.scope, BenchmarkScope::All);
     assert_eq!(authored.runs, 1);
-    assert_eq!(all.runs, 1);
+    assert_eq!(all.runs, 4);
 }
 
 #[test]
@@ -927,6 +945,16 @@ fn metadata_reader_enforces_object_schema() {
     assert!(metadata.git_commit_short_hash.is_none());
     assert!(metadata.benchmark_command.is_none());
     assert!(metadata.selected_previous_run.is_none());
+
+    let object = serde_json::to_string(&optional).unwrap();
+    for (field, value) in [("timestamp", "\"duplicate\""), ("run_index", "2")] {
+        fs::write(&path, format!("{{\"{field}\":{value},{}", &object[1..])).unwrap();
+        assert_eq!(
+            read_benchmark_run_metadata(&path).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData,
+            "duplicate {field} must not overwrite an earlier value",
+        );
+    }
 }
 
 fn write_metadata(

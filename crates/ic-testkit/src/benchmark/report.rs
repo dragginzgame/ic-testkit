@@ -5,8 +5,6 @@
 
 use std::{fmt::Write as _, fs, io, path::Path};
 
-use serde_json::Value;
-
 use super::{
     BenchmarkAggregateRow, BenchmarkAverages, BenchmarkComparisonRow, BenchmarkEventKind,
     BenchmarkRunMetadata, BenchmarkRunReport, BenchmarkScope, BenchmarkSpan, InvalidBenchmarkSpan,
@@ -26,15 +24,13 @@ impl BenchmarkScope {
 
 pub fn read_benchmark_run_metadata(path: impl AsRef<Path>) -> io::Result<BenchmarkRunMetadata> {
     let input = fs::read_to_string(path)?;
-    let value = serde_json::from_str::<Value>(&input).map_err(metadata_json_error)?;
-
-    if !value.is_object() {
+    if !input.trim_start().starts_with('{') {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "benchmark metadata JSON must be an object",
         ));
     }
-    serde_json::from_value(value).map_err(metadata_json_error)
+    serde_json::from_str(&input).map_err(metadata_json_error)
 }
 
 /// Write one complete benchmark report into the requested directory.
