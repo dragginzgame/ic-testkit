@@ -13,6 +13,7 @@
 //! server child for a serial suite. No type serializes independent instances or
 //! downloads a server implicitly. Explicit provisioning is owned by the
 //! published `ic-testkit-server setup` / `check` commands.
+//! Unix Rust fixtures can use `server_assets` for the same explicit admission.
 
 pub use pocket_ic::{
     CanisterStatusResult, ErrorCode, LATEST_SERVER_VERSION, PocketIc, PocketIcBuilder, RejectCode,
@@ -21,6 +22,8 @@ pub use pocket_ic::{
 
 mod server;
 pub use server::{POCKET_IC_SERVER_VERSION, supports_pocket_ic_server};
+#[cfg(unix)]
+pub mod server_assets;
 
 mod baseline;
 mod baseline_pool;

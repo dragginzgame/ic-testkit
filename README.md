@@ -430,6 +430,13 @@ the default is `.tools/ic-testkit-server` relative to the working directory.
 Only Linux x86-64, macOS Intel and macOS Apple Silicon have reviewed assets.
 Provisioning requires `curl`; offline checking does not.
 
+Rust fixtures use `ic_testkit::pic::server_assets::check(&directory)` for the same
+offline authenticated admission, returning an absolute executable path for
+`PocketIcStartupConfig::spawn`. It does not invoke Cargo, Make or the CLI.
+Explicit provisioning is also available through `server_assets::setup`, with
+a caller-supplied cancellation predicate; the library installs no signal handlers.
+The caller still owns the physical root and prevents replacement before launch.
+
 `run` without a server environment selection checks that prepared bundle and
 exports both its `POCKET_IC_BIN` and the governed server URL to the command.
 It never installs or updates a server. An explicit `--directory` conflicts with

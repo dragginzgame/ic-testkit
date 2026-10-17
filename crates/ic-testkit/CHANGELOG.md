@@ -8,6 +8,31 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.50.1]
+
+### Added
+
+- Expose Unix `pic::server_assets::{check, setup, DEFAULT_DIRECTORY}` as the
+  shared Rust and CLI owner of authenticated PocketIC bundles. Offline checks
+  return the admitted absolute executable without invoking a build tool or CLI;
+  explicit setup takes caller-owned cancellation and installs no signal handlers.
+  Existing digests, byte bounds, retained evidence and bundle layout are unchanged.
+
+### Testing
+
+- Isolate each server-asset case before executable writes so parallel library
+  process tests cannot inherit its writable descriptor. Keep bounded child capture
+  and the two-caller setup check; production retries and admission stay unchanged
+  ([#115 — Isolate server-asset fixtures from parallel library process tests](https://github.com/dragginzgame/ic-testkit/issues/115)).
+- Keep the output-limit fixture producer alive until capture terminates it and
+  assert its reaped signal status. This removes a natural-exit/group-signal race
+  while retaining exact output and cleanup evidence in native qualification
+  ([#114 — Deterministic live-producer cleanup qualification](https://github.com/dragginzgame/ic-testkit/issues/114)).
+- Qualify exact raw Git status bytes with portable control/quote filenames on all
+  native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
+  macOS fixture creation before Git observation without changing production behavior
+  ([#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111)).
+
 ## [0.50.0] - 2026-10-16
 
 ### Breaking

@@ -1,5 +1,21 @@
 # Host support and qualification
 
+## Pending 0.50.1: direct Rust server admission
+
+Unix `pic::server_assets` exposes the CLI's authenticated server bundle admission
+and explicit provisioning to Rust fixtures. The CLI delegates to the same owner
+and retains signal handling; callers select cancellation, bundle paths, fixture
+custody and application safety. Offline checks never install missing assets.
+Each server-asset test re-execs before executable writes and selects explicit
+kill-and-wait cleanup, preventing unrelated library forks from retaining writable
+executable descriptors. Current-main Linux qualification passes all 87 non-ignored library cases
+(including all seven asset cases), the CLI unit case and both changed driver
+cases. Strict library/bin/test and affected-example Clippy, actual Rust 1.91
+library/bin checking, warning-denied docs, formatting and inheritance checks pass.
+The combined source adapter also passes Backup's 34 Core and 12 Agent PocketIC
+cases on server 16.1.0. Native macOS, hosted checks and published Backup adoption
+remain separate; no full local CI or release ran.
+
 ## Pending 0.50.0: snapshot causes and borrowed aggregation
 
 Snapshot capture, restore and rollback retain one `PocketIcCallFailure` source
