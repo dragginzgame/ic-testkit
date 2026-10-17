@@ -1,5 +1,17 @@
 # Host support and qualification
 
+## Pending 0.50.1: compact bounded Candid diagnostics
+
+The independent `ic-testkit-candid` package selects Candid's compact diagnostics
+on native hosts as well as Wasm. All three decoding entrypoints retain original
+typed causes and caller-selected wire/work/header limits. Compact mode avoids
+full large-input dumps; callers still own small-input disclosure and raw evidence.
+All six codec cases pass on current Rust; actual Rust 1.91 all-target and Wasm
+checking, strict codec Clippy, warning-denied docs, formatting and inheritance
+checks pass. The combined source adapter passes Backup's 77 model/codec cases,
+34 Core and 12 Agent PocketIC cases on server 16.1.0. Native macOS, hosted CI
+and published Backup adoption remain separate; no full local CI or release ran.
+
 ## Pending 0.50.0: snapshot causes and borrowed aggregation
 
 Snapshot capture, restore and rollback retain one `PocketIcCallFailure` source

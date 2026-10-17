@@ -17,6 +17,11 @@ policy. All three return typed wire admission or original Candid failures withou
 modifying input bytes. Testkit's PocketIC helpers require these same explicit
 limits and preserve `DecodeError` as the source of `CandidCallError::Decode`.
 
+All three entrypoints select Candid's compact diagnostics on native and Wasm
+hosts, avoiding full large-input dumps while retaining the original typed cause.
+Compact diagnostics are not a redaction guarantee for small inputs; callers
+still own error disclosure and retention of raw evidence.
+
 The workspace owns this package's version and Rust 1.91 floor. The workspace
 publication adapter observes/publishes this package before Testkit, preserving
 partial-publication retry admission. Reviewed publication is required before

@@ -8,6 +8,26 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.50.1]
+
+### Changed
+
+- Use Candid's compact diagnostics in the independent bounded codec on native
+  hosts as well as Wasm. Both ordinary and exact-result decoding avoid full
+  large-input diagnostic dumps while retaining typed decoder causes and limits.
+  Callers still own error disclosure; compact mode can include small inputs.
+
+### Testing
+
+- Keep the output-limit fixture producer alive until capture terminates it and
+  assert its reaped signal status. This removes a natural-exit/group-signal race
+  while retaining exact output and cleanup evidence in native qualification
+  ([#114 — Deterministic live-producer cleanup qualification](https://github.com/dragginzgame/ic-testkit/issues/114)).
+- Qualify exact raw Git status bytes with portable control/quote filenames on all
+  native hosts, retaining invalid UTF-8 filesystem coverage on Linux. This fixes
+  macOS fixture creation before Git observation without changing production behavior
+  ([#111 — Portable Git dirty-path byte qualification](https://github.com/dragginzgame/ic-testkit/issues/111)).
+
 ## [0.50.0] - 2026-10-16
 
 ### Breaking

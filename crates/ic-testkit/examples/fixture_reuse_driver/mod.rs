@@ -771,20 +771,32 @@ mod tests {
         }
         let clean = super::git_provenance(&root, limits).unwrap();
         assert!(!clean.is_dirty());
-        let name = OsString::from_vec(b"untracked-\xff".to_vec());
-        fs::write(root.join(name), b"fixture").unwrap();
-        let dirty = super::git_provenance(&root, limits).unwrap();
-        assert_eq!(dirty.revision(), clean.revision());
-        assert!(dirty.is_dirty());
-        assert!(dirty.status_evidence().stdout.contains(&0xff));
-        assert_eq!(
-            dirty.options.untracked,
-            ic_host_process::provenance::UntrackedFiles::Normal
-        );
-        assert_eq!(
-            dirty.options.ignore_submodules,
-            ic_host_process::provenance::IgnoreSubmodules::None
-        );
+        // macOS filesystems reject arbitrary invalid UTF-8 names before Git runs.
+        // Every host still checks raw control/quote bytes; Linux also exercises
+        // an actual invalid UTF-8 directory entry.
+        for name in [b"untracked-\n\t\"".as_slice()]
+            .into_iter()
+            .chain(cfg!(target_os = "linux").then_some(b"untracked-\xff".as_slice()))
+        {
+            let path = root.join(OsString::from_vec(name.to_vec()));
+            fs::write(&path, b"fixture").unwrap();
+            let dirty = super::git_provenance(&root, limits).unwrap();
+            assert_eq!(dirty.revision(), clean.revision());
+            assert!(dirty.is_dirty());
+            assert_eq!(
+                dirty.status_evidence().stdout,
+                [b"?? ".as_slice(), name, b"\0"].concat()
+            );
+            assert_eq!(
+                dirty.options.untracked,
+                ic_host_process::provenance::UntrackedFiles::Normal
+            );
+            assert_eq!(
+                dirty.options.ignore_submodules,
+                ic_host_process::provenance::IgnoreSubmodules::None
+            );
+            fs::remove_file(path).unwrap();
+        }
 
         let missing = fixture_directory();
         let error =
@@ -1309,9 +1321,11 @@ esac
             text_command(Command::new("/bin/sh").args(["-c", "printf '\\377'"])),
             Err(Error::InvalidData("tool output is not UTF-8"))
         ));
-        let Err(Error::Tool(error)) =
-            text_command(Command::new("/bin/sh").args(["-c", "printf '%065537d' 0"]))
-        else {
+        // Keep the producer alive until capture kills it: an immediately exiting
+        // producer races group signalling on macOS and can retain a cleanup error.
+        let Err(Error::Tool(error)) = text_command(
+            Command::new("/bin/sh").args(["-c", "printf '%065537d' 0; exec /bin/sleep 30"]),
+        ) else {
             panic!("expected bounded-output failure")
         };
         let ToolError::Execution(execution) = error.as_ref() else {
@@ -1325,7 +1339,18 @@ esac
         ));
         assert_eq!(execution.evidence.stdout.len(), 64 * 1024);
         assert!(execution.evidence.stdout_truncated);
-        assert!(execution.cleanup.is_none());
+        assert!(
+            execution.cleanup.is_none(),
+            "cleanup evidence: {execution:?}"
+        );
+        assert_eq!(
+            execution
+                .evidence
+                .status
+                .as_ref()
+                .and_then(std::os::unix::process::ExitStatusExt::signal),
+            Some(9)
+        );
         build_command(Command::new("/bin/sh").args(["-c", "sleep 0.05"])).unwrap();
         let Err(Error::Tool(error)) =
             build_command(Command::new("/bin/sh").args(["-c", "exit 23"]))
