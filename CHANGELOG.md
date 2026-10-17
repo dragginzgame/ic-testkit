@@ -6,6 +6,17 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.52.1]
+
+### Added
+
+- Standalone Candid codec exports a bounded typed sequence visitor and
+  `reserved::StrictReserved` for zero-skipping reply schemas. Callers select
+  element ceilings, diagnostic text and decoding quotas; application DTOs,
+  aggregate bounds and retained evidence stay with consumers. The implementations
+  preserve Backup's typed-excess and exact reserved-marker behavior without
+  adding simulator or transport dependencies.
+
 ## [0.52.0] - 2026-10-17
 
 ### Breaking

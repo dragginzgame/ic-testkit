@@ -26,3 +26,15 @@ The workspace owns this package's version and Rust 1.91 floor. The workspace
 publication adapter observes/publishes this package before Testkit, preserving
 partial-publication retry admission. Reviewed publication is required before
 consumers adopt it; adding a workspace member does not change their graphs.
+
+`sequence::deserialize` supports Serde field adapters with caller-selected element
+ceilings and diagnostics. It refuses oversized hints before reading, allocates
+without trusting hints and decodes at most one typed excess element. It does not
+replace caller wire/work quotas or aggregate bounds.
+
+`reserved::StrictReserved` accepts Candid's exact reserved marker instead of
+skipping arbitrary payloads. Use it with a zero skipping quota when known variant
+tags must carry actual reserved values. Variant tags and application compatibility
+remain caller-owned. Both helpers originate in Backup's bounded management reply
+visitors (ic-backup 0.30.0, commit `3992e15`); regression qualification is rerun
+against these production owners.
