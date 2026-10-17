@@ -8,6 +8,17 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.52.1]
+
+### Added
+
+- Standalone Candid codec exports a bounded typed sequence visitor and
+  `reserved::StrictReserved` for zero-skipping reply schemas. Callers select
+  element ceilings, diagnostic text and decoding quotas; application DTOs,
+  aggregate bounds and retained evidence stay with consumers. The implementations
+  preserve Backup's typed-excess and exact reserved-marker behavior without
+  adding simulator or transport dependencies.
+
 ## [0.52.0] - 2026-10-17
 
 ### Breaking

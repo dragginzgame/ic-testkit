@@ -1,5 +1,27 @@
 # Host support and qualification
 
+## Pending 0.52.1: standalone bounded Candid fields
+
+The standalone codec now owns caller-bounded typed sequence admission and strict
+reserved-marker decoding extracted from Backup 0.30.0 (`3992e15`). Element
+ceilings, diagnostic text and every wire/work quota remain explicit caller inputs.
+Application DTOs and persisted aggregate bounds remain in Backup; no simulator or
+transport dependency enters this crate.
+
+All 12 codec tests pass on Linux on current Rust and actual Rust 1.91, including
+excessive/deceptive hints, typed excess elements, zero limits, exact reserved
+encoding and rejection of arbitrary payloads under known tags with zero skipping.
+Strict selected Clippy, actual Rust 1.91 all-target Wasm compilation, warning-denied
+docs, snapshot integrity, dependency declarations and canonical formatting pass.
+Evidence is retained at `/tmp/backup-31-candid-update-5vazrp44/producer-*.log`.
+An isolated production Backup consumer passes its 168 model regressions, 34 Core
+PocketIC journeys, three Agent units, 14 HTTP cases and 12 Agent PocketIC journeys
+against these extracted implementations. Strict all-target consumer Clippy passes.
+Original bytes, aggregate bounds, raw reply custody and zero-skip rejection stay
+with Backup. The consumer uses explicit workspace path inputs in its own checkout
+and target; no Cargo patch, shared target or normal sibling edit is involved.
+Publication, full local CI and native macOS qualification remain separate.
+
 ## Pending 0.52.0: standalone restore recovery qualification
 
 The standalone deleted-canister test matches the pool-owned typed snapshot

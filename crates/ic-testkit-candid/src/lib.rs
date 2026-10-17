@@ -13,6 +13,9 @@ use candid::{
 use serde::Deserialize;
 use std::{error::Error, fmt};
 
+pub mod reserved;
+pub mod sequence;
+
 #[cfg(test)]
 mod tests;
 
