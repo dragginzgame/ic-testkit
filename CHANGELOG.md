@@ -6,6 +6,13 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.53.1]
+
+- Own complete floating-point sample statistics in the private development
+  reporter, removing its direct Metrics dependency ahead of Metrics 0.14.
+  Count/mean/p50/p95, finite-input admission and typed error sources are preserved;
+  the published Testkit library and benchmark report schema are unchanged.
+
 ## [0.53.0] - 2026-10-17
 
 ### Breaking

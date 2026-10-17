@@ -4,6 +4,7 @@
 mod fixture_reuse_driver;
 mod fixture_reuse_protocol;
 mod fixture_reuse_report;
+mod statistics;
 mod workload;
 
 pub use workload::worker_main;

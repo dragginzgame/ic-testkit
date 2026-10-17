@@ -74,7 +74,7 @@ pub enum Error {
     Io(io::Error),
     #[from]
     Json(serde_json::Error),
-    Statistics(ic_metrics::SampleStatisticsError),
+    Statistics(crate::statistics::SampleStatisticsError),
     Artifact(ArtifactError),
     Resolution(ResolutionError),
     Build(Box<WasmBuildError>),

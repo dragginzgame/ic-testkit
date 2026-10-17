@@ -8,6 +8,13 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.53.1]
+
+- Own complete floating-point sample statistics in the private development
+  reporter, removing its direct Metrics dependency ahead of Metrics 0.14.
+  Count/mean/p50/p95, finite-input admission and typed error sources are preserved;
+  the published Testkit library and benchmark report schema are unchanged.
+
 ## [0.53.0] - 2026-10-17
 
 ### Breaking

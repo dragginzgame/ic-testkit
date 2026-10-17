@@ -972,7 +972,6 @@ dependencies = [
  "ic-host-fs",
  "ic-host-process",
  "ic-host-text",
- "ic-metrics",
  "ic-testkit",
  "ic-testkit-candid",
  "libc",
