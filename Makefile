@@ -90,7 +90,7 @@ tags:
 test: build-server-cli
 	+cargo test -p ic-testkit-candid --locked
 	+@server="$$("$(SERVER_CLI)" check)" || exit $$?; \
-		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked && \
+		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --features ic-testkit/reply-fixtures --locked && \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit-bench --locked && \
 		POCKET_IC_BIN="$$server" cargo test -p ic-testkit --locked --test server_runner real_server_runs_a_separate_process_using_environment_startup -- --ignored --exact
 
@@ -110,25 +110,25 @@ git-hooks-check: format-tools-check
 	bash scripts/ci/check-git-hooks.sh
 
 check:
-	+cargo check -p ic-testkit -p ic-testkit-candid -p ic-testkit-bench --locked
+	+cargo check -p ic-testkit --features ic-testkit/reply-fixtures -p ic-testkit-candid -p ic-testkit-bench --locked
 
 check-wasm:
-	+cargo check -p ic-testkit -p ic-testkit-candid --locked --target wasm32-unknown-unknown
+	+cargo check -p ic-testkit --features ic-testkit/reply-fixtures -p ic-testkit-candid --locked --target wasm32-unknown-unknown
 
 clippy:
-	+cargo clippy -p ic-testkit -p ic-testkit-candid -p ic-testkit-bench --all-targets --locked -- -D warnings
+	+cargo clippy -p ic-testkit --features ic-testkit/reply-fixtures -p ic-testkit-candid -p ic-testkit-bench --all-targets --locked -- -D warnings
 
 docs-check:
-	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit -p ic-testkit-candid -p ic-testkit-bench --locked --no-deps
+	+RUSTDOCFLAGS="-D warnings" cargo doc -p ic-testkit --features ic-testkit/reply-fixtures -p ic-testkit-candid -p ic-testkit-bench --locked --no-deps
 
 msrv:
 	rustc +$(MSRV) --version
 	cargo +$(MSRV) --version
 	+cargo +$(MSRV) check -p ic-testkit-candid --all-targets --locked
 	+cargo +$(MSRV) check -p ic-testkit-candid --all-targets --locked --target wasm32-unknown-unknown
-	+cargo +$(MSRV) check -p ic-testkit --locked
+	+cargo +$(MSRV) check -p ic-testkit --features ic-testkit/reply-fixtures --locked
 	+cargo +$(MSRV) check -p ic-testkit-bench --all-targets --locked
-	+cargo +$(MSRV) check -p ic-testkit --lib --target wasm32-unknown-unknown --locked
+	+cargo +$(MSRV) check -p ic-testkit --features ic-testkit/reply-fixtures --lib --target wasm32-unknown-unknown --locked
 	+cargo +$(MSRV) check -p ic_testkit_perf_probe --lib --target wasm32-unknown-unknown --locked
 
 installation-check:

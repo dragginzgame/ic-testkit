@@ -8,6 +8,13 @@ This file ships in the crate archive so upgrades can be completed without the
 repository checkout. The complete historical changelog remains at
 <https://github.com/dragginzgame/ic-testkit/blob/main/CHANGELOG.md>.
 
+## [0.52.1]
+
+- Add opt-in native `pic::fixtures::raw_reply_canister` under `reply-fixtures`.
+  Callers select query/update methods, exact raw reply bytes, and aggregate
+  method, name-byte and reply-byte limits. The builder uses the standard Wasm
+  encoder, owns no simulator lifecycle and accepts malformed Candid evidence.
+
 ## [0.52.0] - 2026-10-17
 
 ### Breaking

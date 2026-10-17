@@ -38,6 +38,8 @@ serde_json = "1.0"
 tempfile = "3"
 thiserror = "2.0"
 tokio = { version = "1", features = ["net", "rt", "time"] }
+wasm-encoder = { version = "0.262", default-features = false }
+wasmparser = { version = "0.261", default-features = false, features = ["std", "validate"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

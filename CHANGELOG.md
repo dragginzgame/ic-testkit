@@ -6,6 +6,13 @@ documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.52.1]
+
+- Add opt-in native `pic::fixtures::raw_reply_canister` under `reply-fixtures`.
+  Callers select query/update methods, exact raw reply bytes, and aggregate
+  method, name-byte and reply-byte limits. The builder uses the standard Wasm
+  encoder, owns no simulator lifecycle and accepts malformed Candid evidence.
+
 ## [0.52.0] - 2026-10-17
 
 ### Breaking

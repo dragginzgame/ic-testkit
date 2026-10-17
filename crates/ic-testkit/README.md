@@ -147,3 +147,15 @@ See the [packaged migration notes](CHANGELOG.md#0390).
 Benchmark commands own run identities, provenance, history selection and any
 metadata sidecars. The report module renders supplied measurements as CSV and
 Markdown; it has no metadata schema, reader or history-discovery policy.
+
+### Raw reply canister fixtures
+
+Enable `ic-testkit`'s `reply-fixtures` feature to use
+`pic::fixtures::{raw_reply_canister, RawReplyMethod, RawReplyLimits, ReplyMode}`.
+Supply an explicit query/update mode and raw reply bytes for every method, plus
+aggregate method-count, UTF-8 method-name and reply-byte ceilings. Empty or
+control-containing names, duplicate exports and unsupported Wasm32 extents are
+rejected before encoding. Query and update exports may share a method name.
+The generated memory has a fixed maximum and can hold replies spanning pages.
+This helper does not decode Candid, install canisters, select principals or fund
+instances; keep product reply catalogs and assertions in the consuming tests.

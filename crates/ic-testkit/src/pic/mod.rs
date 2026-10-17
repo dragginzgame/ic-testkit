@@ -20,6 +20,9 @@ pub use pocket_ic::{
     RejectResponse,
 };
 
+#[cfg(feature = "reply-fixtures")]
+pub mod fixtures;
+
 mod server;
 pub use server::{POCKET_IC_SERVER_VERSION, supports_pocket_ic_server};
 #[cfg(unix)]

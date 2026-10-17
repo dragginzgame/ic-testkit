@@ -242,6 +242,8 @@ jobs:
         run: CDPATH="$PWD" /bin/bash scripts/ci/test-failure-evidence.sh verify-upload "$RUNNER_TEMP/ic-testkit-archive-downloaded"
       - name: Check standalone Candid reply decoding
         run: cargo test -p ic-testkit-candid --locked --offline
+      - name: Check opt-in raw reply canister fixtures
+        run: cargo test -p ic-testkit --features reply-fixtures --locked --offline --lib pic::fixtures
       - name: Check native fixture benchmark driver and sampler
         run: cargo test -p ic-testkit-bench --locked --offline --lib
       - name: Archive failed portable and installer evidence
